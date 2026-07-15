@@ -1,0 +1,22 @@
+{
+  "order": ["topic", "audience", "tone", "length"],
+  "widgets": {
+    "topic": "textarea",
+    "audience": "text",
+    "tone": "segmented",
+    "length": "segmented"
+  },
+  "enumLabels": {
+    "tone": {
+      "professional": "专业",
+      "concise": "简洁",
+      "friendly": "亲切",
+      "creative": "创意"
+    },
+    "length": {
+      "short": "短",
+      "medium": "中等",
+      "long": "长"
+    }
+  }
+}

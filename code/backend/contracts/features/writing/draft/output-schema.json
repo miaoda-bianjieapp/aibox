@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["format", "text"],
+  "properties": {
+    "format": {"const": "markdown"},
+    "text": {"type": "string"}
+  },
+  "additionalProperties": false
+}
+

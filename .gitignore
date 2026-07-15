@@ -1,0 +1,15 @@
+# Local agent and runtime data
+/.agents/
+/data/
+
+# Local backend configuration contains database passwords and model API keys
+/code/backend/backend-app/src/main/resources/application.yml
+
+# Build and IDE output
+**/target/
+**/build/
+**/.dart_tool/
+**/.idea/
+*.iml
+*.log
+

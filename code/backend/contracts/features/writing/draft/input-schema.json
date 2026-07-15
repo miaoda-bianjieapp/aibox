@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["topic"],
+  "properties": {
+    "topic": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "title": "写作主题"
+    },
+    "audience": {
+      "type": "string",
+      "maxLength": 200,
+      "title": "目标读者"
+    },
+    "tone": {
+      "type": "string",
+      "enum": ["professional", "concise", "friendly", "creative"],
+      "default": "professional",
+      "title": "表达语气"
+    },
+    "length": {
+      "type": "string",
+      "enum": ["short", "medium", "long"],
+      "default": "medium",
+      "title": "篇幅"
+    }
+  },
+  "additionalProperties": false
+}
+

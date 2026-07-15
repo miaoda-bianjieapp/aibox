@@ -1,0 +1,70 @@
+# 将本文件复制为 application.yml，然后替换所有 CHANGE_ME 配置。
+# 不要提交 application.yml、数据库密码或真实 API Key。
+
+spring:
+  application:
+    name: yuanzuo-backend
+  datasource:
+    url: jdbc:postgresql://localhost:5432/yuanzuo_ai
+    username: postgres
+    password: CHANGE_ME_POSTGRES_PASSWORD
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: UTC
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 52MB
+
+server:
+  address: 0.0.0.0
+  port: 8080
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+yuanzuo:
+  asset:
+    # 改成本机可写目录，例如 D:/aibox-data/assets。
+    storage-path: CHANGE_ME_LOCAL_ASSET_PATH
+    max-size-bytes: 52428800
+  worker:
+    enabled: true
+    poll-delay-ms: 500
+  model:
+    providers:
+      # 该中转站的模型和路由数据由 Flyway 创建。
+      # 请私下向管理员获取团队开发 Key。
+      codex2api-relay:
+        protocol: openai-compatible
+        base-url: https://www.codex2api.com/v1
+        api-key: CHANGE_ME_CODEX2API_KEY_FROM_ADMIN
+        chat-path: /chat/completions
+        audio-path: /audio/transcriptions
+        image-path: /images/generations
+
+logging:
+  pattern:
+    level: "%5p [trace=%X{traceId:-}]"

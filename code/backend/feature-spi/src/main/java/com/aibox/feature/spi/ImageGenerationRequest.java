@@ -1,0 +1,32 @@
+package com.aibox.feature.spi;
+
+import java.util.Map;
+import java.util.UUID;
+
+public record ImageGenerationRequest(
+        UUID tenantId,
+        UUID runId,
+        String modelAlias,
+        String deploymentCode,
+        String prompt,
+        String size,
+        int count,
+        Map<String, Object> metadata
+) {
+    public ImageGenerationRequest {
+        metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
+        count = Math.max(1, count);
+    }
+
+    public ImageGenerationRequest(
+            UUID tenantId,
+            UUID runId,
+            String modelAlias,
+            String prompt,
+            String size,
+            int count,
+            Map<String, Object> metadata
+    ) {
+        this(tenantId, runId, modelAlias, null, prompt, size, count, metadata);
+    }
+}

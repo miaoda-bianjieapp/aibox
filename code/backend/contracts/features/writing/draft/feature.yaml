@@ -1,0 +1,19 @@
+featureCode: writing.draft
+workspaceCode: writing
+version: 1
+displayName: 从零起草
+description: 根据主题、受众和语气生成结构化初稿。
+status: INTERNAL
+executionMode: ASYNC
+resultType: rich_text
+rendererKey: rich_text_editor
+requiredCapabilities:
+  - TEXT_GENERATION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxOutputTokens: 2000
+modelAlias: text.default
+

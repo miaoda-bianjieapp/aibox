@@ -1,0 +1,352 @@
+openapi: 3.1.0
+info:
+  title: 元作 AI Platform API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080/api/v1
+paths:
+  /catalog/workspaces:
+    get:
+      operationId: listWorkspaces
+      responses:
+        "200":
+          description: 已发布工作台与功能
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Workspace"
+  /catalog/features/{featureCode}:
+    get:
+      operationId: getFeature
+      parameters:
+        - $ref: "#/components/parameters/FeatureCode"
+      responses:
+        "200":
+          description: 功能的当前已发布契约
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeatureDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /projects:
+    get:
+      operationId: listProjects
+      responses:
+        "200":
+          description: 项目列表
+    post:
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, maxLength: 200}
+                description: {type: string, maxLength: 1000}
+      responses:
+        "201":
+          description: 项目已创建
+  /account/summary:
+    get:
+      operationId: getAccountSummary
+      responses:
+        "200":
+          description: 当前账户真实资源统计
+  /assets:
+    get:
+      operationId: listAssets
+      responses:
+        "200":
+          description: 当前用户附件列表
+    post:
+      operationId: uploadAsset
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200":
+          description: 附件已保存
+  /assets/{assetId}/content:
+    get:
+      operationId: getAssetContent
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: 附件二进制内容
+  /assets/{assetId}:
+    delete:
+      operationId: deleteAsset
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: 附件已删除
+  /tasks:
+    get:
+      operationId: listTasks
+      responses:
+        "200":
+          description: 当前用户任务列表
+    post:
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "201":
+          description: 任务已创建
+  /tasks/{taskId}:
+    get:
+      operationId: getTask
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 任务、运行历史与成果
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /tasks/{taskId}/runs:
+    post:
+      operationId: createTaskRun
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRunRequest"
+      responses:
+        "201":
+          description: Run 已排队
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskRun"
+        "409":
+          description: 幂等键与原请求不一致
+  /runs/{runId}:
+    get:
+      operationId: getRun
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: Run 状态与成果
+  /runs/{runId}/cancel:
+    post:
+      operationId: cancelRun
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: 取消结果
+  /runs/{runId}/retry:
+    post:
+      operationId: retryRun
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: 新 Run 已创建
+  /runs/{runId}/events:
+    get:
+      operationId: subscribeRunEvents
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: 状态与结果事件流，移动端必须同时支持 GET Run 轮询对账
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /tasks/{taskId}/artifacts:
+    get:
+      operationId: listTaskArtifacts
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 任务成果历史
+  /artifacts/{artifactId}:
+    get:
+      operationId: getArtifact
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: 成果详情
+components:
+  parameters:
+    FeatureCode:
+      name: featureCode
+      in: path
+      required: true
+      schema: {type: string, maxLength: 120}
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, maxLength: 200}
+  responses:
+    NotFound:
+      description: 资源不存在或不属于当前用户
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+  schemas:
+    Workspace:
+      type: object
+      required: [code, displayName, description, iconKey, groups, searchTerms, features]
+      properties:
+        code: {type: string}
+        displayName: {type: string}
+        description: {type: string}
+        iconKey: {type: string}
+        groups: {type: array, items: {type: string}}
+        searchTerms: {type: array, items: {type: string}}
+        features:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeatureSummary"
+    FeatureSummary:
+      type: object
+      properties:
+        code: {type: string}
+        displayName: {type: string}
+        description: {type: string}
+        version: {type: integer}
+        resultType: {type: string}
+        rendererKey: {type: string}
+        executionMode: {type: string}
+    FeatureDetail:
+      allOf:
+        - $ref: "#/components/schemas/FeatureSummary"
+        - type: object
+          properties:
+            inputSchema: {type: object, additionalProperties: true}
+            uiSchema: {type: object, additionalProperties: true}
+            outputSchema: {type: object, additionalProperties: true}
+            config: {type: object, additionalProperties: true}
+            modelPolicy:
+              oneOf:
+                - $ref: "#/components/schemas/ModelPolicy"
+                - type: "null"
+    ModelPolicy:
+      type: object
+      required: [capability, defaultModelCode, allowUserSelection, options]
+      properties:
+        capability: {type: string}
+        defaultModelCode: {type: string}
+        allowUserSelection: {type: boolean}
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelOption"
+    ModelOption:
+      type: object
+      required: [code, displayName, description, isDefault, sourceType, sourceName]
+      properties:
+        code: {type: string}
+        displayName: {type: string}
+        description: {type: string}
+        isDefault: {type: boolean}
+        sourceType:
+          type: string
+          enum: [OFFICIAL, RELAY]
+        sourceName: {type: string}
+    CreateTaskRequest:
+      type: object
+      required: [featureCode, title]
+      properties:
+        projectId: {type: [string, "null"], format: uuid}
+        featureCode: {type: string, maxLength: 120}
+        title: {type: string, maxLength: 240}
+    CreateRunRequest:
+      type: object
+      properties:
+        parameters: {type: object, additionalProperties: true}
+        inputAssetIds:
+          type: array
+          items: {type: string, format: uuid}
+        baseArtifactId:
+          type: [string, "null"]
+          format: uuid
+          description: 继续修改时所基于的历史成果
+        selectedModelCode:
+          type: [string, "null"]
+          maxLength: 120
+          description: 功能策略允许的模型 Deployment；不传时使用功能默认模型
+    TaskRun:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        taskId: {type: string, format: uuid}
+        runNumber: {type: integer}
+        featureCode: {type: string}
+        featureVersion: {type: integer}
+        status:
+          type: string
+          enum: [CREATED, VALIDATING, QUEUED, RUNNING, WAITING_CALLBACK, SUCCEEDED, PARTIAL, FAILED, CANCELLED, EXPIRED]
+        parameters: {type: object, additionalProperties: true}
+        inputAssetIds:
+          type: array
+          items: {type: string, format: uuid}
+        baseArtifactId: {type: [string, "null"], format: uuid}
+        selectedModelCode: {type: [string, "null"]}
+        errorCode: {type: [string, "null"]}
+        errorMessage: {type: [string, "null"]}
+    ApiError:
+      type: object
+      required: [code, message, timestamp]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        traceId: {type: [string, "null"]}
+        timestamp: {type: string, format: date-time}
+        fieldErrors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: {type: string}
+              message: {type: string}
