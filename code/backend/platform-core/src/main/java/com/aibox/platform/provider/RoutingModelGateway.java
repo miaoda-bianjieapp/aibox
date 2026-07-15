@@ -13,6 +13,10 @@ import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.MultimodalTextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
+import com.aibox.feature.spi.TextToSpeechRequest;
+import com.aibox.feature.spi.TextToSpeechResponse;
+import com.aibox.feature.spi.VideoGenerationRequest;
+import com.aibox.feature.spi.VideoGenerationResponse;
 import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.model.ModelRoutingService;
 import org.springframework.stereotype.Component;
@@ -103,12 +107,46 @@ public final class RoutingModelGateway implements ModelGateway {
         ProviderTarget selected = requireProvider(
                 ModelCapability.IMAGE_GENERATION, request.modelAlias(), request.deploymentCode()
         );
+        List<ModelAsset> assets = request.inputAssetIds().stream().map(assetService::readForModel).toList();
         return invoke(
                 request.tenantId(), request.runId(), ModelCapability.IMAGE_GENERATION, request.modelAlias(),
                 selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
-                        request.prompt(), request.size(),
+                        request.prompt(), request.inputAssetIds().toString(), request.size(),
                         Integer.toString(request.count())),
-                () -> selected.provider().generateImage(selected.target(), request),
+                () -> selected.provider().generateImage(selected.target(), request, assets),
+                response -> new InvocationOutcome(response.model(), response.providerRequestId(),
+                        response.inputUnits(), response.outputUnits())
+        );
+    }
+
+    @Override
+    public TextToSpeechResponse synthesizeSpeech(TextToSpeechRequest request) {
+        ProviderTarget selected = requireProvider(
+                ModelCapability.TEXT_TO_SPEECH, request.modelAlias(), request.deploymentCode()
+        );
+        return invoke(
+                request.tenantId(), request.runId(), ModelCapability.TEXT_TO_SPEECH, request.modelAlias(),
+                selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
+                        request.text(), request.voice(), request.format(), String.valueOf(request.speed())),
+                () -> selected.provider().synthesizeSpeech(selected.target(), request),
+                response -> new InvocationOutcome(response.model(), response.providerRequestId(),
+                        response.inputUnits(), response.outputUnits())
+        );
+    }
+
+    @Override
+    public VideoGenerationResponse generateVideo(VideoGenerationRequest request) {
+        ProviderTarget selected = requireProvider(
+                ModelCapability.VIDEO_GENERATION, request.modelAlias(), request.deploymentCode()
+        );
+        List<ModelAsset> assets = request.inputAssetIds().stream().map(assetService::readForModel).toList();
+        return invoke(
+                request.tenantId(), request.runId(), ModelCapability.VIDEO_GENERATION, request.modelAlias(),
+                selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
+                        request.prompt(), request.inputAssetIds().toString(),
+                        String.valueOf(request.durationSeconds()), request.aspectRatio(), request.resolution(),
+                        Integer.toString(request.count())),
+                () -> selected.provider().generateVideo(selected.target(), request, assets),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputUnits(), response.outputUnits())
         );

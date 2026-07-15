@@ -58,6 +58,10 @@ public class TaskRunEntity {
     @Column(name = "selected_model_code", length = 120)
     private String selectedModelCode;
 
+    @Column(name = "selected_models_json", nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, String> selectedModels;
+
     @Column(name = "cancel_requested", nullable = false)
     private boolean cancelRequested;
 
@@ -100,6 +104,25 @@ public class TaskRunEntity {
             String selectedModelCode,
             Instant now
     ) {
+        this(id, tenantId, userId, taskId, runNumber, featureCode, featureVersion,
+                parameters, inputAssetIds, baseArtifactId, selectedModelCode, Map.of(), now);
+    }
+
+    public TaskRunEntity(
+            UUID id,
+            UUID tenantId,
+            UUID userId,
+            UUID taskId,
+            int runNumber,
+            String featureCode,
+            int featureVersion,
+            Map<String, Object> parameters,
+            List<UUID> inputAssetIds,
+            UUID baseArtifactId,
+            String selectedModelCode,
+            Map<String, String> selectedModels,
+            Instant now
+    ) {
         this.id = id;
         this.tenantId = tenantId;
         this.userId = userId;
@@ -112,6 +135,7 @@ public class TaskRunEntity {
         this.inputAssetIds = List.copyOf(inputAssetIds);
         this.baseArtifactId = baseArtifactId;
         this.selectedModelCode = selectedModelCode;
+        this.selectedModels = Map.copyOf(selectedModels == null ? Map.of() : selectedModels);
         this.queuedAt = now;
         this.createdAt = now;
     }
@@ -232,6 +256,10 @@ public class TaskRunEntity {
 
     public String getSelectedModelCode() {
         return selectedModelCode;
+    }
+
+    public Map<String, String> getSelectedModels() {
+        return selectedModels == null ? Map.of() : Map.copyOf(selectedModels);
     }
 
     public boolean isCancelRequested() {

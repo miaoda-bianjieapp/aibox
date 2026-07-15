@@ -70,6 +70,7 @@ public class FeatureCatalogService {
         FeatureVersionEntity version = versionRepository
                 .findByFeatureIdAndVersion(feature.getId(), feature.getCurrentVersion())
                 .orElseThrow(() -> new NotFoundException("feature version", code + ":" + feature.getCurrentVersion()));
+        List<ModelCatalogService.ModelPolicyView> modelPolicies = modelCatalogService.getFeaturePolicies(code);
 
         return new FeatureDetailView(
                 feature.getCode(),
@@ -83,7 +84,8 @@ public class FeatureCatalogService {
                 version.getUiSchema(),
                 version.getOutputSchema(),
                 version.getConfig(),
-                modelCatalogService.getFeaturePolicy(code)
+                modelPolicies.stream().findFirst().orElse(null),
+                modelPolicies
         );
     }
 
@@ -143,7 +145,8 @@ public class FeatureCatalogService {
             Map<String, Object> uiSchema,
             Map<String, Object> outputSchema,
             Map<String, Object> config,
-            ModelCatalogService.ModelPolicyView modelPolicy
+            ModelCatalogService.ModelPolicyView modelPolicy,
+            List<ModelCatalogService.ModelPolicyView> modelPolicies
     ) {
     }
 }

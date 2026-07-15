@@ -26,7 +26,27 @@ public interface ModelProviderClient {
         throw unsupported(target);
     }
 
+    default ImageGenerationResponse generateImage(
+            ModelCallTarget target,
+            ImageGenerationRequest request,
+            List<ModelAsset> assets
+    ) {
+        return generateImage(target, request);
+    }
+
     default ImageGenerationResponse generateImage(ModelCallTarget target, ImageGenerationRequest request) {
+        throw unsupported(target);
+    }
+
+    default TextToSpeechResponse synthesizeSpeech(ModelCallTarget target, TextToSpeechRequest request) {
+        throw unsupported(target);
+    }
+
+    default VideoGenerationResponse generateVideo(
+            ModelCallTarget target,
+            VideoGenerationRequest request,
+            List<ModelAsset> assets
+    ) {
         throw unsupported(target);
     }
 

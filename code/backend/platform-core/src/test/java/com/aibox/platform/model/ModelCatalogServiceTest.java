@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,6 +34,8 @@ class ModelCatalogServiceTest {
         when(policy.isAllowUserSelection()).thenReturn(true);
         when(policyRepository.findFirstByFeatureCodeOrderByCapabilityAsc("writing.draft"))
                 .thenReturn(Optional.of(policy));
+        when(policyRepository.findByFeatureCodeOrderByCapabilityAsc("writing.draft"))
+                .thenReturn(List.of(policy));
 
         FeatureModelOptionEntity optionA = option("model-a");
         FeatureModelOptionEntity optionB = option("model-b");
@@ -51,6 +54,47 @@ class ModelCatalogServiceTest {
     void resolvesDefaultAndAllowedUserSelection() {
         assertThat(service.resolveForRun("writing.draft", null).deploymentCode()).isEqualTo("model-a");
         assertThat(service.resolveForRun("writing.draft", "model-b").deploymentCode()).isEqualTo("model-b");
+    }
+
+    @Test
+    void resolvesModelsByCapability() {
+        ModelCatalogService.ResolvedModels resolved = service.resolveForRun(
+                "writing.draft", Map.of("TEXT_GENERATION", "model-b"), null
+        );
+
+        assertThat(resolved.deployments()).containsEntry("TEXT_GENERATION", "model-b");
+        assertThat(resolved.primaryDeploymentCode()).isEqualTo("model-b");
+    }
+
+    @Test
+    void resolvesMultipleCapabilitiesForOneRun() {
+        UUID textPolicyId = UUID.randomUUID();
+        UUID imagePolicyId = UUID.randomUUID();
+        FeatureModelPolicyEntity textPolicy = policy(
+                textPolicyId, "TEXT_GENERATION", "model-a"
+        );
+        FeatureModelPolicyEntity imagePolicy = policy(
+                imagePolicyId, "IMAGE_GENERATION", "image-a"
+        );
+        when(policyRepository.findByFeatureCodeOrderByCapabilityAsc("content.illustrated"))
+                .thenReturn(List.of(textPolicy, imagePolicy));
+        FeatureModelOptionEntity textOption = option("model-a");
+        FeatureModelOptionEntity imageOption = option("image-a");
+        when(optionRepository.findByPolicyIdAndEnabledTrueOrderBySortOrderAsc(textPolicyId))
+                .thenReturn(List.of(textOption));
+        when(optionRepository.findByPolicyIdAndEnabledTrueOrderBySortOrderAsc(imagePolicyId))
+                .thenReturn(List.of(imageOption));
+        availableDeployment("image-a", "IMAGE_GENERATION");
+
+        ModelCatalogService.ResolvedModels resolved = service.resolveForRun(
+                "content.illustrated",
+                Map.of("TEXT_GENERATION", "model-a", "IMAGE_GENERATION", "image-a"),
+                null
+        );
+
+        assertThat(resolved.deployments())
+                .containsEntry("TEXT_GENERATION", "model-a")
+                .containsEntry("IMAGE_GENERATION", "image-a");
     }
 
     @Test
@@ -79,9 +123,22 @@ class ModelCatalogServiceTest {
         return option;
     }
 
+    private FeatureModelPolicyEntity policy(UUID id, String capability, String defaultCode) {
+        FeatureModelPolicyEntity policy = mock(FeatureModelPolicyEntity.class);
+        when(policy.getId()).thenReturn(id);
+        when(policy.getCapability()).thenReturn(capability);
+        when(policy.getDefaultDeploymentCode()).thenReturn(defaultCode);
+        when(policy.isAllowUserSelection()).thenReturn(true);
+        return policy;
+    }
+
     private void availableDeployment(String code) {
+        availableDeployment(code, "TEXT_GENERATION");
+    }
+
+    private void availableDeployment(String code, String capability) {
         ModelDeploymentEntity deployment = mock(ModelDeploymentEntity.class);
-        when(deployment.getCapability()).thenReturn("TEXT_GENERATION");
+        when(deployment.getCapability()).thenReturn(capability);
         when(deployment.getProviderCode()).thenReturn("provider");
         when(deploymentRepository.findByCodeAndEnabledTrue(code)).thenReturn(Optional.of(deployment));
     }

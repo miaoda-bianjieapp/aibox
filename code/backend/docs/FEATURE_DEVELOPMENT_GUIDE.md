@@ -6,9 +6,9 @@
 
 1. 在 `contracts/features/<workspace>/<feature>/` 创建 Manifest 和三个 Schema。
 2. 通过 Flyway 发布 FeatureDefinition/FeatureVersion；开发阶段状态使用 `INTERNAL`。
-3. 为调用模型的功能发布 `feature_model_policy` 和 `feature_model_option`，声明能力、默认 Deployment 和是否允许用户选择。
+3. 为调用模型的功能按能力发布一个或多个 `feature_model_policy` 和 `feature_model_option`，分别声明默认 Deployment 和是否允许用户选择。
 4. 在 `feature-impl` 对应目录实现 `FeatureHandler`。
-5. Handler 只调用 `ModelGateway` 的标准能力，不依赖具体厂商；把 `context.selectedModelCode()` 传入标准请求。
+5. Handler 只调用 `ModelGateway` 的标准能力，不依赖具体厂商；使用 `context.selectedModelCode(ModelCapability.X)` 获取该能力选定的 Deployment。
 6. 将结果转换为一个或多个 `ArtifactDraft`。
    模型生成的图片、音频和文件使用 `OutputAssetDraft`，平台自动保存并回填 `assetId`。
 7. 为参数边界、模型策略、标准结果和异常映射编写单元测试。
@@ -19,7 +19,7 @@
 
 1. 从 `GET /catalog/workspaces` 获取功能列表，不在页面硬编码新增入口。
 2. 标准字段交给 DynamicParameterForm；复杂输入才注册自定义 `pageKey`。
-3. 使用 FeatureDetail 的 `modelPolicy` 渲染公共模型选择器，只提交 `ModelOption.code`，不暴露 Provider 连接信息。
+3. 使用 FeatureDetail 的 `modelPolicies` 按能力渲染公共模型选择器，提交 `selectedModels`，不暴露 Provider 连接信息。
 4. 使用公共 TaskRunController 提交、取消、重试和恢复状态。
 5. 标准结果交给 `rendererKey` 对应组件；确有差异才新增 renderer。
 6. App 重启或 SSE 断开后，使用 `GET /runs/{id}` 对账。

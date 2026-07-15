@@ -3,8 +3,14 @@ package com.aibox.platform.provider;
 import com.aibox.feature.spi.ModelProviderClient;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
+import com.aibox.feature.spi.GeneratedAudio;
+import com.aibox.feature.spi.GeneratedVideo;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
+import com.aibox.feature.spi.TextToSpeechRequest;
+import com.aibox.feature.spi.TextToSpeechResponse;
+import com.aibox.feature.spi.VideoGenerationRequest;
+import com.aibox.feature.spi.VideoGenerationResponse;
 import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.model.ModelRoutingService;
 import org.junit.jupiter.api.Test;
@@ -58,6 +64,38 @@ class RoutingModelGatewayTest {
         verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
     }
 
+    @Test
+    void routesTextToSpeechAndVideoCapabilities() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(ModelCapability.TEXT_TO_SPEECH, "speech.default", null))
+                .thenReturn(List.of(target("test-speech", ModelCapability.TEXT_TO_SPEECH)));
+        when(routingService.resolveCandidates(ModelCapability.VIDEO_GENERATION, "video.default", null))
+                .thenReturn(List.of(target("test-video", ModelCapability.VIDEO_GENERATION)));
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(new TestProvider()), repository, mock(AssetService.class), routingService,
+                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        TextToSpeechResponse speech = gateway.synthesizeSpeech(new TextToSpeechRequest(
+                UUID.randomUUID(), UUID.randomUUID(), "speech.default", null,
+                "hello", "alloy", 1.0, "mp3", Map.of()
+        ));
+        VideoGenerationResponse video = gateway.generateVideo(new VideoGenerationRequest(
+                UUID.randomUUID(), UUID.randomUUID(), "video.default", null,
+                "sunrise", List.of(), 5, "16:9", "720p", 1, Map.of()
+        ));
+
+        assertThat(speech.audio().content()).isNotEmpty();
+        assertThat(video.videos()).hasSize(1);
+        verify(repository, times(4)).save(any(ProviderInvocationEntity.class));
+    }
+
+    private static ModelCallTarget target(String deployment, ModelCapability capability) {
+        return new ModelCallTarget(deployment, "test", "provider-model", capability, Map.of());
+    }
+
     private static final class TestProvider implements ModelProviderClient {
 
         @Override
@@ -73,6 +111,26 @@ class RoutingModelGatewayTest {
         @Override
         public TextGenerationResponse generateText(ModelCallTarget target, TextGenerationRequest request) {
             return new TextGenerationResponse("result", "test", "model", "request", 1, 2);
+        }
+
+        @Override
+        public TextToSpeechResponse synthesizeSpeech(ModelCallTarget target, TextToSpeechRequest request) {
+            return new TextToSpeechResponse(
+                    new GeneratedAudio("speech.mp3", "audio/mpeg", new byte[]{1}),
+                    "test", "model", "speech-request", 1, 1
+            );
+        }
+
+        @Override
+        public VideoGenerationResponse generateVideo(
+                ModelCallTarget target,
+                VideoGenerationRequest request,
+                List<com.aibox.feature.spi.ModelAsset> assets
+        ) {
+            return new VideoGenerationResponse(
+                    List.of(new GeneratedVideo(null, "video.mp4", "video/mp4", new byte[]{1})),
+                    "test", "model", "video-request", 1, 1
+            );
         }
     }
 }

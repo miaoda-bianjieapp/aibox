@@ -17,6 +17,14 @@ public interface ModelGateway {
         throw unsupported(ModelCapability.IMAGE_GENERATION);
     }
 
+    default TextToSpeechResponse synthesizeSpeech(TextToSpeechRequest request) {
+        throw unsupported(ModelCapability.TEXT_TO_SPEECH);
+    }
+
+    default VideoGenerationResponse generateVideo(VideoGenerationRequest request) {
+        throw unsupported(ModelCapability.VIDEO_GENERATION);
+    }
+
     private static ModelProviderException unsupported(ModelCapability capability) {
         return new ModelProviderException(
                 "MODEL_CAPABILITY_NOT_SUPPORTED", "Model gateway does not support " + capability, false

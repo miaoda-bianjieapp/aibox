@@ -65,6 +65,7 @@ public class RunExecutionStateService {
                 run.getFeatureVersion(),
                 run.getParameters(),
                 run.getInputAssetIds(),
+                run.getSelectedModels(),
                 run.getSelectedModelCode(),
                 artifactService.baseReference(run)
         ));

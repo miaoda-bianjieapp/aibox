@@ -64,6 +64,9 @@ yuanzuo:
         chat-path: /chat/completions
         audio-path: /audio/transcriptions
         image-path: /images/generations
+        image-edit-path: /images/edits
+        speech-path: /audio/speech
+        video-path: /videos/generations
 
 logging:
   pattern:

@@ -125,6 +125,7 @@ public class TaskApplicationService {
             Map<String, Object> parameters,
             List<UUID> inputAssetIds,
             UUID baseArtifactId,
+            Map<String, String> selectedModels,
             String selectedModelCode,
             String idempotencyKey
     ) {
@@ -139,10 +140,11 @@ public class TaskApplicationService {
         if (baseArtifactId != null) {
             artifactService.requireForTask(baseArtifactId, taskId, actor.tenantId(), actor.userId());
         }
-        ModelCatalogService.ResolvedSelection modelSelection = modelCatalogService.resolveForRun(
-                task.getFeatureCode(), selectedModelCode
+        ModelCatalogService.ResolvedModels modelSelection = modelCatalogService.resolveForRun(
+                task.getFeatureCode(), selectedModels, selectedModelCode
         );
-        String resolvedModelCode = modelSelection == null ? null : modelSelection.deploymentCode();
+        Map<String, String> resolvedModels = modelSelection.deployments();
+        String resolvedModelCode = modelSelection.primaryDeploymentCode();
         UUID proposedRunId = UUID.randomUUID();
         Map<String, Object> canonical = new LinkedHashMap<>();
         canonical.put("taskId", taskId.toString());
@@ -150,9 +152,9 @@ public class TaskApplicationService {
         canonical.put("parameters", normalizedParameters);
         canonical.put("inputAssetIds", normalizedAssetIds.stream().map(UUID::toString).toList());
         canonical.put("baseArtifactId", baseArtifactId == null ? null : baseArtifactId.toString());
+        canonical.put("selectedModels", selectedModels == null ? Map.of() : new TreeMap<>(selectedModels));
         canonical.put("selectedModelCode", selectedModelCode == null || selectedModelCode.isBlank()
-                ? null
-                : selectedModelCode.trim());
+                ? null : selectedModelCode.trim());
 
         Optional<UUID> existingRunId = idempotencyService.reserveOrResolve(
                 actor.tenantId(),
@@ -179,6 +181,7 @@ public class TaskApplicationService {
                 normalizedAssetIds,
                 baseArtifactId,
                 resolvedModelCode,
+                resolvedModels,
                 now
         );
         runRepository.save(run);
@@ -217,6 +220,7 @@ public class TaskApplicationService {
                 previous.getParameters(),
                 previous.getInputAssetIds(),
                 previous.getBaseArtifactId(),
+                previous.getSelectedModels(),
                 previous.getSelectedModelCode(),
                 idempotencyKey
         );
@@ -265,6 +269,7 @@ public class TaskApplicationService {
                 run.getInputAssetIds(),
                 run.getBaseArtifactId(),
                 run.getSelectedModelCode(),
+                run.getSelectedModels(),
                 run.getErrorCode(),
                 run.getErrorMessage(),
                 run.getQueuedAt(),
@@ -297,6 +302,7 @@ public class TaskApplicationService {
             List<UUID> inputAssetIds,
             UUID baseArtifactId,
             String selectedModelCode,
+            Map<String, String> selectedModels,
             String errorCode,
             String errorMessage,
             Instant queuedAt,
@@ -321,8 +327,22 @@ public class TaskApplicationService {
             Map<String, Object> parameters,
             List<UUID> inputAssetIds,
             UUID baseArtifactId,
+            String selectedModelCode,
             String idempotencyKey
     ) {
-        return createRun(taskId, parameters, inputAssetIds, baseArtifactId, null, idempotencyKey);
+        return createRun(
+                taskId, parameters, inputAssetIds, baseArtifactId,
+                Map.of(), selectedModelCode, idempotencyKey
+        );
+    }
+
+    public RunView createRun(
+            UUID taskId,
+            Map<String, Object> parameters,
+            List<UUID> inputAssetIds,
+            UUID baseArtifactId,
+            String idempotencyKey
+    ) {
+        return createRun(taskId, parameters, inputAssetIds, baseArtifactId, Map.of(), null, idempotencyKey);
     }
 }

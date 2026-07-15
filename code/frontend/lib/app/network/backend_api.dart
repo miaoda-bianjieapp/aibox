@@ -102,6 +102,7 @@ class BackendApi {
     String? existingTaskId,
     String? baseArtifactId,
     String? selectedModelCode,
+    Map<String, String> selectedModels = const {},
     required Map<String, Object?> parameters,
     required List<String> inputAssetIds,
     required ValueChanged<String> onStatus,
@@ -134,6 +135,7 @@ class BackendApi {
         'inputAssetIds': inputAssetIds,
         'baseArtifactId': baseArtifactId,
         'selectedModelCode': selectedModelCode,
+        'selectedModels': selectedModels,
       },
     ));
     final runId = _requiredString(run, 'id');

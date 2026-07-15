@@ -3,6 +3,8 @@ package com.aibox.provider.openai;
 import com.aibox.feature.spi.AudioTranscriptionRequest;
 import com.aibox.feature.spi.AudioTranscriptionResponse;
 import com.aibox.feature.spi.GeneratedImage;
+import com.aibox.feature.spi.GeneratedAudio;
+import com.aibox.feature.spi.GeneratedVideo;
 import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImageGenerationResponse;
 import com.aibox.feature.spi.ModelAsset;
@@ -12,6 +14,10 @@ import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.MultimodalTextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
+import com.aibox.feature.spi.TextToSpeechRequest;
+import com.aibox.feature.spi.TextToSpeechResponse;
+import com.aibox.feature.spi.VideoGenerationRequest;
+import com.aibox.feature.spi.VideoGenerationResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
@@ -147,44 +153,174 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     }
 
     @Override
-    public ImageGenerationResponse generateImage(ModelCallTarget target, ImageGenerationRequest request) {
+    public ImageGenerationResponse generateImage(
+            ModelCallTarget target,
+            ImageGenerationRequest request,
+            List<ModelAsset> assets
+    ) {
         ProviderContext provider = requireProvider(target);
+        if (!assets.isEmpty()) {
+            MultipartBodyBuilder body = new MultipartBodyBuilder();
+            body.part("model", target.providerModel());
+            body.part("prompt", request.prompt());
+            body.part("n", request.count());
+            if (!isBlank(request.size())) body.part("size", request.size());
+            for (ModelAsset asset : assets) {
+                if (!asset.mediaType().startsWith("image/")) {
+                    throw new ModelProviderException(
+                            "PROVIDER_ASSET_TYPE_UNSUPPORTED",
+                            "OpenAI-compatible image editing accepts image assets only: " + asset.fileName(),
+                            false
+                    );
+                }
+                body.part("image", new NamedByteArrayResource(asset.content(), asset.fileName()))
+                        .contentType(safeMediaType(asset.mediaType()));
+            }
+            return execute(() -> {
+                JsonNode response = provider.client().post()
+                        .uri(provider.config().getImageEditPath())
+                        .header("Idempotency-Key", request.runId().toString())
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(body.build())
+                        .retrieve()
+                        .body(JsonNode.class);
+                return parseImageResponse(response, provider.code(), target.providerModel());
+            });
+        }
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", target.providerModel());
         body.put("prompt", request.prompt());
         body.put("n", request.count());
         if (!isBlank(request.size())) body.put("size", request.size());
 
-        return execute(() -> {
-            JsonNode response = postJson(
+        return execute(() -> parseImageResponse(
+                postJson(
                     provider, provider.config().getImagePath(), request.runId().toString(), body
-            );
-            if (response == null || !response.path("data").isArray() || response.path("data").isEmpty()) {
-                throw invalidResponse("Image generation response has no images");
+                ), provider.code(), target.providerModel()
+        ));
+    }
+
+    @Override
+    public TextToSpeechResponse synthesizeSpeech(ModelCallTarget target, TextToSpeechRequest request) {
+        ProviderContext provider = requireProvider(target);
+        String format = isBlank(request.format()) ? "mp3" : request.format();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", target.providerModel());
+        body.put("input", request.text());
+        body.put("voice", isBlank(request.voice()) ? "alloy" : request.voice());
+        body.put("response_format", format);
+        if (request.speed() != null) body.put("speed", request.speed());
+        return execute(() -> {
+            byte[] content = provider.client().post()
+                    .uri(provider.config().getSpeechPath())
+                    .header("Idempotency-Key", request.runId().toString())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(byte[].class);
+            if (content == null || content.length == 0) {
+                throw invalidResponse("Text-to-speech response is empty");
             }
-            List<GeneratedImage> images = new ArrayList<>();
-            response.path("data").forEach(item -> {
-                String url = item.path("url").asText(null);
-                String base64 = item.path("b64_json").asText(null);
-                byte[] contentBytes;
-                if (!isBlank(base64)) {
-                    contentBytes = Base64.getDecoder().decode(base64);
-                } else if (!isBlank(url)) {
-                    contentBytes = RestClient.create().get().uri(url).retrieve().body(byte[].class);
-                } else {
-                    throw invalidResponse("Generated image has neither binary data nor URL");
-                }
-                images.add(new GeneratedImage(
-                        url, "image/png", item.path("revised_prompt").asText(null), contentBytes
-                ));
-            });
-            JsonNode usage = response.path("usage");
-            return new ImageGenerationResponse(
-                    images, provider.code(), response.path("model").asText(target.providerModel()),
-                    response.path("id").asText(null), nullableInt(usage, "input_tokens"),
-                    nullableInt(usage, "output_tokens")
+            return new TextToSpeechResponse(
+                    new GeneratedAudio("speech." + format, audioMediaType(format), content),
+                    provider.code(), target.providerModel(), null, null, null
             );
         });
+    }
+
+    @Override
+    public VideoGenerationResponse generateVideo(
+            ModelCallTarget target,
+            VideoGenerationRequest request,
+            List<ModelAsset> assets
+    ) {
+        ProviderContext provider = requireProvider(target);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", target.providerModel());
+        body.put("prompt", request.prompt());
+        body.put("n", request.count());
+        if (request.durationSeconds() != null) body.put("duration", request.durationSeconds());
+        if (!isBlank(request.aspectRatio())) body.put("aspect_ratio", request.aspectRatio());
+        if (!isBlank(request.resolution())) body.put("resolution", request.resolution());
+        if (!assets.isEmpty()) {
+            List<String> inputImages = assets.stream().map(asset -> {
+                if (!asset.mediaType().startsWith("image/")) {
+                    throw new ModelProviderException(
+                            "PROVIDER_ASSET_TYPE_UNSUPPORTED",
+                            "OpenAI-compatible video generation accepts image references only: " + asset.fileName(),
+                            false
+                    );
+                }
+                return "data:" + asset.mediaType() + ";base64,"
+                        + Base64.getEncoder().encodeToString(asset.content());
+            }).toList();
+            body.put("input_images", inputImages);
+        }
+        return execute(() -> parseVideoResponse(
+                postJson(provider, provider.config().getVideoPath(), request.runId().toString(), body),
+                provider.code(), target.providerModel()
+        ));
+    }
+
+    private static ImageGenerationResponse parseImageResponse(
+            JsonNode response,
+            String providerCode,
+            String fallbackModel
+    ) {
+        if (response == null || !response.path("data").isArray() || response.path("data").isEmpty()) {
+            throw invalidResponse("Image generation response has no images");
+        }
+        List<GeneratedImage> images = new ArrayList<>();
+        response.path("data").forEach(item -> {
+            BinaryResult binary = binaryResult(item, "Generated image");
+            images.add(new GeneratedImage(
+                    binary.url(), item.path("media_type").asText("image/png"),
+                    item.path("revised_prompt").asText(null), binary.content()
+            ));
+        });
+        JsonNode usage = response.path("usage");
+        return new ImageGenerationResponse(
+                images, providerCode, response.path("model").asText(fallbackModel),
+                response.path("id").asText(null), nullableInt(usage, "input_tokens"),
+                nullableInt(usage, "output_tokens")
+        );
+    }
+
+    private static VideoGenerationResponse parseVideoResponse(
+            JsonNode response,
+            String providerCode,
+            String fallbackModel
+    ) {
+        JsonNode data = response == null ? null : response.path("data");
+        if (data == null || !data.isArray() || data.isEmpty()) {
+            throw invalidResponse("Video generation response has no videos");
+        }
+        List<GeneratedVideo> videos = new ArrayList<>();
+        data.forEach(item -> {
+            BinaryResult binary = binaryResult(item, "Generated video");
+            videos.add(new GeneratedVideo(
+                    binary.url(), item.path("filename").asText("generated.mp4"),
+                    item.path("media_type").asText("video/mp4"), binary.content()
+            ));
+        });
+        JsonNode usage = response.path("usage");
+        return new VideoGenerationResponse(
+                videos, providerCode, response.path("model").asText(fallbackModel),
+                response.path("id").asText(null), nullableInt(usage, "input_tokens"),
+                nullableInt(usage, "output_tokens")
+        );
+    }
+
+    private static BinaryResult binaryResult(JsonNode item, String label) {
+        String url = item.path("url").asText(null);
+        String base64 = item.path("b64_json").asText(item.path("base64").asText(null));
+        if (!isBlank(base64)) return new BinaryResult(url, Base64.getDecoder().decode(base64));
+        if (!isBlank(url)) {
+            byte[] content = RestClient.create().get().uri(url).retrieve().body(byte[].class);
+            if (content != null && content.length > 0) return new BinaryResult(url, content);
+        }
+        throw invalidResponse(label + " has neither binary data nor URL");
     }
 
     private ProviderContext requireProvider(ModelCallTarget target) {
@@ -294,6 +430,20 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private static String audioMediaType(String format) {
+        return switch (format.toLowerCase()) {
+            case "wav" -> "audio/wav";
+            case "opus" -> "audio/opus";
+            case "aac" -> "audio/aac";
+            case "flac" -> "audio/flac";
+            case "pcm" -> "audio/L16";
+            default -> "audio/mpeg";
+        };
+    }
+
+    private record BinaryResult(String url, byte[] content) {
     }
 
     private record ProviderContext(

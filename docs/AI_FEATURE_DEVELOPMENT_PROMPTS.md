@@ -37,7 +37,7 @@
 - 仓库根目录：<本地仓库绝对路径>
 - 当前分支：<分支名>
 - 功能所属分类：<例如 图片设计>
-- 功能暂定名称：<例如 文生图>
+- 功能暂定名称：<例如 AI 图片生成>
 - 功能描述：<开发者描述>
 - 类似产品截图：<图片绝对路径或附件>
 - 已知模型或外部接口：<没有则写待定>
@@ -101,20 +101,22 @@ C. 输出与成果
 
 D. 模型能力
 
-- 使用 TEXT_GENERATION、VISION、AUDIO_TRANSCRIPTION、IMAGE_GENERATION 中的现有能力，还是需要扩展新的标准能力；
-- modelAlias；
-- 默认 Deployment；
-- 用户是否可以选择模型；
+- 使用 TEXT_GENERATION、VISION、AUDIO_TRANSCRIPTION、IMAGE_GENERATION、TEXT_TO_SPEECH、VIDEO_GENERATION 中的哪些能力，还是确实需要扩展新的标准能力；
+- 每种能力对应的 modelAlias；
+- 每种能力的默认 Deployment；
+- 每种能力是否允许用户选择模型；
 - 每个模型选项的业务展示名与差异说明；
 - 模型输入输出与平台标准对象如何映射；
 - 是否同步返回、异步任务、回调或轮询。
+
+当前能力边界必须按实际实现理解：IMAGE_GENERATION 同时支持“文字 -> 图片”和“文字 + 参考图片 -> 图片”；TEXT_TO_SPEECH 输出音频字节；VIDEO_GENERATION 支持文字和可选参考图片，并可能需要厂商专属异步提交/轮询适配。一个功能可以配置多个能力，Run 通过 selectedModels 分别固化每种能力的 Deployment。
 
 E. 任务生命周期
 
 - Task 标题如何产生；
 - Run 创建、幂等、排队、执行、取消、失败和重试；
 - 是否支持基于旧 Artifact 继续修改；
-- 修改时复用哪些参数、附件和 selectedModelCode；
+- 修改时复用哪些参数、附件和 selectedModels 能力映射；
 - 新成果如何形成 parentArtifactId/versionNumber 版本链；
 - 哪些失败允许重试，哪些属于参数错误。
 
@@ -195,7 +197,7 @@ H. 安全和约束
 6. 优先使用 Feature inputSchema/uiSchema 驱动 task_sheet.dart。现有动态表单支持文本、textarea、数字、布尔、枚举、segmented、file、image、audio 和 video。只有需求无法表达时才增加通用控件或功能专用页面。
 7. 优先扩展通用 renderer；只有输出交互明显独特时才增加专用 renderer。
 8. 继续修改必须创建新 Run 和新 Artifact，保留 parentArtifactId/versionNumber，不覆盖旧成果。
-9. 重试和继续修改应沿用原 selectedModelCode，除非需求明确允许重新选择。
+9. 重试和继续修改应沿用原 selectedModels 能力映射；旧 selectedModelCode 只用于兼容。
 10. Provider 公共配置写入 application-template.yml 并使用 CHANGE_ME Key 占位符；真实 Key 只写入本地 application.yml，不使用环境变量或 .env；日志、异常、测试数据和最终总结不得包含完整 API Key。
 11. 真机联调默认使用电脑和手机所在的同一 Wi-Fi，确认 api_config.dart 指向电脑 WLAN IPv4，并检查 Windows 防火墙和路由器 AP 隔离；不要要求使用手机热点。
 
@@ -219,10 +221,12 @@ Flyway 与多人协作规则：
 
 第二步：模型策略
 
-- 对需要模型的功能配置 feature_model_policy；
-- 在 feature_model_option 中只开放该功能允许使用的 Deployment；
-- 明确默认模型和 allow_user_selection；
-- Handler 使用稳定 modelAlias，并把 context.selectedModelCode() 传给模型请求；
+- 对需要模型的功能按能力配置一条或多条 feature_model_policy；
+- 每条 Policy 在 feature_model_option 中只开放该能力允许使用的 Deployment；
+- 分别明确每种能力的默认模型和 allow_user_selection；
+- Handler 使用稳定 modelAlias，并通过 context.selectedModelCode(ModelCapability.X) 取得各能力的 Deployment；
+- 创建 Run 时通过 selectedModels 提交 capability -> deployment code 映射；selectedModelCode 只用于旧客户端兼容；
+- model_route 只作为未显式选择 Deployment 时的全局默认路由，不能代替 Feature Policy 白名单；
 - 不把 provider code 或 provider model 硬编码在功能代码中。
 
 第三步：后端功能实现
@@ -230,19 +234,28 @@ Flyway 与多人协作规则：
 - 在 feature-impl 中按 workspace/feature 独立目录实现 FeatureHandler；
 - validate 同时保护必填、长度、数量、枚举、附件类型等服务端边界；
 - execute 只编排参数、Prompt/模型请求和标准输出；
-- 输入附件使用 context.inputAssetIds；
+- 输入附件使用 context.inputAssetIds；参考图生图时把对应 Asset ID 放入 ImageGenerationRequest.inputAssetIds，不能只把图片名称写进 Prompt；
 - 支持修改时读取 context.baseArtifact；
-- 二进制输出使用 ArtifactDrafts.generatedImage/generatedImages/generatedMedia 或 OutputAssetDraft；
+- 图片、语音和视频输出优先使用 ArtifactDrafts.generatedImage/generatedImages/generatedAudio/generatedVideos/generatedMedia 或 OutputAssetDraft，确保二进制内容进入 Asset/Artifact；
+- TTS 使用 ModelGateway.synthesizeSpeech，视频生成使用 ModelGateway.generateVideo，不得借用文本或生图接口；
+- 视频厂商为异步协议时，在 Provider Adapter 内封装提交、查询和结果下载，FeatureHandler 不处理厂商任务 ID；
 - 将厂商响应中的必要追踪信息放入 metadata，但不存密钥和完整敏感内容。
 
 第四步：Flutter
 
-- 确认 FeatureDetail 能直接解析新增契约和 modelPolicy；
-- 优先让现有 task_sheet 自动渲染参数、附件和模型选择；
+- 确认 FeatureDetail 能直接解析新增契约和 modelPolicies；
+- 优先让现有 task_sheet 自动渲染参数、附件和 modelPolicies 多能力模型选择器；
 - 如果扩展通用表单控件，不能破坏已有 writing.draft；
 - 输出优先交给现有通用结果页；新增 renderer 时处理加载、空、错误、多结果、下载和历史回看；
-- 继续修改时带上已有 taskId、baseArtifactId、参数、附件和 selectedModelCode；
+- 继续修改时带上已有 taskId、baseArtifactId、参数、附件和 selectedModels；
 - 不增加只存在于前端的功能目录数据。
+
+第五步：最小联调检查
+
+- 检查 task_run.selected_models_json 是否按 capability 保存本次所有模型选择；selected_model_code 仅作为兼容字段；
+- 检查 provider_invocation 是否为每次实际模型调用记录正确的 capability、deployment_code、provider_code 和状态；
+- 图片、TTS、视频等二进制输出检查 artifact、artifact_asset、asset 是否形成完整关联，不能只保存厂商临时 URL；
+- 继续修改和重试后确认 selectedModels 被沿用，Artifact 版本递增且旧成果未覆盖。
 
 上文中的《功能需求确认稿》是已经确认的需求，必须以它为准
 
@@ -269,12 +282,12 @@ featureCode：<可选；暂不绑定功能就留空>
 
 1. 先检查 application.yml、Flyway 模型表、ModelGateway、ModelProviderClient、RoutingModelGateway 和现有 provider-adapters，复用当前多 Provider/Deployment 架构。
 2. 根据 Base URL 识别官方厂商，优先查询官方文档和官方只读模型列表接口。不得要求我提前整理协议、路径、请求响应或参数。
-3. 整理该官方渠道可用模型并按文本、视觉、音频转写、生图等能力分类。区分稳定模型、预览模型和日期版本，不把所有模型不加筛选地放进产品。
+3. 整理该官方渠道可用模型并按文本、视觉、音频转写、生图、TTS、视频生成等能力分类。确认生图是否支持参考图/编辑，视频是否同步或异步；区分稳定模型、预览模型和日期版本，不把所有模型不加筛选地放进产品。
 4. 如果我没有指定模型，为目标能力选择少量稳定、通用模型；只有模型选择会明显影响成本或产品行为且无法合理判断时才询问我。
 5. 确认协议、鉴权、路径、请求体、响应体和同步/异步方式。OpenAI-compatible 复用现有适配器，厂商专属协议才新增 ModelProviderClient，专属逻辑不得进入 FeatureHandler。
 6. 在 application-template.yml 配置不含真实 Key 的官方 Provider，并使用 CHANGE_ME 占位符；真实 API Key 只写入本地 application.yml，不使用环境变量、.env、${...} 或 System.getenv()。
-7. 使用新 Flyway 迁移写入 model_provider、model_deployment 和必要路由，provider_kind 必须为 OFFICIAL。已有同一官方 Provider 时复用，不能重复创建。
-8. 提供 featureCode 时配置 Feature Policy/Option；未提供时只完成全局接入并说明前端尚不可选。
+7. 使用新 Flyway 迁移写入 model_provider、model_deployment 和必要路由，provider_kind 必须为 OFFICIAL。每个 Deployment 只声明一种 capability；同一厂商模型同时支持文本和视觉时可建立两个能力不同的 Deployment。已有同一官方 Provider 时复用，不能重复创建。
+8. 提供 featureCode 时按所需能力配置一条或多条 Feature Policy/Option，使 Run 通过 selectedModels 固化选择；未提供时只完成全局接入并说明前端尚不可选。
 9. 不向前端、日志、测试、文档或最终回答输出完整 Key。未经明确允许，只调用模型列表等只读接口，不执行可能计费的生成请求。
 10. 直接完成配置、代码、迁移和构建测试，不要只给方案。
 
@@ -297,13 +310,13 @@ featureCode：<可选；暂不绑定功能就留空>
 
 1. 先检查现有 Provider、Deployment、Route、Feature Policy、模型适配器和 Flutter 模型来源标签，不创建第二套调用框架。
 2. 优先使用 Key 查询 `/v1/models`、`/models` 或中转站文档提供的只读模型列表，不执行生成请求。根据结果判断是否 OpenAI-compatible，并确认实际 Base URL 拼接方式。
-3. 输出中转站宣称可用的完整模型列表，并按通用文本、视觉、生图、音频、Realtime、Codex/编程专用等分类。模型列表只代表中转站宣称可用，不能表述成已完成真实调用验证。
+3. 输出中转站宣称可用的完整模型列表，并按通用文本、视觉、生图、TTS、音频转写、视频、Realtime、Codex/编程专用等分类。确认生图是否支持参考图/编辑、视频是否需要异步轮询；模型列表只代表中转站宣称可用，不能表述成已完成真实调用验证。
 4. 不把全部模型自动写入产品。根据目标能力白名单配置少量稳定通用模型，跳过无关、重复、预览、Realtime 和编程专用模型；选择存在重大歧义时再问我。
 5. 使用中转站要求的精确 model 名称。即使与官方是同一个上游模型，也必须创建独立 Deployment，保证路由、计费和调用记录可区分。
-6. OpenAI-compatible 中转站复用现有适配器；需要 HTTP-Referer、X-Title 等额外 Header 时使用 Provider headers；协议确实不同才新增适配器。
+6. OpenAI-compatible 中转站复用现有适配器及 chat-path、audio-path、image-path、image-edit-path、speech-path、video-path；需要 HTTP-Referer、X-Title 等额外 Header 时使用 Provider headers。视频等协议与通用同步响应不一致时实现专属适配器，不在 Handler 中轮询。
 7. 在 application-template.yml 新增不含真实 Key 的中转 Provider，并使用 CHANGE_ME 占位符；真实 Key 只写入本地 application.yml，不使用环境变量、.env、${...} 或 System.getenv()。
 8. 使用新 Flyway 迁移写入 provider_kind=RELAY 的 model_provider、模型 Deployment 和必要 Route。不得修改已执行迁移或重复创建已有 Provider。
-9. 提供 featureCode 时增加 Feature Policy/Option，让 Flutter 显示“中转”来源；未提供时只完成全局接入。官方模型默认路由不要被中转站自动替换，也不要实现未确认的自动故障切换。
+9. 提供 featureCode 时按每种能力增加 Feature Policy/Option，让 Flutter 显示多个能力选择器和“中转”来源，并通过 selectedModels 提交；未提供时只完成全局接入。官方模型默认路由不要被中转站自动替换，也不要实现未确认的自动故障切换。
 10. 不向前端、日志、测试、文档或最终回答输出完整 Key。未经明确允许，不执行文本、生图等可能计费的真实请求。
 11. 直接完成配置、代码、迁移和构建测试，不要只给方案。
 

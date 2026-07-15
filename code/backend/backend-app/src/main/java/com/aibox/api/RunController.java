@@ -42,7 +42,7 @@ public class RunController {
     ) {
         return taskService.createRun(
                 taskId, request.parameters(), request.inputAssetIds(), request.baseArtifactId(),
-                request.selectedModelCode(), idempotencyKey
+                request.selectedModels(), request.selectedModelCode(), idempotencyKey
         );
     }
 
@@ -75,11 +75,13 @@ public class RunController {
             Map<String, Object> parameters,
             List<UUID> inputAssetIds,
             UUID baseArtifactId,
+            Map<String, String> selectedModels,
             @Size(max = 120) String selectedModelCode
     ) {
         public CreateRunRequest {
             parameters = parameters == null ? Map.of() : Map.copyOf(parameters);
             inputAssetIds = inputAssetIds == null ? List.of() : List.copyOf(inputAssetIds);
+            selectedModels = selectedModels == null ? Map.of() : Map.copyOf(selectedModels);
         }
     }
 }

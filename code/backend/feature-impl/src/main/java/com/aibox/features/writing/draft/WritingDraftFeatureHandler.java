@@ -6,6 +6,7 @@ import com.aibox.feature.spi.FeatureExecutionResult;
 import com.aibox.feature.spi.FeatureHandler;
 import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.ModelGateway;
+import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import org.springframework.stereotype.Component;
@@ -58,7 +59,7 @@ public final class WritingDraftFeatureHandler implements FeatureHandler {
                 context.tenantId(),
                 context.runId(),
                 "text.default",
-                context.selectedModelCode(),
+                context.selectedModelCode(ModelCapability.TEXT_GENERATION),
                 "You are a professional Chinese writing assistant. Return a structured Markdown draft.",
                 userPrompt,
                 2_000,

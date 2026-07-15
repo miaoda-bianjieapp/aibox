@@ -114,6 +114,45 @@ public final class ArtifactDrafts {
         );
     }
 
+    public static ArtifactDraft generatedAudio(
+            String title,
+            TextToSpeechResponse response,
+            Map<String, Object> metadata
+    ) {
+        GeneratedAudio audio = response.audio();
+        Map<String, Object> fullMetadata = providerMetadata(
+                metadata, response.provider(), response.model(), response.providerRequestId()
+        );
+        return generatedMedia(
+                "audio", title, audio.fileName(), audio.mediaType(), audio.content(), fullMetadata
+        );
+    }
+
+    public static ArtifactDraft generatedVideos(
+            String title,
+            VideoGenerationResponse response,
+            Map<String, Object> metadata
+    ) {
+        if (response.videos().isEmpty()) {
+            throw new IllegalArgumentException("video generation response has no videos");
+        }
+        String field = response.videos().size() == 1 ? "assetId" : "assetIds";
+        List<OutputAssetDraft> outputs = new ArrayList<>();
+        for (int index = 0; index < response.videos().size(); index++) {
+            GeneratedVideo video = response.videos().get(index);
+            String mediaType = video.mediaType() == null || video.mediaType().isBlank()
+                    ? "video/mp4" : video.mediaType();
+            String fileName = video.fileName() == null || video.fileName().isBlank()
+                    ? "generated-" + (index + 1) + ".mp4" : video.fileName();
+            outputs.add(new OutputAssetDraft(field, fileName, mediaType, video.content()));
+        }
+        return new ArtifactDraft(
+                "video", title, outputs.get(0).mediaType(), Map.of(),
+                providerMetadata(metadata, response.provider(), response.model(), response.providerRequestId()),
+                outputs
+        );
+    }
+
     public static ArtifactDraft media(
             String kind,
             String title,
@@ -132,6 +171,19 @@ public final class ArtifactDrafts {
         return source.entrySet().stream()
                 .filter(entry -> entry.getValue() != null && !entry.getValue().toString().isBlank())
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    private static Map<String, Object> providerMetadata(
+            Map<String, Object> metadata,
+            String provider,
+            String model,
+            String providerRequestId
+    ) {
+        Map<String, Object> result = new LinkedHashMap<>(metadata == null ? Map.of() : metadata);
+        if (provider != null) result.put("provider", provider);
+        if (model != null) result.put("model", model);
+        if (providerRequestId != null) result.put("providerRequestId", providerRequestId);
+        return Map.copyOf(result);
     }
 
     private static String extension(String mediaType) {

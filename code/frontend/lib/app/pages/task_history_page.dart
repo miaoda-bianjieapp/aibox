@@ -130,6 +130,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
         taskTitle: detail.task.title,
         projectId: detail.task.projectId,
         initialModelCode: run.selectedModelCode,
+        initialModels: run.selectedModels,
       ),
     );
     if (mounted) await _reload();

@@ -78,6 +78,21 @@ GET http://localhost:8080/actuator/health
 `selectedModelCode`，执行时解析为具体 Deployment 和 Provider。供应商 HTTP 状态、Deployment、请求 ID
 和 token 用量由网关标准化并记录到 `provider_invocation`。
 
+复合功能使用 `selectedModels` 按能力同时固化多个 Deployment，例如：
+
+```json
+{
+  "TEXT_GENERATION": "codex2api-gpt-5-6-text",
+  "IMAGE_GENERATION": "aliyun-qwen-image-2-0"
+}
+```
+
+`selectedModelCode` 暂时保留用于旧客户端兼容。FeatureDetail 同时返回 `modelPolicies`，Flutter 会按能力
+显示多个模型选择器。
+
+当前 ModelGateway 标准能力包括文本生成、视觉理解、音频转写、文字转语音、文字/参考图生图和
+文字/参考图视频生成。TTS 和二进制媒体输出通过 `OutputAssetDraft` 进入统一 Asset/Artifact 存储。
+
 新增同协议 Provider 时只需增加 YAML Provider 连接和数据库 Provider/Deployment 数据；新增同一 Provider
 下的模型只增加 Deployment、Route 或 Feature Policy 数据，无需修改 OpenAI-compatible Java 适配器。
 中转站如果需要额外 HTTP Header，可在对应 Provider 连接下配置：
@@ -94,7 +109,7 @@ headers:
 
 1. `GET /api/v1/catalog/workspaces` 获取目录。
 2. `POST /api/v1/tasks` 创建 `writing.draft` 任务。
-3. `POST /api/v1/tasks/{taskId}/runs` 创建 Run，请求头必须带 `Idempotency-Key`；可传目录返回的 `selectedModelCode`。
+3. `POST /api/v1/tasks/{taskId}/runs` 创建 Run，请求头必须带 `Idempotency-Key`；通过 `selectedModels` 按能力提交模型选择，旧客户端仍可传 `selectedModelCode`。
 4. `GET /api/v1/runs/{runId}/events` 订阅 SSE。
 5. `GET /api/v1/runs/{runId}` 轮询兜底并获取 Artifact。
 6. `GET /api/v1/tasks/{taskId}` 回看全部 Run 和历史成果。

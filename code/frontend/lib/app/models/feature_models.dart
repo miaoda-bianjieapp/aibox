@@ -50,7 +50,7 @@ class FeatureDetail extends FeatureEntry {
     required this.uiSchema,
     required this.outputSchema,
     required this.config,
-    required this.modelPolicy,
+    required this.modelPolicies,
   });
 
   factory FeatureDetail.fromJson(Map<String, dynamic> json) => FeatureDetail(
@@ -65,16 +65,16 @@ class FeatureDetail extends FeatureEntry {
         uiSchema: _map(json['uiSchema']),
         outputSchema: _map(json['outputSchema']),
         config: _map(json['config']),
-        modelPolicy: json['modelPolicy'] is Map
-            ? ModelPolicy.fromJson(_map(json['modelPolicy']))
-            : null,
+        modelPolicies: _modelPolicies(json),
       );
 
   final Map<String, dynamic> inputSchema;
   final Map<String, dynamic> uiSchema;
   final Map<String, dynamic> outputSchema;
   final Map<String, dynamic> config;
-  final ModelPolicy? modelPolicy;
+  final List<ModelPolicy> modelPolicies;
+
+  ModelPolicy? get modelPolicy => modelPolicies.firstOrNull;
 
   Map<String, dynamic> get properties => _map(inputSchema['properties']);
   Set<String> get requiredFields =>
@@ -253,6 +253,7 @@ class RunView {
     required this.inputAssetIds,
     required this.baseArtifactId,
     required this.selectedModelCode,
+    required this.selectedModels,
     required this.errorMessage,
     required this.createdAt,
   });
@@ -265,6 +266,7 @@ class RunView {
         inputAssetIds: _stringList(json['inputAssetIds']),
         baseArtifactId: json['baseArtifactId']?.toString(),
         selectedModelCode: json['selectedModelCode']?.toString(),
+        selectedModels: _stringMap(json['selectedModels']),
         errorMessage: json['errorMessage']?.toString(),
         createdAt: _date(json['createdAt']),
       );
@@ -276,6 +278,7 @@ class RunView {
   final List<String> inputAssetIds;
   final String? baseArtifactId;
   final String? selectedModelCode;
+  final Map<String, String> selectedModels;
   final String? errorMessage;
   final DateTime createdAt;
 }
@@ -407,6 +410,7 @@ class TaskLaunchRequest {
     this.taskTitle,
     this.projectId,
     this.initialModelCode,
+    this.initialModels = const {},
   });
 
   final WorkspaceDefinition workspace;
@@ -419,12 +423,28 @@ class TaskLaunchRequest {
   final String? taskTitle;
   final String? projectId;
   final String? initialModelCode;
+  final Map<String, String> initialModels;
 
   bool get isRevision => existingTaskId != null && baseArtifactId != null;
 }
 
 Map<String, dynamic> _map(Object? value) =>
     value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+
+Map<String, String> _stringMap(Object? value) => value is Map
+    ? Map<String, String>.fromEntries(value.entries
+        .where((entry) => entry.key != null && entry.value != null)
+        .map((entry) => MapEntry(entry.key.toString(), entry.value.toString())))
+    : <String, String>{};
+
+List<ModelPolicy> _modelPolicies(Map<String, dynamic> json) {
+  final policies =
+      _mapList(json['modelPolicies']).map(ModelPolicy.fromJson).toList();
+  if (policies.isEmpty && json['modelPolicy'] is Map) {
+    policies.add(ModelPolicy.fromJson(_map(json['modelPolicy'])));
+  }
+  return policies;
+}
 
 List<Map<String, dynamic>> _mapList(Object? value) => value is List
     ? value

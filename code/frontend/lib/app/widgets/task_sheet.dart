@@ -46,7 +46,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, Object?> _values = {};
   final List<AssetView> _assets = [];
   String? _projectId;
-  String? _selectedModelCode;
+  final Map<String, String> _selectedModels = {};
   String? _status;
   String? _error;
   bool _submitting = false;
@@ -161,7 +161,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                             : (value) => setState(() => _projectId = value),
                       ),
                     ],
-                    ..._buildModelSelector(snapshot.requireData),
+                    ..._buildModelSelectors(snapshot.requireData),
                     ..._buildFields(snapshot.requireData),
                   ],
                   if (_status != null) ...[
@@ -204,12 +204,15 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   void _initialize(FeatureDetail feature) {
     if (_initialized) return;
     _initialized = true;
-    final policy = feature.modelPolicy;
-    if (policy != null) {
-      final requested = widget.request.initialModelCode;
-      _selectedModelCode = policy.options.any((item) => item.code == requested)
-          ? requested
-          : policy.defaultModelCode;
+    for (final policy in feature.modelPolicies) {
+      final requested = widget.request.initialModels[policy.capability] ??
+          (feature.modelPolicies.length == 1
+              ? widget.request.initialModelCode
+              : null);
+      _selectedModels[policy.capability] =
+          policy.options.any((item) => item.code == requested)
+              ? requested!
+              : policy.defaultModelCode;
     }
     for (final field in feature.fieldOrder) {
       final schema =
@@ -230,21 +233,24 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
   }
 
-  List<Widget> _buildModelSelector(FeatureDetail feature) {
-    final policy = feature.modelPolicy;
-    if (policy == null ||
-        !policy.allowUserSelection ||
-        policy.options.length <= 1) {
-      return const [];
+  List<Widget> _buildModelSelectors(FeatureDetail feature) {
+    final widgets = <Widget>[];
+    for (final policy in feature.modelPolicies) {
+      if (!policy.allowUserSelection || policy.options.length <= 1) continue;
+      widgets.addAll(_buildModelSelector(policy));
     }
-    final selected = policy.options
-        .where((item) => item.code == _selectedModelCode)
-        .firstOrNull;
+    return widgets;
+  }
+
+  List<Widget> _buildModelSelector(ModelPolicy policy) {
+    final selectedCode = _selectedModels[policy.capability];
+    final selected =
+        policy.options.where((item) => item.code == selectedCode).firstOrNull;
     return [
       const SizedBox(height: 15),
-      const _FieldLabel('使用模型'),
+      _FieldLabel(_modelCapabilityLabel(policy.capability)),
       DropdownButtonFormField<String>(
-        value: _selectedModelCode,
+        value: selectedCode,
         isExpanded: true,
         items: policy.options
             .map((option) => DropdownMenuItem<String>(
@@ -264,7 +270,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             .toList(),
         onChanged: _submitting
             ? null
-            : (value) => setState(() => _selectedModelCode = value),
+            : (value) => setState(() {
+                  if (value != null) {
+                    _selectedModels[policy.capability] = value;
+                  }
+                }),
       ),
       if (selected != null) ...[
         const SizedBox(height: 6),
@@ -443,7 +453,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         projectId: _projectId,
         existingTaskId: widget.request.existingTaskId,
         baseArtifactId: widget.request.baseArtifactId,
-        selectedModelCode: _selectedModelCode,
+        selectedModelCode:
+            _selectedModels.length == 1 ? _selectedModels.values.first : null,
+        selectedModels: _selectedModels,
         parameters: parameters,
         inputAssetIds: _assets.map((asset) => asset.id).toList(),
         onStatus: (status) {
@@ -504,6 +516,16 @@ class _ModelSourceBadge extends StatelessWidget {
         ),
       );
 }
+
+String _modelCapabilityLabel(String capability) => switch (capability) {
+      'TEXT_GENERATION' => '文本模型',
+      'VISION' => '视觉理解模型',
+      'AUDIO_TRANSCRIPTION' => '音频转写模型',
+      'IMAGE_GENERATION' => '图片生成模型',
+      'TEXT_TO_SPEECH' => '语音生成模型',
+      'VIDEO_GENERATION' => '视频生成模型',
+      _ => '使用模型',
+    };
 
 class _FieldLabel extends StatelessWidget {
   const _FieldLabel(this.text, {this.required = false});
