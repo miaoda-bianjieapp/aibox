@@ -27,4 +27,20 @@ abstract final class NativeFilePicker {
       bytes: bytes,
     );
   }
+
+  static Future<bool> save({
+    required String fileName,
+    required String mediaType,
+    required Uint8List bytes,
+  }) async {
+    final result = await _channel.invokeMethod<bool>(
+      'saveFile',
+      {
+        'fileName': fileName,
+        'mediaType': mediaType,
+        'bytes': bytes,
+      },
+    );
+    return result == true;
+  }
 }

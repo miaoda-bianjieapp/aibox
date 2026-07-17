@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["prompt", "aspectRatio"],
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "title": "画面描述",
+      "description": "描述主体、场景、风格、构图和光线。"
+    },
+    "referenceImages": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "title": "参考图片",
+      "description": "可选上传最多 3 张主体、构图或风格参考图。"
+    },
+    "aspectRatio": {
+      "type": "string",
+      "enum": ["1:1", "16:9", "9:16"],
+      "default": "1:1",
+      "title": "图片比例",
+      "description": "选择生成图片的横竖比例。"
+    }
+  },
+  "additionalProperties": false
+}

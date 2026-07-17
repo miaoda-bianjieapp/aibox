@@ -4,6 +4,7 @@ import com.aibox.feature.spi.ArtifactDraft;
 import com.aibox.feature.spi.FeatureExecutionContext;
 import com.aibox.platform.artifact.ArtifactEntity;
 import com.aibox.platform.artifact.ArtifactService;
+import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.common.NotFoundException;
 import com.aibox.platform.task.RunStatus;
 import com.aibox.platform.task.TaskRunEntity;
@@ -24,6 +25,7 @@ public class RunExecutionStateService {
 
     private final TaskRunRepository runRepository;
     private final ArtifactService artifactService;
+    private final AssetService assetService;
     private final OutboxService outboxService;
     private final RunEventPublisher eventPublisher;
     private final Clock clock;
@@ -31,12 +33,14 @@ public class RunExecutionStateService {
     public RunExecutionStateService(
             TaskRunRepository runRepository,
             ArtifactService artifactService,
+            AssetService assetService,
             OutboxService outboxService,
             RunEventPublisher eventPublisher,
             Clock clock
     ) {
         this.runRepository = runRepository;
         this.artifactService = artifactService;
+        this.assetService = assetService;
         this.outboxService = outboxService;
         this.eventPublisher = eventPublisher;
         this.clock = clock;
@@ -65,6 +69,7 @@ public class RunExecutionStateService {
                 run.getFeatureVersion(),
                 run.getParameters(),
                 run.getInputAssetIds(),
+                assetService.describeOwnedAll(run.getInputAssetIds()),
                 run.getSelectedModels(),
                 run.getSelectedModelCode(),
                 artifactService.baseReference(run)

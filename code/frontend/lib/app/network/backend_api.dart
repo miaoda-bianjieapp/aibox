@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import '../models/feature_models.dart';
 import 'api_config.dart';
@@ -13,9 +14,18 @@ class BackendApi {
   BackendApi._();
 
   static final instance = BackendApi._();
+  static const runPollingTimeout = Duration(minutes: 20);
+  static const _runPollingInterval = Duration(milliseconds: 500);
 
   final HttpClient _client = HttpClient()
     ..connectionTimeout = const Duration(seconds: 8);
+
+  static String runFailureMessage(String? code, String? serverMessage) {
+    if (code == 'PROVIDER_HTTP_524') {
+      return '模型服务处理超时，请重试；如持续失败，请切换其他模型';
+    }
+    return serverMessage ?? '任务执行失败，请稍后重试';
+  }
 
   Future<List<WorkspaceDefinition>> listWorkspaces() async {
     return _asMapList(await _request('GET', '/catalog/workspaces'))
@@ -95,6 +105,35 @@ class BackendApi {
   String assetContentUrl(String assetId) =>
       '${ApiConfig.baseUrl}/assets/$assetId/content';
 
+  Future<Uint8List> downloadAssetContent(String assetId) async {
+    try {
+      final request = await _client
+          .getUrl(Uri.parse(assetContentUrl(assetId)))
+          .timeout(const Duration(seconds: 10));
+      final response =
+          await request.close().timeout(const Duration(seconds: 60));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await response.drain<void>();
+        throw ApiException('图片下载失败 (${response.statusCode})');
+      }
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk in response) {
+        bytes.add(chunk);
+      }
+      return bytes.takeBytes();
+    } on ApiException {
+      rethrow;
+    } on SocketException {
+      throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个 Wi-Fi');
+    } on TimeoutException {
+      throw const ApiException('图片下载超时，请稍后重试');
+    }
+  }
+
+  Future<void> cancelRun(String runId) async {
+    await _request('POST', '/runs/$runId/cancel');
+  }
+
   Future<TaskExecutionResult> executeFeature({
     required FeatureDetail feature,
     required String taskTitle,
@@ -106,6 +145,7 @@ class BackendApi {
     required Map<String, Object?> parameters,
     required List<String> inputAssetIds,
     required ValueChanged<String> onStatus,
+    ValueChanged<String>? onRunCreated,
   }) async {
     late final String taskId;
     if (existingTaskId == null) {
@@ -139,8 +179,10 @@ class BackendApi {
       },
     ));
     final runId = _requiredString(run, 'id');
+    onRunCreated?.call(runId);
 
-    for (var attempt = 0; attempt < 240; attempt++) {
+    final pollingDeadline = DateTime.now().add(runPollingTimeout);
+    while (DateTime.now().isBefore(pollingDeadline)) {
       final detail = _asMap(await _request('GET', '/runs/$runId'));
       final runData = _asMap(detail['run']);
       final status = _requiredString(runData, 'status');
@@ -158,12 +200,16 @@ class BackendApi {
         );
       }
       if (status == 'FAILED' || status == 'CANCELLED' || status == 'EXPIRED') {
+        if (status == 'CANCELLED') {
+          throw const ApiException('任务已取消', code: 'RUN_CANCELLED');
+        }
+        final errorCode = runData['errorCode']?.toString();
         throw ApiException(
-          runData['errorMessage']?.toString() ?? '任务执行失败，请稍后重试',
-          code: runData['errorCode']?.toString(),
+          runFailureMessage(errorCode, runData['errorMessage']?.toString()),
+          code: errorCode,
         );
       }
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await Future<void>.delayed(_runPollingInterval);
     }
     throw const ApiException('等待任务结果超时，请稍后在历史任务中查看');
   }
@@ -188,7 +234,7 @@ class BackendApi {
     } on ApiException {
       rethrow;
     } on SocketException {
-      throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个热点');
+      throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个 Wi-Fi');
     } on TimeoutException {
       throw const ApiException('连接后端超时，请检查后端运行状态');
     } on FormatException {

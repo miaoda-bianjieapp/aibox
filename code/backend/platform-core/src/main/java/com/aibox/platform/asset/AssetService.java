@@ -1,5 +1,6 @@
 package com.aibox.platform.asset;
 
+import com.aibox.feature.spi.InputAssetReference;
 import com.aibox.feature.spi.ModelAsset;
 import com.aibox.platform.common.NotFoundException;
 import com.aibox.platform.common.ConflictException;
@@ -165,6 +166,20 @@ public class AssetService {
     public void requireOwnedAll(List<UUID> ids) {
         if (ids == null) return;
         ids.forEach(this::requireOwned);
+    }
+
+    @Transactional(readOnly = true)
+    public List<InputAssetReference> describeOwnedAll(List<UUID> ids) {
+        if (ids == null) return List.of();
+        return ids.stream()
+                .map(this::requireOwned)
+                .map(asset -> new InputAssetReference(
+                        asset.getId(),
+                        asset.getOriginalName(),
+                        asset.getMediaType(),
+                        asset.getSizeBytes()
+                ))
+                .toList();
     }
 
     @Transactional

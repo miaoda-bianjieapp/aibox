@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/feature_models.dart';
 import '../network/backend_api.dart';
+import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
 
 class AppDataController extends ChangeNotifier {
@@ -67,9 +68,24 @@ class AppDataController extends ChangeNotifier {
   }
 
   Future<AssetView?> pickAndUpload(
-      {List<String> mimeTypes = const ['*/*']}) async {
+      {List<String> mimeTypes = const ['*/*'],
+      List<String> allowedExtensions = const [],
+      int? maxSizeBytes}) async {
     final file = await NativeFilePicker.pick(mimeTypes: mimeTypes);
     if (file == null) return null;
+    if (!_matchesMimeType(file.mediaType, mimeTypes)) {
+      throw const ApiException('文件类型不符合当前功能要求');
+    }
+    final normalizedName = file.name.toLowerCase();
+    if (allowedExtensions.isNotEmpty &&
+        !allowedExtensions
+            .map((value) => value.toLowerCase())
+            .any(normalizedName.endsWith)) {
+      throw ApiException('仅支持 ${allowedExtensions.join('、')} 格式');
+    }
+    if (maxSizeBytes != null && file.bytes.length > maxSizeBytes) {
+      throw ApiException('单个文件不能超过 ${_formatMegabytes(maxSizeBytes)} MB');
+    }
     final asset = await api.uploadAsset(file);
     await refresh();
     return asset;
@@ -79,4 +95,22 @@ class AppDataController extends ChangeNotifier {
     await api.deleteAsset(assetId);
     await refresh();
   }
+}
+
+bool _matchesMimeType(String mediaType, List<String> accepted) {
+  if (accepted.isEmpty || accepted.contains('*/*')) return true;
+  return accepted.any((value) {
+    if (value == mediaType) return true;
+    if (value.endsWith('/*')) {
+      return mediaType.startsWith(value.substring(0, value.length - 1));
+    }
+    return false;
+  });
+}
+
+String _formatMegabytes(int bytes) {
+  final megabytes = bytes / (1024 * 1024);
+  return megabytes == megabytes.roundToDouble()
+      ? megabytes.toInt().toString()
+      : megabytes.toStringAsFixed(1);
 }

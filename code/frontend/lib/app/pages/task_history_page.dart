@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/feature_models.dart';
+import '../network/backend_api.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/task_sheet.dart';
@@ -159,24 +160,43 @@ class _ArtifactRow extends StatelessWidget {
 class _RunRow extends StatelessWidget {
   const _RunRow({required this.run});
   final RunView run;
+
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: AppColors.line))),
-        child: Row(children: [
-          Expanded(
-              child: Text(
-                  '第 ${run.runNumber} 次执行 · ${_shortDate(run.createdAt)}')),
-          Text(run.status,
-              style: TextStyle(
-                  color: run.status == 'SUCCEEDED'
-                      ? AppColors.accent
-                      : AppColors.muted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700)),
-        ]),
-      );
+  Widget build(BuildContext context) {
+    final errorMessage = run.status == 'FAILED'
+        ? BackendApi.runFailureMessage(run.errorCode, run.errorMessage)
+        : null;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: AppColors.line))),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('第 ${run.runNumber} 次执行 · ${_shortDate(run.createdAt)}'),
+            if (errorMessage != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                errorMessage,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ],
+          ]),
+        ),
+        const SizedBox(width: 12),
+        Text(run.status,
+            style: TextStyle(
+                color: run.status == 'SUCCEEDED'
+                    ? AppColors.accent
+                    : AppColors.muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
 }
 
 class _LoadError extends StatelessWidget {
