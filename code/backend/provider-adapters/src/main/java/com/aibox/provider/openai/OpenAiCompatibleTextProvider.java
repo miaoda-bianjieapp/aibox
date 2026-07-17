@@ -19,6 +19,7 @@ import com.aibox.feature.spi.TextToSpeechResponse;
 import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -32,12 +33,14 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Component
 public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
 
     public static final String PROTOCOL = "openai-compatible";
+    private static final ObjectMapper ERROR_MAPPER = new ObjectMapper();
 
     private final Map<String, ProviderContext> providers;
 
@@ -375,14 +378,52 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             return call.get();
         } catch (RestClientResponseException exception) {
             int status = exception.getStatusCode().value();
-            throw new ModelProviderException(
-                    "PROVIDER_HTTP_" + status, "Model provider returned HTTP " + status,
-                    status == 408 || status == 429 || status >= 500, exception
-            );
+            throw mapHttpFailure(status, exception.getResponseBodyAsString(), exception);
         } catch (ResourceAccessException exception) {
             throw new ModelProviderException(
                     "PROVIDER_CONNECTION_FAILED", "Model provider could not be reached", true, exception
             );
+        }
+    }
+
+    static ModelProviderException mapHttpFailure(int status, String responseBody, Throwable cause) {
+        String upstreamCode = upstreamErrorCode(responseBody);
+        boolean retryable = status == 408 || status == 429 || status >= 500;
+        if ("no_available_account".equals(upstreamCode)) {
+            return new ModelProviderException(
+                    "PROVIDER_NO_AVAILABLE_ACCOUNT",
+                    "模型服务当前没有可用账号，请稍后重试",
+                    true,
+                    cause
+            );
+        }
+        if ("account_pool_usage_limit_reached".equals(upstreamCode)) {
+            return new ModelProviderException(
+                    "PROVIDER_ACCOUNT_POOL_LIMIT_REACHED",
+                    "模型服务账号池额度已达上限，请稍后重试",
+                    true,
+                    cause
+            );
+        }
+        String message = switch (status) {
+            case 401, 403 -> "模型服务鉴权失败，请联系管理员检查供应商配置";
+            case 408 -> "模型服务请求超时，请稍后重试";
+            case 429 -> "模型服务请求过于频繁，请稍后重试";
+            case 503 -> "模型服务暂时不可用，请稍后重试";
+            default -> "模型供应商请求失败（HTTP " + status + "）";
+        };
+        return new ModelProviderException("PROVIDER_HTTP_" + status, message, retryable, cause);
+    }
+
+    private static String upstreamErrorCode(String responseBody) {
+        if (isBlank(responseBody)) return null;
+        try {
+            JsonNode response = ERROR_MAPPER.readTree(responseBody);
+            String code = response.path("error").path("code").asText(null);
+            if (isBlank(code)) code = response.path("code").asText(null);
+            return isBlank(code) ? null : code.trim().toLowerCase(Locale.ROOT);
+        } catch (Exception ignored) {
+            return null;
         }
     }
 

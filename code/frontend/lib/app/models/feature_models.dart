@@ -87,6 +87,14 @@ class FeatureDetail extends FeatureEntry {
   String? widgetFor(String field) =>
       _map(uiSchema['widgets'])[field]?.toString();
 
+  bool isFieldVisible(String field, Map<String, Object?> values) {
+    final rule = _map(_map(uiSchema['visibility'])[field]);
+    if (rule.isEmpty) return true;
+    final dependency = rule['field']?.toString();
+    if (dependency == null || dependency.isEmpty) return true;
+    return values[dependency]?.toString() == rule['equals']?.toString();
+  }
+
   String optionLabel(String field, String value) {
     final labels = _map(_map(uiSchema['enumLabels'])[field]);
     return labels[value]?.toString() ?? value;
@@ -101,6 +109,18 @@ class FeatureDetail extends FeatureEntry {
 
   String get revisionSubmitLabel =>
       uiSchema['revisionSubmitLabel']?.toString() ?? '生成新版本';
+
+  String? exampleFor(String field) {
+    final value = _map(uiSchema['examples'])[field]?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  bool get showResetAction => _map(uiSchema['actions'])['showReset'] == true;
+
+  String? get revisionSourceField {
+    final value = config['revisionSourceField']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
 }
 
 class ModelPolicy {
@@ -424,6 +444,7 @@ class TaskLaunchRequest {
     this.projectId,
     this.initialModelCode,
     this.initialModels = const {},
+    this.baseArtifactText,
   });
 
   final WorkspaceDefinition workspace;
@@ -437,6 +458,7 @@ class TaskLaunchRequest {
   final String? projectId;
   final String? initialModelCode;
   final Map<String, String> initialModels;
+  final String? baseArtifactText;
 
   bool get isRevision => existingTaskId != null && baseArtifactId != null;
 }

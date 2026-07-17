@@ -1,0 +1,19 @@
+featureCode: writing.rewrite_polish
+workspaceCode: writing
+version: 2
+displayName: 改写与润色
+description: 在保持事实、核心含义和原文语言的前提下改写或润色文本。
+status: INTERNAL
+executionMode: ASYNC
+resultType: rich_text
+rendererKey: rich_text_editor
+requiredCapabilities:
+  - TEXT_GENERATION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxOutputTokens: 3000
+modelAlias: text.default
+revisionSourceField: sourceText
