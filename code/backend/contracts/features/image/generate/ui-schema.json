@@ -1,0 +1,28 @@
+{
+  "order": ["prompt", "referenceImages", "aspectRatio"],
+  "widgets": {
+    "prompt": "textarea",
+    "referenceImages": "image",
+    "aspectRatio": "segmented"
+  },
+  "enumLabels": {
+    "aspectRatio": {
+      "1:1": "1:1",
+      "16:9": "16:9",
+      "9:16": "9:16"
+    }
+  },
+  "fieldOptions": {
+    "referenceImages": {
+      "acceptedMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+      "allowedExtensions": [".png", ".jpg", ".jpeg", ".webp"],
+      "maxItems": 3,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 31457280,
+      "showPreview": true
+    }
+  },
+  "feeNotice": "生成图片将调用付费模型，费用按所选模型实际计费。点击“生成图片”即表示确认本次调用。",
+  "submitLabel": "生成图片",
+  "revisionSubmitLabel": "生成新版本"
+}

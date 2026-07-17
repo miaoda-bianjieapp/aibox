@@ -159,12 +159,14 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             List<ModelAsset> assets
     ) {
         ProviderContext provider = requireProvider(target);
+        String imageSize = resolveImageSize(target, request.size());
         if (!assets.isEmpty()) {
             MultipartBodyBuilder body = new MultipartBodyBuilder();
             body.part("model", target.providerModel());
             body.part("prompt", request.prompt());
             body.part("n", request.count());
-            if (!isBlank(request.size())) body.part("size", request.size());
+            if (!isBlank(imageSize)) body.part("size", imageSize);
+            String imagePartName = setting(target, "imagePartName", "image");
             for (ModelAsset asset : assets) {
                 if (!asset.mediaType().startsWith("image/")) {
                     throw new ModelProviderException(
@@ -173,7 +175,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                             false
                     );
                 }
-                body.part("image", new NamedByteArrayResource(asset.content(), asset.fileName()))
+                body.part(imagePartName, new NamedByteArrayResource(asset.content(), asset.fileName()))
                         .contentType(safeMediaType(asset.mediaType()));
             }
             return execute(() -> {
@@ -192,7 +194,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         body.put("model", target.providerModel());
         body.put("prompt", request.prompt());
         body.put("n", request.count());
-        if (!isBlank(request.size())) body.put("size", request.size());
+        if (!isBlank(imageSize)) body.put("size", imageSize);
 
         return execute(() -> parseImageResponse(
                 postJson(
@@ -410,6 +412,23 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     private static Integer nullableInt(JsonNode node, String field) {
         JsonNode value = node.path(field);
         return value.isNumber() ? value.intValue() : null;
+    }
+
+    static String resolveImageSize(ModelCallTarget target, String requestedSize) {
+        if (isBlank(requestedSize)) return requestedSize;
+        Object configured = target.settings().get("imageSizeMap");
+        if (configured instanceof Map<?, ?> mapping) {
+            Object resolved = mapping.get(requestedSize);
+            if (resolved != null && !resolved.toString().isBlank()) {
+                return resolved.toString();
+            }
+        }
+        return requestedSize;
+    }
+
+    private static String setting(ModelCallTarget target, String name, String fallback) {
+        Object value = target.settings().get(name);
+        return value == null || value.toString().isBlank() ? fallback : value.toString();
     }
 
     private static MediaType safeMediaType(String value) {

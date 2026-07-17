@@ -49,7 +49,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, String> _selectedModels = {};
   String? _status;
   String? _error;
+  String? _runId;
   bool _submitting = false;
+  bool _cancelling = false;
   bool _initialized = false;
 
   @override
@@ -163,6 +165,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                     ],
                     ..._buildModelSelectors(snapshot.requireData),
                     ..._buildFields(snapshot.requireData),
+                    if (snapshot.requireData.feeNotice != null) ...[
+                      const SizedBox(height: 16),
+                      _FeeNotice(text: snapshot.requireData.feeNotice!),
+                    ],
                   ],
                   if (_status != null) ...[
                     const SizedBox(height: 18),
@@ -171,6 +177,16 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                     Text(_status!,
                         style: const TextStyle(
                             color: AppColors.accent, fontSize: 12)),
+                    if (_runId != null && !_cancelling) ...[
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _cancelRun,
+                          child: const Text('取消任务'),
+                        ),
+                      ),
+                    ],
                   ],
                   if (_error != null) ...[
                     const SizedBox(height: 14),
@@ -189,7 +205,13 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                             borderRadius: BorderRadius.circular(8)),
                       ),
                       icon: const Icon(Icons.auto_awesome_rounded, size: 19),
-                      label: Text(widget.request.isRevision ? '生成新版本' : '开始执行'),
+                      label: Text(widget.request.isRevision
+                          ? snapshot.hasData
+                              ? snapshot.requireData.revisionSubmitLabel
+                              : '生成新版本'
+                          : snapshot.hasData
+                              ? snapshot.requireData.submitLabel
+                              : '开始执行'),
                     ),
                   ),
                 ],
@@ -305,7 +327,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
 
   Widget _buildField(FeatureDetail feature, String field,
       Map<String, dynamic> schema, String widgetType) {
-    if (_isAssetField(schema, widgetType)) return _buildAssetField(widgetType);
+    if (_isAssetField(schema, widgetType)) {
+      return _buildAssetField(feature, field, schema, widgetType);
+    }
     if (schema['type'] == 'boolean') {
       return SwitchListTile.adaptive(
         contentPadding: EdgeInsets.zero,
@@ -369,39 +393,83 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     );
   }
 
-  Widget _buildAssetField(String widgetType) {
+  Widget _buildAssetField(FeatureDetail feature, String field,
+      Map<String, dynamic> schema, String widgetType) {
+    final options = feature.fieldOptions(field);
+    final maxItems = _integerOption(options, 'maxItems') ?? 1;
+    final acceptedMimeTypes = _stringListOption(options, 'acceptedMimeTypes',
+        fallback: _mimeTypesForWidget(widgetType));
+    final allowedExtensions = _stringListOption(options, 'allowedExtensions');
+    final maxTotalSizeBytes = _integerOption(options, 'maxTotalSizeBytes');
+    final currentBytes =
+        _assets.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      ..._assets.map((asset) => ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading:
-                const Icon(Icons.attach_file_rounded, color: AppColors.accent),
-            title:
-                Text(asset.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: IconButton(
-              onPressed: _submitting
-                  ? null
-                  : () => setState(() => _assets.remove(asset)),
-              tooltip: '移除',
-              icon: const Icon(Icons.close_rounded),
-            ),
-          )),
+      if (maxItems > 1)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text('已选择 ${_assets.length}/$maxItems',
+              style: const TextStyle(color: AppColors.muted, fontSize: 11)),
+        ),
+      if (_assets.isNotEmpty)
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _assets
+              .map((asset) => _AssetPreview(
+                    asset: asset,
+                    onRemove: _submitting
+                        ? null
+                        : () => setState(() => _assets.remove(asset)),
+                    contentUrl: widget.data.api.assetContentUrl(asset.id),
+                  ))
+              .toList(),
+        ),
+      if (maxTotalSizeBytes != null && _assets.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 7),
+          child: Text(
+            '${_formatBytes(currentBytes)} / ${_formatBytes(maxTotalSizeBytes)}',
+            style: const TextStyle(color: AppColors.muted, fontSize: 11),
+          ),
+        ),
+      const SizedBox(height: 8),
       OutlinedButton.icon(
-        onPressed: _submitting ? null : () => _pickAsset(widgetType),
+        onPressed: _submitting || _assets.length >= maxItems
+            ? null
+            : () => _pickAsset(
+                  widgetType,
+                  acceptedMimeTypes: acceptedMimeTypes,
+                  allowedExtensions: allowedExtensions,
+                  maxSizeBytes: _integerOption(options, 'maxFileSizeBytes'),
+                  maxTotalSizeBytes: maxTotalSizeBytes,
+                ),
         icon: const Icon(Icons.upload_file_outlined),
-        label: const Text('选择并上传文件'),
+        label: Text(_assets.length >= maxItems ? '已达到数量上限' : '选择并上传图片'),
       ),
     ]);
   }
 
-  Future<void> _pickAsset(String widgetType) async {
-    final mimeTypes = switch (widgetType) {
-      'image' => <String>['image/*'],
-      'audio' => <String>['audio/*'],
-      'video' => <String>['video/*'],
-      _ => <String>['*/*'],
-    };
+  Future<void> _pickAsset(
+    String widgetType, {
+    required List<String> acceptedMimeTypes,
+    required List<String> allowedExtensions,
+    required int? maxSizeBytes,
+    required int? maxTotalSizeBytes,
+  }) async {
     try {
-      final asset = await widget.data.pickAndUpload(mimeTypes: mimeTypes);
+      final asset = await widget.data.pickAndUpload(
+        mimeTypes: acceptedMimeTypes,
+        allowedExtensions: allowedExtensions,
+        maxSizeBytes: maxSizeBytes,
+      );
+      if (asset != null &&
+          maxTotalSizeBytes != null &&
+          _assets.fold<int>(0, (sum, item) => sum + item.sizeBytes) +
+                  asset.sizeBytes >
+              maxTotalSizeBytes) {
+        await widget.data.deleteAsset(asset.id);
+        throw ApiException('参考图片总大小不能超过 ${_formatBytes(maxTotalSizeBytes)}');
+      }
       if (asset != null && mounted) setState(() => _assets.add(asset));
     } catch (exception) {
       if (mounted) setState(() => _error = '$exception');
@@ -461,14 +529,29 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         onStatus: (status) {
           if (mounted) setState(() => _status = status);
         },
+        onRunCreated: (runId) {
+          if (mounted) setState(() => _runId = runId);
+        },
       );
       if (mounted) {
         Navigator.of(context).pop(result);
       }
     } on ApiException catch (exception) {
       if (mounted) {
+        if (exception.code == 'RUN_CANCELLED') {
+          setState(() {
+            _submitting = false;
+            _cancelling = false;
+            _runId = null;
+            _status = '任务已取消';
+            _error = null;
+          });
+          return;
+        }
         setState(() {
           _submitting = false;
+          _cancelling = false;
+          _runId = null;
           _status = null;
           _error = exception.message;
         });
@@ -489,6 +572,132 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         schema['type'] == 'asset' ||
         const {'file', 'image', 'audio', 'video'}.contains(widgetType);
   }
+
+  Future<void> _cancelRun() async {
+    final runId = _runId;
+    if (runId == null || _cancelling) return;
+    setState(() {
+      _cancelling = true;
+      _status = '正在取消任务';
+    });
+    try {
+      await widget.data.api.cancelRun(runId);
+    } catch (exception) {
+      if (mounted) {
+        setState(() {
+          _cancelling = false;
+          _error = '$exception';
+        });
+      }
+    }
+  }
+}
+
+class _FeeNotice extends StatelessWidget {
+  const _FeeNotice({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8E8),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFF1D79B)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.info_outline_rounded,
+                size: 18, color: Color(0xFF8A5A00)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(text,
+                  style: const TextStyle(
+                      color: Color(0xFF6E4A00), fontSize: 12, height: 1.4)),
+            ),
+          ],
+        ),
+      );
+}
+
+class _AssetPreview extends StatelessWidget {
+  const _AssetPreview({
+    required this.asset,
+    required this.contentUrl,
+    required this.onRemove,
+  });
+  final AssetView asset;
+  final String contentUrl;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 92,
+        child: Stack(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.network(
+                contentUrl,
+                width: 92,
+                height: 92,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  width: 92,
+                  height: 92,
+                  color: AppColors.wash,
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.broken_image_outlined),
+                ),
+              ),
+            ),
+            if (onRemove != null)
+              Positioned(
+                top: 3,
+                right: 3,
+                child: InkWell(
+                  onTap: onRemove,
+                  child: Container(
+                    decoration: const BoxDecoration(
+                        color: Colors.black54, shape: BoxShape.circle),
+                    padding: const EdgeInsets.all(2),
+                    child: const Icon(Icons.close_rounded,
+                        color: Colors.white, size: 16),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+}
+
+List<String> _mimeTypesForWidget(String widgetType) => switch (widgetType) {
+      'image' => ['image/png', 'image/jpeg', 'image/webp'],
+      'audio' => ['audio/*'],
+      'video' => ['video/*'],
+      _ => ['*/*'],
+    };
+
+List<String> _stringListOption(Map<String, dynamic> options, String key,
+    {List<String> fallback = const []}) {
+  final value = options[key];
+  return value is List
+      ? value.map((item) => item.toString()).toList()
+      : fallback;
+}
+
+int? _integerOption(Map<String, dynamic> options, String key) {
+  final value = options[key];
+  return value is num ? value.toInt() : int.tryParse(value?.toString() ?? '');
+}
+
+String _formatBytes(int bytes) {
+  final megabytes = bytes / (1024 * 1024);
+  return megabytes >= 1
+      ? '${megabytes.toStringAsFixed(megabytes == megabytes.roundToDouble() ? 0 : 1)} MB'
+      : '$bytes B';
 }
 
 class _ModelSourceBadge extends StatelessWidget {

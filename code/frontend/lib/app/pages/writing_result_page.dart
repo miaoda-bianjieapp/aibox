@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../models/feature_models.dart';
 import '../network/backend_api.dart';
+import '../network/native_file_picker.dart';
 import '../theme/app_theme.dart';
 
 class ArtifactResultPage extends StatelessWidget {
@@ -26,6 +27,12 @@ class ArtifactResultPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('任务成果'),
         actions: [
+          if (_assetIds(artifact).isNotEmpty)
+            IconButton(
+              onPressed: () => _downloadImages(context),
+              tooltip: '下载图片',
+              icon: const Icon(Icons.download_outlined),
+            ),
           if (onContinue != null)
             IconButton(
               onPressed: onContinue,
@@ -67,7 +74,56 @@ class ArtifactResultPage extends StatelessWidget {
           .showSnackBar(const SnackBar(content: Text('全文已复制')));
     }
   }
+
+  Future<void> _downloadImages(BuildContext context) async {
+    final assetIds = _assetIds(artifact);
+    try {
+      for (var index = 0; index < assetIds.length; index++) {
+        final assetId = assetIds[index];
+        final bytes = await BackendApi.instance.downloadAssetContent(assetId);
+        final extension = switch (artifact.mimeType) {
+          'image/jpeg' => 'jpg',
+          'image/webp' => 'webp',
+          _ => 'png',
+        };
+        final suffix = assetIds.length == 1 ? '' : '-${index + 1}';
+        final saved = await NativeFilePicker.save(
+          fileName: '${_safeFileName(artifact.title)}$suffix.$extension',
+          mediaType: artifact.mimeType,
+          bytes: bytes,
+        );
+        if (!saved) return;
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('图片已保存')));
+      }
+    } catch (exception) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$exception')));
+      }
+    }
+  }
 }
+
+List<String> _assetIds(ArtifactView artifact) {
+  final single = artifact.content['assetId']?.toString();
+  if (single != null && single.isNotEmpty) return [single];
+  final multiple = artifact.content['assetIds'];
+  if (multiple is List) {
+    return multiple
+        .map((item) => item.toString())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+  return const [];
+}
+
+String _safeFileName(String value) => value
+    .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+    .trim()
+    .replaceAll(RegExp(r'\s+'), '_');
 
 class _ArtifactBody extends StatelessWidget {
   const _ArtifactBody({required this.artifact, required this.rendererKey});
@@ -157,18 +213,20 @@ class _ImageRenderer extends StatelessWidget {
         children: assetIds
             .map((id) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                        BackendApi.instance.assetContentUrl(id.toString()),
-                        fit: BoxFit.contain),
+                  child: _PreviewableImage(
+                    image: Image.network(
+                      BackendApi.instance.assetContentUrl(id.toString()),
+                      fit: BoxFit.contain,
+                    ),
                   ),
                 ))
             .toList(),
       );
     } else if (assetId != null && assetId.isNotEmpty) {
-      image = Image.network(BackendApi.instance.assetContentUrl(assetId),
-          fit: BoxFit.contain);
+      image = Image.network(
+        BackendApi.instance.assetContentUrl(assetId),
+        fit: BoxFit.contain,
+      );
     } else if (url != null && url.isNotEmpty) {
       image = Image.network(url, fit: BoxFit.contain);
     } else if (base64Data != null && base64Data.isNotEmpty) {
@@ -179,8 +237,59 @@ class _ImageRenderer extends StatelessWidget {
           label: '图片数据不可用',
           content: {});
     }
-    return ClipRRect(borderRadius: BorderRadius.circular(8), child: image);
+    return _PreviewableImage(image: image);
   }
+}
+
+class _PreviewableImage extends StatelessWidget {
+  const _PreviewableImage({required this.image});
+  final Widget image;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: () => showGeneralDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          barrierColor: Colors.black,
+          transitionDuration: const Duration(milliseconds: 160),
+          pageBuilder: (context, _, __) =>
+              _FullscreenImagePreview(image: image),
+          transitionBuilder: (context, animation, _, child) => FadeTransition(
+            opacity: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOut,
+              reverseCurve: Curves.easeIn,
+            ),
+            child: child,
+          ),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: image,
+        ),
+      );
+}
+
+class _FullscreenImagePreview extends StatelessWidget {
+  const _FullscreenImagePreview({required this.image});
+  final Widget image;
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: Colors.black,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => Navigator.of(context).pop(),
+          child: SizedBox.expand(
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              clipBehavior: Clip.none,
+              child: SizedBox.expand(child: image),
+            ),
+          ),
+        ),
+      );
 }
 
 class _MediaRenderer extends StatelessWidget {

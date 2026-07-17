@@ -91,6 +91,16 @@ class FeatureDetail extends FeatureEntry {
     final labels = _map(_map(uiSchema['enumLabels'])[field]);
     return labels[value]?.toString() ?? value;
   }
+
+  Map<String, dynamic> fieldOptions(String field) =>
+      _map(_map(uiSchema['fieldOptions'])[field]);
+
+  String? get feeNotice => uiSchema['feeNotice']?.toString();
+
+  String get submitLabel => uiSchema['submitLabel']?.toString() ?? '开始执行';
+
+  String get revisionSubmitLabel =>
+      uiSchema['revisionSubmitLabel']?.toString() ?? '生成新版本';
 }
 
 class ModelPolicy {
@@ -254,6 +264,7 @@ class RunView {
     required this.baseArtifactId,
     required this.selectedModelCode,
     required this.selectedModels,
+    required this.errorCode,
     required this.errorMessage,
     required this.createdAt,
   });
@@ -267,6 +278,7 @@ class RunView {
         baseArtifactId: json['baseArtifactId']?.toString(),
         selectedModelCode: json['selectedModelCode']?.toString(),
         selectedModels: _stringMap(json['selectedModels']),
+        errorCode: json['errorCode']?.toString(),
         errorMessage: json['errorMessage']?.toString(),
         createdAt: _date(json['createdAt']),
       );
@@ -279,6 +291,7 @@ class RunView {
   final String? baseArtifactId;
   final String? selectedModelCode;
   final Map<String, String> selectedModels;
+  final String? errorCode;
   final String? errorMessage;
   final DateTime createdAt;
 }

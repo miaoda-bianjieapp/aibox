@@ -67,6 +67,17 @@ yuanzuo:
         image-edit-path: /images/edits
         speech-path: /audio/speech
         video-path: /videos/generations
+      # Qwen Image 2.0 Deployment 由 Flyway 创建；真实 Key 仅写入本地 application.yml。
+      aliyun-maas:
+        protocol: openai-compatible
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api-key: CHANGE_ME_ALIYUN_BAILIAN_KEY
+        chat-path: /chat/completions
+        audio-path: /audio/transcriptions
+        image-path: /images/generations
+        image-edit-path: /images/edits
+        speech-path: /audio/speech
+        video-path: /videos/generations
 
 logging:
   pattern:

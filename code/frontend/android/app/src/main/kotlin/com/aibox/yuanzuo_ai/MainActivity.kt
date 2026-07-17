@@ -10,18 +10,38 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val channelName = "com.aibox.yuanzuo_ai/file_picker"
     private val pickRequestCode = 9104
+    private val saveRequestCode = 9105
     private var pendingResult: MethodChannel.Result? = null
+    private var pendingSaveBytes: ByteArray? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
-                if (call.method != "pickFile") {
-                    result.notImplemented()
-                    return@setMethodCallHandler
-                }
                 if (pendingResult != null) {
                     result.error("PICK_IN_PROGRESS", "A file picker is already open", null)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "saveFile") {
+                    val bytes = call.argument<ByteArray>("bytes")
+                    if (bytes == null || bytes.isEmpty()) {
+                        result.error("SAVE_EMPTY", "File content is empty", null)
+                        return@setMethodCallHandler
+                    }
+                    val fileName = call.argument<String>("fileName") ?: "download"
+                    val mediaType = call.argument<String>("mediaType") ?: "application/octet-stream"
+                    pendingResult = result
+                    pendingSaveBytes = bytes
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = mediaType
+                        putExtra(Intent.EXTRA_TITLE, fileName)
+                    }
+                    startActivityForResult(intent, saveRequestCode)
+                    return@setMethodCallHandler
+                }
+                if (call.method != "pickFile") {
+                    result.notImplemented()
                     return@setMethodCallHandler
                 }
                 pendingResult = result
@@ -38,12 +58,28 @@ class MainActivity : FlutterActivity() {
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != pickRequestCode) {
+        if (requestCode != pickRequestCode && requestCode != saveRequestCode) {
             super.onActivityResult(requestCode, resultCode, data)
             return
         }
         val result = pendingResult
         pendingResult = null
+        if (requestCode == saveRequestCode) {
+            val bytes = pendingSaveBytes
+            pendingSaveBytes = null
+            if (resultCode != Activity.RESULT_OK || data?.data == null || bytes == null) {
+                result?.success(false)
+                return
+            }
+            try {
+                contentResolver.openOutputStream(data.data!!)?.use { it.write(bytes) }
+                    ?: throw IllegalStateException("File destination is unavailable")
+                result?.success(true)
+            } catch (exception: Exception) {
+                result?.error("FILE_SAVE_FAILED", exception.message, null)
+            }
+            return
+        }
         if (resultCode != Activity.RESULT_OK || data?.data == null) {
             result?.success(null)
             return
