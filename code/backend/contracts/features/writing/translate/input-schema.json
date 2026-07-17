@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["sourceText", "targetLanguage"],
+  "properties": {
+    "sourceText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "title": "原文内容",
+      "description": "输入需要翻译的纯文本，系统将自动识别源语言。"
+    },
+    "targetLanguage": {
+      "type": "string",
+      "enum": ["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "ar"],
+      "default": "en",
+      "title": "目标语言",
+      "description": "选择译文使用的语言。"
+    }
+  },
+  "additionalProperties": false
+}
