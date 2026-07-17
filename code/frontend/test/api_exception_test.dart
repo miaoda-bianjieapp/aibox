@@ -22,6 +22,16 @@ void main() {
     );
   });
 
+  test('maps empty model output to a retry message', () {
+    expect(
+      taskFailureMessage(
+        code: 'MODEL_EMPTY_RESPONSE',
+        message: 'The model returned an empty writing framework',
+      ),
+      '模型未返回可用内容，请重试或切换其他模型。',
+    );
+  });
+
   test('keeps an unknown backend message', () {
     expect(
       taskFailureMessage(code: 'CUSTOM_ERROR', message: '自定义错误'),

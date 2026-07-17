@@ -20,6 +20,7 @@ String taskFailureMessage({String? code, String? message}) {
     'MODEL_ADAPTER_NOT_FOUND' ||
     'MODEL_ADAPTER_NOT_CONFIGURED' =>
       '所选模型尚未完成服务配置，请切换其他模型或联系管理员。',
+    'MODEL_EMPTY_RESPONSE' => '模型未返回可用内容，请重试或切换其他模型。',
     'PROVIDER_CONNECTION_FAILED' => '暂时无法连接模型服务，请稍后重试。',
     _ when message?.trim().isNotEmpty == true => message!.trim(),
     _ => '任务执行失败，请稍后重试。',

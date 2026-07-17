@@ -5,7 +5,6 @@ import '../network/backend_api.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/task_sheet.dart';
-import 'writing_result_page.dart';
 
 class TaskHistoryPage extends StatefulWidget {
   const TaskHistoryPage({super.key, required this.taskId, required this.data});
@@ -72,9 +71,10 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
                 else
                   ...detail.artifacts.map((artifact) => _ArtifactRow(
                         artifact: artifact,
-                        onTap: () =>
-                            Navigator.of(context).push(MaterialPageRoute<void>(
-                          builder: (context) => ArtifactResultPage(
+                        onTap: () {
+                          openArtifactResultPage(
+                            context,
+                            data: widget.data,
                             artifact: artifact,
                             rendererKey: feature?.rendererKey,
                             onContinue: feature == null
@@ -83,8 +83,8 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
                                     Navigator.of(context).pop();
                                     _continueFrom(detail, artifact);
                                   },
-                          ),
-                        )),
+                          );
+                        },
                       )),
                 const SizedBox(height: 28),
                 Text('执行记录 (${detail.runs.length})',
