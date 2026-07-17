@@ -102,6 +102,18 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
                 ? List.of(sourceImageId)
                 : List.of(sourceImageId, backgroundImageId);
         InputAssetReference sourceImage = requireInputAsset(context, sourceImageId);
+        Map<String, Object> requestMetadata = new LinkedHashMap<>();
+        requestMetadata.put("featureCode", FEATURE_CODE);
+        requestMetadata.put("runId", context.runId().toString());
+        requestMetadata.put("mode", mode);
+        requestMetadata.put("outputFormat", "png");
+        if (REMOVE_BACKGROUND.equals(mode)) {
+            requestMetadata.put("background", "transparent");
+        }
+        requestMetadata.put("preserveSourceDimensions", true);
+        requestMetadata.put("sourceWidth", sourceImage.width());
+        requestMetadata.put("sourceHeight", sourceImage.height());
+        requestMetadata.put("referenceImageCount", orderedImages.size());
 
         ImageGenerationResponse response = modelGateway.generateImage(new ImageGenerationRequest(
                 context.tenantId(),
@@ -112,15 +124,7 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
                 orderedImages,
                 null,
                 1,
-                Map.of(
-                        "featureCode", FEATURE_CODE,
-                        "runId", context.runId().toString(),
-                        "mode", mode,
-                        "preserveSourceDimensions", true,
-                        "sourceWidth", sourceImage.width(),
-                        "sourceHeight", sourceImage.height(),
-                        "referenceImageCount", orderedImages.size()
-                )
+                requestMetadata
         ));
         ImageGenerationResponse normalized = normalizeResponse(
                 response,

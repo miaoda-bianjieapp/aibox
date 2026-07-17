@@ -1,32 +1,11 @@
-insert into feature_definition (
-    id, workspace_id, code, display_name, description, status,
-    current_version, result_type, renderer_key, execution_mode,
-    sort_order, created_at, updated_at
-)
-select
-    'd72718f0-b5d2-4a2d-8e02-2af0ec5f4e2a',
-    workspace.id,
-    'image.background_edit',
-    '抠图与换背景',
-    '自动识别图片主体，移除背景或根据文字和参考图更换背景。',
-    'INTERNAL',
-    1,
-    'image',
-    'image',
-    'ASYNC',
-    20,
-    now(),
-    now()
-from workspace
-where workspace.code = 'image';
-
 insert into feature_version (
     id, feature_id, version, input_schema_json, ui_schema_json,
     output_schema_json, config_json, created_at
-) values (
-    '92635ecb-cc61-49de-89df-4528eb80701f',
-    'd72718f0-b5d2-4a2d-8e02-2af0ec5f4e2a',
-    1,
+)
+select
+    'b7d0f14e-2ce6-4e6e-8eb4-58c8b938d1f2',
+    feature.id,
+    2,
     '{
       "$schema":"https://json-schema.org/draft/2020-12/schema",
       "type":"object",
@@ -42,14 +21,14 @@ insert into feature_version (
         "sourceImage":{
           "type":"string",
           "format":"uuid",
-          "title":"主体原图",
-          "description":"上传需要识别主体并处理背景的图片；最长边不超过 8192 像素。"
+          "title":"第一张：主体原图",
+          "description":"必传。上传需要识别主体并处理背景的 PNG 或 JPG 图片；最长边不超过 8192 像素。"
         },
         "backgroundImage":{
           "type":"string",
           "format":"uuid",
-          "title":"背景参考图",
-          "description":"可选。上传希望使用或参考的背景图片。"
+          "title":"第二张：背景参考图",
+          "description":"换背景时可选。上传希望使用或参考的 PNG 或 JPG 背景图片；也可以只填写背景描述。"
         },
         "backgroundDescription":{
           "type":"string",
@@ -80,8 +59,8 @@ insert into feature_version (
       },
       "fieldOptions":{
         "sourceImage":{
-          "acceptedMimeTypes":["image/png","image/jpeg","image/webp"],
-          "allowedExtensions":[".png",".jpg",".jpeg",".webp"],
+          "acceptedMimeTypes":["image/png","image/jpeg"],
+          "allowedExtensions":[".png",".jpg",".jpeg"],
           "maxItems":1,
           "maxFileSizeBytes":10485760,
           "maxTotalSizeBytes":10485760,
@@ -89,8 +68,8 @@ insert into feature_version (
           "uploadLabel":"上传主体原图"
         },
         "backgroundImage":{
-          "acceptedMimeTypes":["image/png","image/jpeg","image/webp"],
-          "allowedExtensions":[".png",".jpg",".jpeg",".webp"],
+          "acceptedMimeTypes":["image/png","image/jpeg"],
+          "allowedExtensions":[".png",".jpg",".jpeg"],
           "maxItems":1,
           "maxFileSizeBytes":10485760,
           "maxTotalSizeBytes":10485760,
@@ -125,37 +104,10 @@ insert into feature_version (
       "maxImagePixels":40000000
     }'::jsonb,
     now()
-);
+from feature_definition feature
+where feature.code = 'image.background_edit';
 
-insert into feature_model_policy (
-    id, feature_code, capability, default_deployment_code,
-    allow_user_selection, created_at, updated_at
-) values (
-    '70daea0d-a317-4168-8d9c-235db21e429c',
-    'image.background_edit',
-    'IMAGE_GENERATION',
-    'codex2api-gpt-image-2-image',
-    true,
-    now(),
-    now()
-);
-
-insert into feature_model_option (
-    policy_id, deployment_code, display_name, description, sort_order, enabled
-) values
-    (
-        '70daea0d-a317-4168-8d9c-235db21e429c',
-        'codex2api-gpt-image-2-image',
-        'GPT Image 2',
-        '默认图片编辑模型，支持主体图和可选背景参考图。',
-        10,
-        true
-    ),
-    (
-        '70daea0d-a317-4168-8d9c-235db21e429c',
-        'aliyun-qwen-image-2-0',
-        'Qwen Image 2.0',
-        '中文图片处理模型；需管理员完成阿里云接口配置后使用。',
-        20,
-        true
-    );
+update feature_definition
+set current_version = 2,
+    updated_at = now()
+where code = 'image.background_edit';

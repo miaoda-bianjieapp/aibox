@@ -147,6 +147,7 @@ class BackgroundEditFeatureHandlerTest {
     @Test
     void returnsARealTransparentPngForCutout() throws IOException {
         UUID sourceId = UUID.randomUUID();
+        AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
         FeatureExecutionContext context = context(
                 Map.of("mode", "remove_background", "sourceImage", sourceId.toString()),
                 List.of(sourceId),
@@ -157,9 +158,11 @@ class BackgroundEditFeatureHandlerTest {
         handler.validate(context);
         FeatureExecutionResult result = handler.execute(
                 context,
-                capturingGateway(new AtomicReference<>(), transparentPng())
+                capturingGateway(captured, transparentPng())
         );
 
+        assertEquals("png", captured.get().metadata().get("outputFormat"));
+        assertEquals("transparent", captured.get().metadata().get("background"));
         BufferedImage output = ImageIO.read(
                 new java.io.ByteArrayInputStream(result.artifacts().get(0).outputAssets().get(0).content())
         );
