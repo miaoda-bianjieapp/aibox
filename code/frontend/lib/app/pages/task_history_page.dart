@@ -133,10 +133,24 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
         initialModelCode: run.selectedModelCode,
         initialModels: run.selectedModels,
         baseArtifactText: artifact.content['text']?.toString(),
+        baseArtifactAssetIds: _artifactAssetIds(artifact),
       ),
     );
     if (mounted) await _reload();
   }
+}
+
+List<String> _artifactAssetIds(ArtifactView artifact) {
+  final single = artifact.content['assetId']?.toString();
+  if (single != null && single.isNotEmpty) return [single];
+  final multiple = artifact.content['assetIds'];
+  if (multiple is List) {
+    return multiple
+        .map((item) => item.toString())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+  return const [];
 }
 
 class _ArtifactRow extends StatelessWidget {

@@ -35,4 +35,36 @@ void main() {
     expect(find.text(translatedText), findsOneWidget);
     expect(find.text('Heading-like text'), findsNothing);
   });
+
+  testWidgets('image artifacts render on a transparency backdrop',
+      (tester) async {
+    final artifact = ArtifactView(
+      id: 'artifact-image',
+      taskId: 'task-image',
+      runId: 'run-image',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'image',
+      title: '透明背景抠图',
+      mimeType: 'image/png',
+      content: const {
+        'base64':
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XH0hWQAAAABJRU5ErkJggg==',
+      },
+      metadata: const {},
+      createdAt: DateTime(2026, 7, 17, 15, 34),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: ArtifactResultPage(
+        artifact: artifact,
+        rendererKey: 'image',
+      ),
+    ));
+
+    expect(
+      find.byKey(const ValueKey('image-transparency-backdrop')),
+      findsOneWidget,
+    );
+  });
 }

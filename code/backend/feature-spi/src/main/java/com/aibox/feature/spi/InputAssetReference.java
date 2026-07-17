@@ -6,6 +6,16 @@ public record InputAssetReference(
         UUID id,
         String fileName,
         String mediaType,
-        long sizeBytes
+        long sizeBytes,
+        Integer width,
+        Integer height
 ) {
+    public InputAssetReference(
+            UUID id,
+            String fileName,
+            String mediaType,
+            long sizeBytes
+    ) {
+        this(id, fileName, mediaType, sizeBytes, null, null);
+    }
 }

@@ -121,6 +121,11 @@ class FeatureDetail extends FeatureEntry {
     final value = config['revisionSourceField']?.toString().trim();
     return value == null || value.isEmpty ? null : value;
   }
+
+  String? get revisionSourceAssetField {
+    final value = config['revisionSourceAssetField']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
 }
 
 class ModelPolicy {
@@ -445,6 +450,7 @@ class TaskLaunchRequest {
     this.initialModelCode,
     this.initialModels = const {},
     this.baseArtifactText,
+    this.baseArtifactAssetIds = const [],
   });
 
   final WorkspaceDefinition workspace;
@@ -459,6 +465,7 @@ class TaskLaunchRequest {
   final String? initialModelCode;
   final Map<String, String> initialModels;
   final String? baseArtifactText;
+  final List<String> baseArtifactAssetIds;
 
   bool get isRevision => existingTaskId != null && baseArtifactId != null;
 }

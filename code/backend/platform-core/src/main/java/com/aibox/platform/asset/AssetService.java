@@ -14,9 +14,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.ByteArrayInputStream;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -25,8 +28,11 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.HexFormat;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
+
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -173,12 +179,7 @@ public class AssetService {
         if (ids == null) return List.of();
         return ids.stream()
                 .map(this::requireOwned)
-                .map(asset -> new InputAssetReference(
-                        asset.getId(),
-                        asset.getOriginalName(),
-                        asset.getMediaType(),
-                        asset.getSizeBytes()
-                ))
+                .map(this::describe)
                 .toList();
     }
 
@@ -239,6 +240,43 @@ public class AssetService {
         );
     }
 
+    private InputAssetReference describe(AssetEntity asset) {
+        ImageDimensions dimensions = imageDimensions(asset);
+        return new InputAssetReference(
+                asset.getId(),
+                asset.getOriginalName(),
+                asset.getMediaType(),
+                asset.getSizeBytes(),
+                dimensions == null ? null : dimensions.width(),
+                dimensions == null ? null : dimensions.height()
+        );
+    }
+
+    private ImageDimensions imageDimensions(AssetEntity asset) {
+        if (asset.getMediaType() == null
+                || !asset.getMediaType().toLowerCase(Locale.ROOT).startsWith("image/")) {
+            return null;
+        }
+        try (ImageInputStream input = ImageIO.createImageInputStream(
+                resolveStorageKey(asset.getStorageKey()).toFile()
+        )) {
+            if (input == null) return null;
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) return null;
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                int width = reader.getWidth(0);
+                int height = reader.getHeight(0);
+                return width > 0 && height > 0 ? new ImageDimensions(width, height) : null;
+            } finally {
+                reader.dispose();
+            }
+        } catch (IOException | RuntimeException exception) {
+            return null;
+        }
+    }
+
     private static String normalizeName(String value) {
         if (value == null || value.isBlank()) return "unnamed-file";
         String clean = value.replace('\\', '/');
@@ -276,5 +314,8 @@ public class AssetService {
     }
 
     public record AssetDownload(AssetView asset, Resource resource) {
+    }
+
+    private record ImageDimensions(int width, int height) {
     }
 }

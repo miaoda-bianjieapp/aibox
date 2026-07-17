@@ -1,0 +1,48 @@
+{
+  "order": ["mode", "sourceImage", "backgroundImage", "backgroundDescription"],
+  "widgets": {
+    "mode": "segmented",
+    "sourceImage": "image",
+    "backgroundImage": "image",
+    "backgroundDescription": "textarea"
+  },
+  "visibility": {
+    "backgroundImage": {
+      "field": "mode",
+      "equals": "replace_background"
+    },
+    "backgroundDescription": {
+      "field": "mode",
+      "equals": "replace_background"
+    }
+  },
+  "enumLabels": {
+    "mode": {
+      "remove_background": "抠图",
+      "replace_background": "换背景"
+    }
+  },
+  "fieldOptions": {
+    "sourceImage": {
+      "acceptedMimeTypes": ["image/png", "image/jpeg"],
+      "allowedExtensions": [".png", ".jpg", ".jpeg"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 10485760,
+      "showPreview": true,
+      "uploadLabel": "上传主体原图"
+    },
+    "backgroundImage": {
+      "acceptedMimeTypes": ["image/png", "image/jpeg"],
+      "allowedExtensions": [".png", ".jpg", ".jpeg"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 10485760,
+      "showPreview": true,
+      "uploadLabel": "上传背景参考图"
+    }
+  },
+  "feeNotice": "图片处理将调用付费模型，费用按所选模型实际计费。点击“开始处理”即表示确认本次调用。",
+  "submitLabel": "开始处理",
+  "revisionSubmitLabel": "生成新版本"
+}

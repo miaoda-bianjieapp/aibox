@@ -45,13 +45,17 @@ void main() {
         'actions': {'showReset': true},
       },
       'outputSchema': const <String, Object?>{},
-      'config': {'revisionSourceField': 'sourceText'},
+      'config': {
+        'revisionSourceField': 'sourceText',
+        'revisionSourceAssetField': 'sourceImage',
+      },
       'modelPolicies': const <Object?>[],
     });
 
     expect(feature.exampleFor('sourceText'), '示例文本');
     expect(feature.showResetAction, isTrue);
     expect(feature.revisionSourceField, 'sourceText');
+    expect(feature.revisionSourceAssetField, 'sourceImage');
     expect(
       feature.isFieldVisible('rewriteRequirements', {'mode': 'rewrite'}),
       isTrue,
@@ -91,9 +95,11 @@ void main() {
       existingTaskId: 'task-1',
       baseArtifactId: 'artifact-1',
       baseArtifactText: '上一版成果',
+      baseArtifactAssetIds: ['asset-1'],
     );
 
     expect(request.isRevision, isTrue);
     expect(request.baseArtifactText, '上一版成果');
+    expect(request.baseArtifactAssetIds, ['asset-1']);
   });
 }
