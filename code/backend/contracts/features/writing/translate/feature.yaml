@@ -1,0 +1,18 @@
+featureCode: writing.translate
+workspaceCode: writing
+version: 1
+displayName: 文本翻译
+description: 自动识别源语言，并将纯文本忠实翻译为指定目标语言。
+status: INTERNAL
+executionMode: ASYNC
+resultType: rich_text
+rendererKey: rich_text_editor
+requiredCapabilities:
+  - TEXT_GENERATION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxOutputTokens: 3000
+modelAlias: text.default

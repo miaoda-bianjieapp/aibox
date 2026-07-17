@@ -1,0 +1,156 @@
+insert into feature_definition (
+    id,
+    workspace_id,
+    code,
+    display_name,
+    description,
+    status,
+    current_version,
+    result_type,
+    renderer_key,
+    execution_mode,
+    sort_order,
+    created_at,
+    updated_at
+)
+select
+    'a2d3a2fc-9b0f-4d2a-8d78-31b706f4eb2f',
+    workspace.id,
+    'writing.translate',
+    '文本翻译',
+    '自动识别源语言，并将纯文本忠实翻译为指定目标语言。',
+    'INTERNAL',
+    1,
+    'rich_text',
+    'rich_text_editor',
+    'ASYNC',
+    30,
+    now(),
+    now()
+from workspace
+where workspace.code = 'writing';
+
+insert into feature_version (
+    id,
+    feature_id,
+    version,
+    input_schema_json,
+    ui_schema_json,
+    output_schema_json,
+    config_json,
+    created_at
+) values (
+    'dc94b9b5-4cc9-45b0-8dbe-a6bd4dc5c8d0',
+    'a2d3a2fc-9b0f-4d2a-8d78-31b706f4eb2f',
+    1,
+    '{
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["sourceText","targetLanguage"],
+      "properties":{
+        "sourceText":{
+          "type":"string",
+          "minLength":1,
+          "maxLength":2000,
+          "title":"原文内容",
+          "description":"输入需要翻译的纯文本，系统将自动识别源语言。"
+        },
+        "targetLanguage":{
+          "type":"string",
+          "enum":["zh-CN","zh-TW","en","ja","ko","fr","de","es","ru","ar"],
+          "default":"en",
+          "title":"目标语言",
+          "description":"选择译文使用的语言。"
+        }
+      },
+      "additionalProperties":false
+    }'::jsonb,
+    '{
+      "order":["sourceText","targetLanguage"],
+      "widgets":{"sourceText":"textarea","targetLanguage":"select"},
+      "enumLabels":{
+        "targetLanguage":{
+          "zh-CN":"简体中文",
+          "zh-TW":"繁体中文",
+          "en":"英语",
+          "ja":"日语",
+          "ko":"韩语",
+          "fr":"法语",
+          "de":"德语",
+          "es":"西班牙语",
+          "ru":"俄语",
+          "ar":"阿拉伯语"
+        }
+      },
+      "feeNotice":"翻译将调用所选文本模型，可能产生费用；点击“开始翻译”即表示确认本次调用。",
+      "submitLabel":"开始翻译",
+      "revisionSubmitLabel":"重新翻译"
+    }'::jsonb,
+    '{
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["format","text"],
+      "properties":{
+        "format":{"const":"plain_text"},
+        "text":{"type":"string","minLength":1}
+      },
+      "additionalProperties":false
+    }'::jsonb,
+    '{
+      "modelAlias":"text.default",
+      "maxOutputTokens":3000,
+      "capabilities":["TEXT_GENERATION"]
+    }'::jsonb,
+    now()
+);
+
+insert into feature_model_policy (
+    id,
+    feature_code,
+    capability,
+    default_deployment_code,
+    allow_user_selection,
+    created_at,
+    updated_at
+) values (
+    '5a2a44fe-cc64-4ebd-ae1f-d38ccb4518c9',
+    'writing.translate',
+    'TEXT_GENERATION',
+    'codex2api-gpt-5-6-text',
+    true,
+    now(),
+    now()
+);
+
+insert into feature_model_option (
+    policy_id,
+    deployment_code,
+    display_name,
+    description,
+    sort_order,
+    enabled
+) values
+    (
+        '5a2a44fe-cc64-4ebd-ae1f-d38ccb4518c9',
+        'codex2api-gpt-5-4-mini-text',
+        'GPT-5.4 Mini',
+        '响应较轻量，适合日常短文本翻译。',
+        10,
+        true
+    ),
+    (
+        '5a2a44fe-cc64-4ebd-ae1f-d38ccb4518c9',
+        'codex2api-gpt-5-6-text',
+        'GPT-5.6',
+        '默认高质量翻译模型，适合复杂语境。',
+        20,
+        true
+    ),
+    (
+        '5a2a44fe-cc64-4ebd-ae1f-d38ccb4518c9',
+        'zhipu-glm-5v-turbo-text',
+        'GLM-5V Turbo',
+        '通用多语言文本处理模型。',
+        30,
+        true
+    );

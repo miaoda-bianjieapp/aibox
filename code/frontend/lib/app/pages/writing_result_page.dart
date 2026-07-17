@@ -132,11 +132,18 @@ class _ArtifactBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final text = artifact.content['text']?.toString() ?? '';
+    final format = artifact.content['format']?.toString();
+    if (artifact.mimeType == 'text/plain' || format == 'plain_text') {
+      return SelectableText(
+        text,
+        style: Theme.of(context).textTheme.bodyLarge,
+      );
+    }
     if (artifact.kind == 'rich_text' || artifact.mimeType.startsWith('text/')) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: _markdownBlocks(
-            context, artifact.content['text']?.toString() ?? ''),
+        children: _markdownBlocks(context, text),
       );
     }
     if (artifact.kind == 'transcript' || rendererKey == 'transcript') {
