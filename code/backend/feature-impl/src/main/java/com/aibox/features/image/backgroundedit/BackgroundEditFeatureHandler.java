@@ -23,6 +23,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +43,8 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
     static final int MAX_IMAGE_DIMENSION = 8_192;
     static final long MAX_IMAGE_PIXELS = 40_000_000L;
     static final long MAX_OUTPUT_IMAGE_BYTES = 50L * 1024L * 1024L;
+    static final int CHROMA_KEY_RGB = 0x00FF00;
+    static final int CHROMA_KEY_DISTANCE = 150;
 
     private static final String REMOVE_BACKGROUND = "remove_background";
     private static final String REPLACE_BACKGROUND = "replace_background";
@@ -107,9 +110,6 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
         requestMetadata.put("runId", context.runId().toString());
         requestMetadata.put("mode", mode);
         requestMetadata.put("outputFormat", "png");
-        if (REMOVE_BACKGROUND.equals(mode)) {
-            requestMetadata.put("background", "transparent");
-        }
         requestMetadata.put("preserveSourceDimensions", true);
         requestMetadata.put("sourceWidth", sourceImage.width());
         requestMetadata.put("sourceHeight", sourceImage.height());
@@ -152,14 +152,15 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
         String common = """
                 Keep the subject identity, shape, colors, fine edges, hair, clothing, and small details unchanged.
                 Keep exactly the same canvas dimensions and aspect ratio as the first input image.
-                Return exactly one PNG image with an alpha channel. Do not add borders, captions, logos, or extra subjects.
+                Return exactly one PNG image. Do not add borders, captions, logos, or extra subjects.
                 The first input image is always the subject image.
                 """;
         if (REMOVE_BACKGROUND.equals(mode)) {
             return common + """
                     Remove the entire background automatically.
                     Preserve only the foreground subject and any naturally attached foreground details.
-                    The removed area must contain real transparent pixels, not white, gray, or a checkerboard pattern.
+                    Replace every removed background pixel with one perfectly uniform solid chroma-key green #00FF00.
+                    Do not use gradients, shadows, reflections, textures, checkerboards, or green spill in the background.
                     """;
         }
         String reference = hasBackgroundImage
@@ -197,13 +198,21 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
             throw invalidResponse("图片模型返回了无效图片");
         }
 
+        BufferedImage prepared = decoded;
+        if (requireTransparentPixels && !hasTransparentPixel(prepared)) {
+            prepared = removeBorderConnectedChromaKey(prepared);
+        }
+        if (requireTransparentPixels && !hasTransparentPixel(prepared)) {
+            throw invalidResponse("抠图模型未返回透明背景或标准绿幕背景");
+        }
+
         BufferedImage argb = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
         double scale = Math.max(
-                targetWidth / (double) decoded.getWidth(),
-                targetHeight / (double) decoded.getHeight()
+                targetWidth / (double) prepared.getWidth(),
+                targetHeight / (double) prepared.getHeight()
         );
-        int drawWidth = Math.max(1, (int) Math.round(decoded.getWidth() * scale));
-        int drawHeight = Math.max(1, (int) Math.round(decoded.getHeight() * scale));
+        int drawWidth = Math.max(1, (int) Math.round(prepared.getWidth() * scale));
+        int drawHeight = Math.max(1, (int) Math.round(prepared.getHeight() * scale));
         int drawX = (targetWidth - drawWidth) / 2;
         int drawY = (targetHeight - drawHeight) / 2;
         Graphics2D graphics = argb.createGraphics();
@@ -216,7 +225,7 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
                     RenderingHints.KEY_RENDERING,
                     RenderingHints.VALUE_RENDER_QUALITY
             );
-            graphics.drawImage(decoded, drawX, drawY, drawWidth, drawHeight, null);
+            graphics.drawImage(prepared, drawX, drawY, drawWidth, drawHeight, null);
         } finally {
             graphics.dispose();
         }
@@ -258,6 +267,75 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
             }
         }
         return false;
+    }
+
+    private static BufferedImage removeBorderConnectedChromaKey(BufferedImage source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        boolean[] background = new boolean[width * height];
+        ArrayDeque<Integer> queue = new ArrayDeque<>();
+
+        for (int x = 0; x < width; x++) {
+            enqueueChromaPixel(source, x, 0, background, queue);
+            enqueueChromaPixel(source, x, height - 1, background, queue);
+        }
+        for (int y = 1; y < height - 1; y++) {
+            enqueueChromaPixel(source, 0, y, background, queue);
+            enqueueChromaPixel(source, width - 1, y, background, queue);
+        }
+
+        while (!queue.isEmpty()) {
+            int index = queue.removeFirst();
+            int x = index % width;
+            int y = index / width;
+            if (x > 0) enqueueChromaPixel(source, x - 1, y, background, queue);
+            if (x + 1 < width) enqueueChromaPixel(source, x + 1, y, background, queue);
+            if (y > 0) enqueueChromaPixel(source, x, y - 1, background, queue);
+            if (y + 1 < height) enqueueChromaPixel(source, x, y + 1, background, queue);
+        }
+
+        BufferedImage result = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int index = y * width + x;
+                int argb = source.getRGB(x, y);
+                if (background[index]) {
+                    result.setRGB(x, y, argb & 0x00FFFFFF);
+                } else {
+                    result.setRGB(x, y, argb);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static void enqueueChromaPixel(
+            BufferedImage source,
+            int x,
+            int y,
+            boolean[] background,
+            ArrayDeque<Integer> queue
+    ) {
+        int index = y * source.getWidth() + x;
+        if (background[index] || !isChromaKey(source.getRGB(x, y))) return;
+        background[index] = true;
+        queue.addLast(index);
+    }
+
+    private static boolean isChromaKey(int argb) {
+        int red = (argb >>> 16) & 0xFF;
+        int green = (argb >>> 8) & 0xFF;
+        int blue = argb & 0xFF;
+        int keyRed = (CHROMA_KEY_RGB >>> 16) & 0xFF;
+        int keyGreen = (CHROMA_KEY_RGB >>> 8) & 0xFF;
+        int keyBlue = CHROMA_KEY_RGB & 0xFF;
+        int redDifference = red - keyRed;
+        int greenDifference = green - keyGreen;
+        int blueDifference = blue - keyBlue;
+        int distanceSquared = redDifference * redDifference
+                + greenDifference * greenDifference
+                + blueDifference * blueDifference;
+        return distanceSquared <= CHROMA_KEY_DISTANCE * CHROMA_KEY_DISTANCE;
     }
 
     private static void validateInputAssets(FeatureExecutionContext context, List<UUID> expectedAssets) {

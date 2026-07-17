@@ -145,7 +145,7 @@ class BackgroundEditFeatureHandlerTest {
     }
 
     @Test
-    void returnsARealTransparentPngForCutout() throws IOException {
+    void convertsAChromaKeyCutoutIntoARealTransparentPng() throws IOException {
         UUID sourceId = UUID.randomUUID();
         AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
         FeatureExecutionContext context = context(
@@ -158,11 +158,12 @@ class BackgroundEditFeatureHandlerTest {
         handler.validate(context);
         FeatureExecutionResult result = handler.execute(
                 context,
-                capturingGateway(captured, transparentPng())
+                capturingGateway(captured, chromaKeyPng())
         );
 
         assertEquals("png", captured.get().metadata().get("outputFormat"));
-        assertEquals("transparent", captured.get().metadata().get("background"));
+        assertEquals(null, captured.get().metadata().get("background"));
+        assertTrue(captured.get().prompt().contains("#00FF00"));
         BufferedImage output = ImageIO.read(
                 new java.io.ByteArrayInputStream(result.artifacts().get(0).outputAssets().get(0).content())
         );
@@ -267,10 +268,12 @@ class BackgroundEditFeatureHandlerTest {
         return png(image);
     }
 
-    private static byte[] transparentPng() {
-        BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
-        image.setRGB(0, 0, 0x00FFFFFF);
-        image.setRGB(1, 0, 0xFFFF0000);
+    private static byte[] chromaKeyPng() {
+        BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
+        image.setRGB(0, 0, 0x0000FF00);
+        image.setRGB(0, 1, 0x0000FF00);
+        image.setRGB(1, 0, 0x00FF0000);
+        image.setRGB(1, 1, 0x00FF0000);
         return png(image);
     }
 
