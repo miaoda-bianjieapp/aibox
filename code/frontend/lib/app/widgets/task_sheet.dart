@@ -193,27 +193,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                     _ErrorMessage(message: _error!),
                   ],
                   const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: FilledButton.icon(
-                      onPressed: snapshot.hasData && !_submitting
-                          ? () => _execute(snapshot.requireData)
-                          : null,
-                      style: FilledButton.styleFrom(
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                      ),
-                      icon: const Icon(Icons.auto_awesome_rounded, size: 19),
-                      label: Text(widget.request.isRevision
-                          ? snapshot.hasData
-                              ? snapshot.requireData.revisionSubmitLabel
-                              : '生成新版本'
-                          : snapshot.hasData
-                              ? snapshot.requireData.submitLabel
-                              : '开始执行'),
-                    ),
-                  ),
+                  if (snapshot.hasData)
+                    _buildActions(snapshot.requireData)
+                  else
+                    const SizedBox(height: 48),
                 ],
               );
             },
@@ -239,8 +222,13 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     for (final field in feature.fieldOrder) {
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
-      final initial =
-          widget.request.initialParameters[field] ?? schema['default'];
+      final revisionText =
+          widget.request.isRevision && field == feature.revisionSourceField
+              ? widget.request.baseArtifactText
+              : null;
+      final initial = revisionText?.trim().isNotEmpty == true
+          ? revisionText
+          : widget.request.initialParameters[field] ?? schema['default'];
       if (schema['type'] == 'boolean') {
         _values[field] = initial == true;
       } else if (schema['enum'] is List) {
@@ -313,6 +301,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   List<Widget> _buildFields(FeatureDetail feature) {
     final fields = <Widget>[];
     for (final field in feature.fieldOrder) {
+      if (!feature.isFieldVisible(field, _values)) continue;
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
@@ -321,6 +310,20 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ..add(_FieldLabel(schema['title']?.toString() ?? field,
             required: feature.requiredFields.contains(field)))
         ..add(_buildField(feature, field, schema, widgetType));
+      final example = feature.exampleFor(field);
+      if (example != null) {
+        fields
+          ..add(const SizedBox(height: 4))
+          ..add(Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed:
+                  _submitting ? null : () => _insertExample(field, example),
+              icon: const Icon(Icons.lightbulb_outline_rounded, size: 17),
+              label: const Text('插入示例'),
+            ),
+          ));
+      }
     }
     return fields;
   }
@@ -381,11 +384,14 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
     final multiline = widgetType == 'textarea';
     final numeric = schema['type'] == 'integer' || schema['type'] == 'number';
+    final configuredMaxLength = schema['maxLength'];
     return TextField(
       controller: _controllers[field],
       enabled: !_submitting,
       minLines: multiline ? 3 : 1,
       maxLines: multiline ? 6 : 1,
+      maxLength:
+          configuredMaxLength is num ? configuredMaxLength.toInt() : null,
       keyboardType: numeric
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
@@ -484,6 +490,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
     final parameters = <String, Object?>{};
     for (final field in feature.fieldOrder) {
+      if (!feature.isFieldVisible(field, _values)) continue;
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
@@ -565,6 +572,74 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         });
       }
     }
+  }
+
+  Widget _buildActions(FeatureDetail feature) {
+    final executeButton = SizedBox(
+      height: 48,
+      child: FilledButton.icon(
+        onPressed: _submitting ? null : () => _execute(feature),
+        style: FilledButton.styleFrom(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        icon: const Icon(Icons.auto_awesome_rounded, size: 19),
+        label: Text(widget.request.isRevision
+            ? feature.revisionSubmitLabel
+            : feature.submitLabel),
+      ),
+    );
+    if (!feature.showResetAction) {
+      return SizedBox(width: double.infinity, child: executeButton);
+    }
+    return Row(children: [
+      Expanded(
+        child: SizedBox(
+          height: 48,
+          child: OutlinedButton.icon(
+            onPressed: _submitting ? null : () => _resetParameters(feature),
+            icon: const Icon(Icons.delete_outline_rounded, size: 19),
+            label: const Text('重置内容'),
+          ),
+        ),
+      ),
+      const SizedBox(width: 10),
+      Expanded(child: executeButton),
+    ]);
+  }
+
+  void _insertExample(String field, String example) {
+    final controller = _controllers[field];
+    if (controller == null) return;
+    setState(() {
+      controller
+        ..text = example
+        ..selection = TextSelection.collapsed(offset: example.length);
+      _error = null;
+    });
+  }
+
+  void _resetParameters(FeatureDetail feature) {
+    setState(() {
+      _assets.clear();
+      for (final field in feature.fieldOrder) {
+        final schema =
+            Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
+        final defaultValue = schema['default'];
+        if (schema['type'] == 'boolean') {
+          _values[field] = defaultValue == true;
+        } else if (schema['enum'] is List) {
+          final options = (schema['enum'] as List)
+              .map((value) => value.toString())
+              .toList();
+          _values[field] = defaultValue?.toString() ??
+              (options.isEmpty ? null : options.first);
+        } else {
+          _controllers[field]?.text = defaultValue?.toString() ?? '';
+        }
+      }
+      _status = null;
+      _error = null;
+    });
   }
 
   static bool _isAssetField(Map<String, dynamic> schema, String widgetType) {

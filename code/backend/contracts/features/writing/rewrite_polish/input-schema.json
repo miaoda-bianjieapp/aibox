@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["mode", "sourceText"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["rewrite", "polish"],
+      "default": "rewrite",
+      "title": "处理方式",
+      "description": "改写会调整措辞、句式和段落结构；润色会尽量保留原结构。"
+    },
+    "sourceText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "title": "原文内容",
+      "description": "输入需要改写或润色的纯文本，输出将保持原文语言。"
+    },
+    "rewriteRequirements": {
+      "type": "string",
+      "maxLength": 500,
+      "title": "改写需求",
+      "description": "可选，例如更口语化、压缩篇幅、增强节奏或保留幽默感。"
+    },
+    "polishRequirements": {
+      "type": "string",
+      "maxLength": 500,
+      "title": "润色需求",
+      "description": "可选，例如表达更自然、更专业、修正标点或改善衔接。"
+    }
+  },
+  "additionalProperties": false
+}

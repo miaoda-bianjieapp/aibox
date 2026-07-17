@@ -132,6 +132,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
         projectId: detail.task.projectId,
         initialModelCode: run.selectedModelCode,
         initialModels: run.selectedModels,
+        baseArtifactText: artifact.content['text']?.toString(),
       ),
     );
     if (mounted) await _reload();

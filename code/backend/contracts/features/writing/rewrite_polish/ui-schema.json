@@ -1,0 +1,31 @@
+{
+  "order": ["mode", "sourceText", "rewriteRequirements", "polishRequirements"],
+  "widgets": {
+    "mode": "segmented",
+    "sourceText": "textarea",
+    "rewriteRequirements": "textarea",
+    "polishRequirements": "textarea"
+  },
+  "visibility": {
+    "rewriteRequirements": {
+      "field": "mode",
+      "equals": "rewrite"
+    },
+    "polishRequirements": {
+      "field": "mode",
+      "equals": "polish"
+    }
+  },
+  "enumLabels": {
+    "mode": {
+      "rewrite": "改写",
+      "polish": "润色"
+    }
+  },
+  "examples": {
+    "sourceText": "我们团队最近完成了产品的新版本开发，这个版本加入了多个实用功能，也解决了一些之前存在的问题，希望能够给用户带来更好的使用体验。"
+  },
+  "actions": {
+    "showReset": true
+  }
+}

@@ -24,7 +24,7 @@ class BackendApi {
     if (code == 'PROVIDER_HTTP_524') {
       return '模型服务处理超时，请重试；如持续失败，请切换其他模型';
     }
-    return serverMessage ?? '任务执行失败，请稍后重试';
+    return taskFailureMessage(code: code, message: serverMessage);
   }
 
   Future<List<WorkspaceDefinition>> listWorkspaces() async {

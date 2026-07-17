@@ -11,9 +11,39 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleTextProviderTest {
+
+    @Test
+    void mapsUnavailableAccountResponseToStableError() {
+        ModelProviderException exception = OpenAiCompatibleTextProvider.mapHttpFailure(
+                503,
+                """
+                {"error":{"code":"no_available_account","message":"No available account"}}
+                """,
+                new RuntimeException("provider failure")
+        );
+
+        assertEquals("PROVIDER_NO_AVAILABLE_ACCOUNT", exception.code());
+        assertEquals("模型服务当前没有可用账号，请稍后重试", exception.getMessage());
+        assertTrue(exception.retryable());
+    }
+
+    @Test
+    void mapsGenericServiceUnavailableWithoutExposingResponseBody() {
+        ModelProviderException exception = OpenAiCompatibleTextProvider.mapHttpFailure(
+                503,
+                "<html>upstream unavailable</html>",
+                new RuntimeException("provider failure")
+        );
+
+        assertEquals("PROVIDER_HTTP_503", exception.code());
+        assertEquals("模型服务暂时不可用，请稍后重试", exception.getMessage());
+        assertTrue(exception.retryable());
+    }
 
     @Test
     void referenceImagePathLoadsMultipartSupportBeforeValidatingAssets() {
