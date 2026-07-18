@@ -29,6 +29,11 @@
     }
   },
   "fieldOptions": {
+    "mode": {
+      "showSelectedIcon": false,
+      "labelMaxLines": 1,
+      "compact": true
+    },
     "sourceImage": {
       "acceptedMimeTypes": ["image/png", "image/jpeg", "image/webp"],
       "allowedExtensions": [".png", ".jpg", ".jpeg", ".webp"],
@@ -39,7 +44,7 @@
       "uploadLabel": "上传原始图片"
     }
   },
-  "feeNotice": "图片修复将调用所选付费模型，费用按实际模型计费；点击“开始修复”即表示确认本次调用。",
+  "feeNotice": "老照片修复开启上色时会连续调用所选模型 2 次，其余处理方式调用 1 次；费用按实际模型计费，点击“开始修复”即表示确认本次调用。",
   "submitLabel": "开始修复",
   "revisionSubmitLabel": "生成新版本"
 }

@@ -1,6 +1,6 @@
 featureCode: image.enhance
 workspaceCode: image
-version: 1
+version: 2
 displayName: 清晰修复
 description: 对单张图片执行放大、去模糊、降噪或老照片修复。
 status: INTERNAL

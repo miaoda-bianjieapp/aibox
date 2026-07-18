@@ -11,6 +11,7 @@ import com.aibox.feature.spi.GeneratedImage;
 import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImageGenerationResponse;
 import com.aibox.feature.spi.InputAssetReference;
+import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelProviderException;
@@ -97,34 +98,61 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
                 : 1;
         Dimensions target = targetDimensions(source, factor, UPSCALE.equals(mode));
 
-        ImageGenerationResponse response = modelGateway.generateImage(new ImageGenerationRequest(
-                context.tenantId(),
-                context.runId(),
-                MODEL_ALIAS,
-                context.selectedModelCode(ModelCapability.IMAGE_GENERATION),
-                prompt(mode, factor, colorize),
-                List.of(sourceImageId),
-                null,
-                1,
-                Map.of(
-                        "featureCode", FEATURE_CODE,
-                        "runId", context.runId().toString(),
-                        "mode", mode,
-                        "scaleFactor", factor,
-                        "sourceWidth", source.width(),
-                        "sourceHeight", source.height(),
-                        "targetWidth", target.width(),
-                        "targetHeight", target.height(),
-                        "outputFormat", "png",
-                        "providerInvocationKey", "enhance_" + mode
-                )
-        ));
-
-        ImageGenerationResponse normalized = normalizeResponse(response, target);
+        ImageGenerationResponse normalized;
+        int modelInvocationCount = 1;
+        if (OLD_PHOTO_RESTORE.equals(mode)) {
+            normalized = generateAndNormalize(
+                    context,
+                    modelGateway,
+                    oldPhotoRestorePrompt(),
+                    List.of(sourceImageId),
+                    List.of(),
+                    source,
+                    target,
+                    mode,
+                    factor,
+                    "enhance_old_photo_restore"
+            );
+            if (colorize) {
+                GeneratedImage restored = normalized.images().get(0);
+                normalized = generateAndNormalize(
+                        context,
+                        modelGateway,
+                        oldPhotoColorizePrompt(),
+                        List.of(),
+                        List.of(new ModelAsset(
+                                null,
+                                "restored-old-photo.png",
+                                restored.mediaType(),
+                                restored.content()
+                        )),
+                        source,
+                        target,
+                        mode,
+                        factor,
+                        "enhance_old_photo_colorize"
+                );
+                modelInvocationCount = 2;
+            }
+        } else {
+            normalized = generateAndNormalize(
+                    context,
+                    modelGateway,
+                    prompt(mode, factor),
+                    List.of(sourceImageId),
+                    List.of(),
+                    source,
+                    target,
+                    mode,
+                    factor,
+                    "enhance_" + mode
+            );
+        }
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("mode", mode);
         metadata.put("scaleFactor", factor);
         metadata.put("colorize", colorize);
+        metadata.put("modelInvocationCount", modelInvocationCount);
         metadata.put("sourceWidth", source.width());
         metadata.put("sourceHeight", source.height());
         metadata.put("targetWidth", target.width());
@@ -140,6 +168,44 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
                 metadata
         );
         return FeatureExecutionResult.of(artifact);
+    }
+
+    private static ImageGenerationResponse generateAndNormalize(
+            FeatureExecutionContext context,
+            ModelGateway modelGateway,
+            String prompt,
+            List<UUID> inputAssetIds,
+            List<ModelAsset> inlineInputAssets,
+            InputAssetReference source,
+            Dimensions target,
+            String mode,
+            int factor,
+            String providerInvocationKey
+    ) {
+        ImageGenerationResponse response = modelGateway.generateImage(new ImageGenerationRequest(
+                context.tenantId(),
+                context.runId(),
+                MODEL_ALIAS,
+                context.selectedModelCode(ModelCapability.IMAGE_GENERATION),
+                prompt,
+                inputAssetIds,
+                inlineInputAssets,
+                null,
+                1,
+                Map.of(
+                        "featureCode", FEATURE_CODE,
+                        "runId", context.runId().toString(),
+                        "mode", mode,
+                        "scaleFactor", factor,
+                        "sourceWidth", source.width(),
+                        "sourceHeight", source.height(),
+                        "targetWidth", target.width(),
+                        "targetHeight", target.height(),
+                        "outputFormat", "png",
+                        "providerInvocationKey", providerInvocationKey
+                )
+        ));
+        return normalizeResponse(response, target);
     }
 
     private static ImageGenerationResponse normalizeResponse(
@@ -368,11 +434,10 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
         };
     }
 
-    private static String prompt(String mode, int factor, boolean colorize) {
+    private static String prompt(String mode, int factor) {
         return switch (mode) {
             case DEBLUR -> deblurPrompt();
             case DENOISE -> denoisePrompt();
-            case OLD_PHOTO_RESTORE -> oldPhotoPrompt(colorize);
             default -> upscalePrompt(factor);
         };
     }
@@ -407,18 +472,36 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
                 """;
     }
 
-    private static String oldPhotoPrompt(boolean colorize) {
-        String colorInstruction = colorize
-                ? "If the source is black and white, naturally colorize it using plausible period-appropriate colors."
-                : "Preserve whether the source is black and white or color; do not colorize a black-and-white photo.";
+    private static String oldPhotoRestorePrompt() {
         return """
-                Restore the first input old photo with high fidelity. Repair scratches, folds, dust, fading,
-                noise, blur, damaged contrast, and missing small details while preserving the people, facial
-                identity, pose, composition, crop, clothing, objects, text, and historical character.
-                %s
-                Do not modernize, restyle, add people or objects, or alter the background. Keep exactly the
-                original dimensions and aspect ratio and return exactly one PNG image.
-                """.formatted(colorInstruction);
+                Perform a dedicated restoration pass on the first input old photo. Remove visible scratches,
+                cracks, folds, dust, stains, spots, paper damage, fading, excessive grain, noise,
+                focus blur, and motion blur. Reconstruct plausible missing small regions, recover local contrast
+                and sharp edges, and restore fine subject texture. Do not merely soften or hide the damage:
+                remove it wherever the surrounding image provides enough evidence.
+
+                Preserve the exact people, facial identity, pose, composition, crop, geometry, clothing,
+                objects, text, background, and historical character. Do not modernize, restyle, add, remove,
+                or move scene content. Preserve whether the source is monochrome or color. Do not colorize a
+                black-and-white or sepia photograph during this restoration pass. Keep exactly the original
+                dimensions and aspect ratio and return exactly one PNG image.
+                """;
+    }
+
+    private static String oldPhotoColorizePrompt() {
+        return """
+                MANDATORY FULL-COLOR COLORIZATION: the first input is an already restored old photograph.
+                Convert every recognizable part of the scene from black-and-white or sepia into believable,
+                natural full color. Use multiple distinct, period-appropriate hues for skin, hair, clothing,
+                vegetation, sky, ground, buildings, wood, metal, and other materials when present. Remove the
+                monochrome or yellow-brown cast while preserving the original luminance, shadows, highlights,
+                photographic texture, and historical atmosphere.
+
+                Do not return grayscale, monochrome, sepia, duotone, or a merely tinted image. Do not change
+                people, facial identity, composition, crop, geometry, text, objects, or background. Do not add,
+                remove, move, modernize, or redesign anything. Keep exactly the original dimensions and aspect
+                ratio and return exactly one PNG image.
+                """;
     }
 
     private static ModelProviderException invalidResponse(String message) {

@@ -20,11 +20,13 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -69,9 +71,9 @@ class ImageEnhanceFeatureHandlerTest {
     }
 
     @Test
-    void restoresAndColorizesAnOldPhotoWithoutChangingItsDimensions() throws IOException {
+    void restoresThenColorizesAnOldPhotoInADedicatedSecondPass() throws IOException {
         UUID sourceId = UUID.randomUUID();
-        AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
+        List<ImageGenerationRequest> captured = new ArrayList<>();
         FeatureExecutionContext context = context(
                 Map.of(
                         "mode", "old_photo_restore",
@@ -86,18 +88,63 @@ class ImageEnhanceFeatureHandlerTest {
         handler.validate(context);
         FeatureExecutionResult result = handler.execute(
                 context,
-                capturingGateway(captured, png(5, 3))
+                sequentialGateway(captured, png(5, 3), png(5, 3))
         );
 
-        assertTrue(captured.get().prompt().contains("scratches"));
-        assertTrue(captured.get().prompt().contains("colorize"));
-        assertEquals("old_photo_restore", captured.get().metadata().get("mode"));
+        assertEquals(2, captured.size());
+        ImageGenerationRequest restoration = captured.get(0);
+        ImageGenerationRequest colorization = captured.get(1);
+        assertEquals(List.of(sourceId), restoration.inputAssetIds());
+        assertTrue(restoration.inlineInputAssets().isEmpty());
+        assertTrue(restoration.prompt().contains("dedicated restoration pass"));
+        assertTrue(restoration.prompt().contains("Do not colorize"));
+        assertEquals("enhance_old_photo_restore", restoration.metadata().get("providerInvocationKey"));
+
+        assertTrue(colorization.inputAssetIds().isEmpty());
+        assertEquals(1, colorization.inlineInputAssets().size());
+        assertEquals("restored-old-photo.png", colorization.inlineInputAssets().get(0).fileName());
+        assertEquals("image/png", colorization.inlineInputAssets().get(0).mediaType());
+        assertArrayEquals(png(5, 3), colorization.inlineInputAssets().get(0).content());
+        assertTrue(colorization.prompt().contains("MANDATORY FULL-COLOR COLORIZATION"));
+        assertTrue(colorization.prompt().contains("Do not return grayscale"));
+        assertEquals("enhance_old_photo_colorize", colorization.metadata().get("providerInvocationKey"));
+
+        assertEquals(2, result.artifacts().get(0).metadata().get("modelInvocationCount"));
         assertEquals("老照片修复结果", result.artifacts().get(0).title());
         BufferedImage output = ImageIO.read(new ByteArrayInputStream(
                 result.artifacts().get(0).outputAssets().get(0).content()
         ));
         assertEquals(5, output.getWidth());
         assertEquals(3, output.getHeight());
+    }
+
+    @Test
+    void restoresAnOldPhotoInOneDedicatedPassWhenColorizationIsDisabled() {
+        UUID sourceId = UUID.randomUUID();
+        List<ImageGenerationRequest> captured = new ArrayList<>();
+        FeatureExecutionContext context = context(
+                Map.of(
+                        "mode", "old_photo_restore",
+                        "sourceImage", sourceId.toString(),
+                        "colorize", false
+                ),
+                sourceId,
+                5,
+                3
+        );
+
+        handler.validate(context);
+        FeatureExecutionResult result = handler.execute(
+                context,
+                sequentialGateway(captured, png(5, 3))
+        );
+
+        assertEquals(1, captured.size());
+        assertTrue(captured.get(0).prompt().contains("Remove visible scratches"));
+        assertTrue(captured.get(0).prompt().contains("recover local contrast"));
+        assertTrue(captured.get(0).prompt().contains("sharp edges"));
+        assertTrue(captured.get(0).prompt().contains("Do not colorize"));
+        assertEquals(1, result.artifacts().get(0).metadata().get("modelInvocationCount"));
     }
 
     @Test
@@ -300,6 +347,37 @@ class ImageEnhanceFeatureHandlerTest {
                         "test-provider",
                         "test-model",
                         "request-1",
+                        null,
+                        null
+                );
+            }
+        };
+    }
+
+    private static ModelGateway sequentialGateway(
+            List<ImageGenerationRequest> captured,
+            byte[]... outputs
+    ) {
+        return new ModelGateway() {
+            private int invocationIndex;
+
+            @Override
+            public TextGenerationResponse generateText(TextGenerationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public ImageGenerationResponse generateImage(ImageGenerationRequest request) {
+                captured.add(request);
+                if (invocationIndex >= outputs.length) {
+                    throw new AssertionError("Unexpected image generation invocation");
+                }
+                byte[] output = outputs[invocationIndex++];
+                return new ImageGenerationResponse(
+                        List.of(new GeneratedImage(null, "image/png", null, output)),
+                        "test-provider",
+                        "test-model",
+                        "request-" + invocationIndex,
                         null,
                         null
                 );
