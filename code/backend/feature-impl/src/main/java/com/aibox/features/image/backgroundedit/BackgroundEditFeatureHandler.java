@@ -11,6 +11,7 @@ import com.aibox.feature.spi.GeneratedImage;
 import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImageGenerationResponse;
 import com.aibox.feature.spi.InputAssetReference;
+import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelProviderException;
@@ -23,7 +24,6 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,8 +43,6 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
     static final int MAX_IMAGE_DIMENSION = 8_192;
     static final long MAX_IMAGE_PIXELS = 40_000_000L;
     static final long MAX_OUTPUT_IMAGE_BYTES = 50L * 1024L * 1024L;
-    static final int CHROMA_KEY_RGB = 0x00FF00;
-    static final int CHROMA_KEY_DISTANCE = 150;
 
     private static final String REMOVE_BACKGROUND = "remove_background";
     private static final String REPLACE_BACKGROUND = "replace_background";
@@ -105,34 +103,6 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
                 ? List.of(sourceImageId)
                 : List.of(sourceImageId, backgroundImageId);
         InputAssetReference sourceImage = requireInputAsset(context, sourceImageId);
-        Map<String, Object> requestMetadata = new LinkedHashMap<>();
-        requestMetadata.put("featureCode", FEATURE_CODE);
-        requestMetadata.put("runId", context.runId().toString());
-        requestMetadata.put("mode", mode);
-        requestMetadata.put("outputFormat", "png");
-        requestMetadata.put("preserveSourceDimensions", true);
-        requestMetadata.put("sourceWidth", sourceImage.width());
-        requestMetadata.put("sourceHeight", sourceImage.height());
-        requestMetadata.put("referenceImageCount", orderedImages.size());
-
-        ImageGenerationResponse response = modelGateway.generateImage(new ImageGenerationRequest(
-                context.tenantId(),
-                context.runId(),
-                MODEL_ALIAS,
-                context.selectedModelCode(ModelCapability.IMAGE_GENERATION),
-                prompt(mode, backgroundImageId != null, backgroundDescription),
-                orderedImages,
-                null,
-                1,
-                requestMetadata
-        ));
-        ImageGenerationResponse normalized = normalizeResponse(
-                response,
-                REMOVE_BACKGROUND.equals(mode),
-                sourceImage.width(),
-                sourceImage.height()
-        );
-
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("mode", mode);
         metadata.put("preserveSourceDimensions", true);
@@ -143,26 +113,56 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
             metadata.put("basedOnVersion", context.baseArtifact().versionNumber());
         }
 
+        ImageGenerationResponse normalized;
+        if (REMOVE_BACKGROUND.equals(mode)) {
+            CutoutGeneration cutout = generateCutout(
+                    context,
+                    modelGateway,
+                    sourceImage
+            );
+            normalized = cutout.response();
+            metadata.put("alphaExtraction", "black_white_difference");
+            metadata.put("modelInvocationCount", 2);
+            putIfPresent(metadata, "whitePassRequestId", cutout.whitePassRequestId());
+            putIfPresent(metadata, "blackPassRequestId", cutout.blackPassRequestId());
+        } else {
+            Map<String, Object> requestMetadata = requestMetadata(
+                    context,
+                    mode,
+                    sourceImage,
+                    orderedImages.size(),
+                    "replace_background"
+            );
+            ImageGenerationResponse response = modelGateway.generateImage(new ImageGenerationRequest(
+                    context.tenantId(),
+                    context.runId(),
+                    MODEL_ALIAS,
+                    context.selectedModelCode(ModelCapability.IMAGE_GENERATION),
+                    replaceBackgroundPrompt(backgroundImageId != null, backgroundDescription),
+                    orderedImages,
+                    null,
+                    1,
+                    requestMetadata
+            ));
+            normalized = normalizeSingleImageResponse(
+                    response,
+                    sourceImage.width(),
+                    sourceImage.height()
+            );
+        }
+
         String title = REMOVE_BACKGROUND.equals(mode) ? "透明背景抠图" : "换背景结果";
         ArtifactDraft artifact = ArtifactDrafts.generatedImages(title, normalized, metadata);
         return FeatureExecutionResult.of(artifact);
     }
 
-    private static String prompt(String mode, boolean hasBackgroundImage, String description) {
+    private static String replaceBackgroundPrompt(boolean hasBackgroundImage, String description) {
         String common = """
                 Keep the subject identity, shape, colors, fine edges, hair, clothing, and small details unchanged.
                 Keep exactly the same canvas dimensions and aspect ratio as the first input image.
                 Return exactly one PNG image. Do not add borders, captions, logos, or extra subjects.
                 The first input image is always the subject image.
                 """;
-        if (REMOVE_BACKGROUND.equals(mode)) {
-            return common + """
-                    Remove the entire background automatically.
-                    Preserve only the foreground subject and any naturally attached foreground details.
-                    Replace every removed background pixel with one perfectly uniform solid chroma-key green #00FF00.
-                    Do not use gradients, shadows, reflections, textures, checkerboards, or green spill in the background.
-                    """;
-        }
         String reference = hasBackgroundImage
                 ? "The second input image is the background reference. Use it as the replacement background.\n"
                 : "";
@@ -175,47 +175,202 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
                 """ + reference + requirements;
     }
 
-    private static ImageGenerationResponse normalizeResponse(
-            ImageGenerationResponse response,
-            boolean requireTransparentPixels,
+    private static CutoutGeneration generateCutout(
+            FeatureExecutionContext context,
+            ModelGateway modelGateway,
+            InputAssetReference sourceImage
+    ) {
+        ImageGenerationResponse whiteResponse = modelGateway.generateImage(new ImageGenerationRequest(
+                context.tenantId(),
+                context.runId(),
+                MODEL_ALIAS,
+                context.selectedModelCode(ModelCapability.IMAGE_GENERATION),
+                whiteBackgroundPrompt(),
+                List.of(sourceImage.id()),
+                null,
+                1,
+                requestMetadata(context, REMOVE_BACKGROUND, sourceImage, 1, "alpha_white")
+        ));
+        GeneratedImage whiteImage = requireSingleImage(whiteResponse, "白底抠图");
+        BufferedImage whitePrepared = flattenOnBackground(
+                decodeImage(whiteImage, "白底抠图"),
+                0xFFFFFF
+        );
+        ModelAsset whiteReference = new ModelAsset(
+                UUID.randomUUID(),
+                "cutout-white-background.png",
+                "image/png",
+                encodePng(whitePrepared)
+        );
+
+        ImageGenerationResponse blackResponse = modelGateway.generateImage(new ImageGenerationRequest(
+                context.tenantId(),
+                context.runId(),
+                MODEL_ALIAS,
+                context.selectedModelCode(ModelCapability.IMAGE_GENERATION),
+                blackBackgroundPrompt(),
+                List.of(),
+                List.of(whiteReference),
+                null,
+                1,
+                requestMetadata(context, REMOVE_BACKGROUND, sourceImage, 1, "alpha_black")
+        ));
+        ImageGenerationResponse extracted = extractAlphaResponse(
+                whiteResponse,
+                whitePrepared,
+                blackResponse,
+                sourceImage.width(),
+                sourceImage.height()
+        );
+        return new CutoutGeneration(
+                extracted,
+                whiteResponse.providerRequestId(),
+                blackResponse.providerRequestId()
+        );
+    }
+
+    private static Map<String, Object> requestMetadata(
+            FeatureExecutionContext context,
+            String mode,
+            InputAssetReference sourceImage,
+            int referenceImageCount,
+            String invocationKey
+    ) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("featureCode", FEATURE_CODE);
+        metadata.put("runId", context.runId().toString());
+        metadata.put("mode", mode);
+        metadata.put("outputFormat", "png");
+        metadata.put("preserveSourceDimensions", true);
+        metadata.put("sourceWidth", sourceImage.width());
+        metadata.put("sourceHeight", sourceImage.height());
+        metadata.put("referenceImageCount", referenceImageCount);
+        metadata.put("providerInvocationKey", invocationKey);
+        return metadata;
+    }
+
+    private static String whiteBackgroundPrompt() {
+        return """
+                Remove the entire background from the first input image.
+                Preserve the foreground subject exactly: identity, pose, position, scale, colors, hair,
+                clothing, fine edges, semi-transparent details, and every attached foreground element.
+                Replace every removed background pixel with perfectly uniform solid white #FFFFFF.
+                The white background must be fully opaque with no shadows, gradients, reflections,
+                textures, checkerboards, borders, captions, logos, or extra subjects.
+                Keep exactly the same canvas dimensions and aspect ratio. Return exactly one PNG image.
+                """;
+    }
+
+    private static String blackBackgroundPrompt() {
+        return """
+                This input is the white-background version prepared in the previous step.
+                Change only the uniform white #FFFFFF background to uniform solid black #000000.
+                Keep every foreground pixel, edge, color, position, scale, and canvas dimension identical.
+                Do not redraw, restyle, move, resize, sharpen, soften, or otherwise modify the subject.
+                Return exactly one fully opaque PNG image with no shadows, gradients, textures,
+                checkerboards, borders, captions, logos, or extra subjects.
+                """;
+    }
+
+    private static ImageGenerationResponse extractAlphaResponse(
+            ImageGenerationResponse whiteResponse,
+            BufferedImage white,
+            ImageGenerationResponse blackResponse,
             int targetWidth,
             int targetHeight
     ) {
+        GeneratedImage blackSource = requireSingleImage(blackResponse, "黑底抠图");
+        BufferedImage black = flattenOnBackground(
+                decodeImage(blackSource, "黑底抠图"),
+                0x000000
+        );
+        if (white.getWidth() != black.getWidth() || white.getHeight() != black.getHeight()) {
+            throw invalidResponse("黑白背景图片尺寸不一致，无法计算透明通道");
+        }
+
+        BufferedImage extracted = BlackWhiteAlphaExtractor.extract(white, black);
+        if (!hasTransparentPixel(extracted)) {
+            throw invalidResponse("黑白双图差分未得到透明像素");
+        }
+        BufferedImage normalized = resizeToTarget(extracted, targetWidth, targetHeight);
+        byte[] png = encodePng(normalized);
+        return new ImageGenerationResponse(
+                List.of(new GeneratedImage(
+                        blackSource.sourceUrl(),
+                        "image/png",
+                        blackSource.revisedPrompt(),
+                        png
+                )),
+                blackResponse.provider(),
+                blackResponse.model(),
+                blackResponse.providerRequestId(),
+                sumUnits(whiteResponse.inputUnits(), blackResponse.inputUnits()),
+                sumUnits(whiteResponse.outputUnits(), blackResponse.outputUnits())
+        );
+    }
+
+    private static ImageGenerationResponse normalizeSingleImageResponse(
+            ImageGenerationResponse response,
+            int targetWidth,
+            int targetHeight
+    ) {
+        GeneratedImage source = requireSingleImage(response, "图片模型");
+        BufferedImage decoded = decodeImage(source, "图片模型");
+        byte[] png = encodePng(resizeToTarget(decoded, targetWidth, targetHeight));
+        return new ImageGenerationResponse(
+                List.of(new GeneratedImage(
+                        source.sourceUrl(),
+                        "image/png",
+                        source.revisedPrompt(),
+                        png
+                )),
+                response.provider(),
+                response.model(),
+                response.providerRequestId(),
+                response.inputUnits(),
+                response.outputUnits()
+        );
+    }
+
+    private static GeneratedImage requireSingleImage(ImageGenerationResponse response, String label) {
         if (response.images().size() != 1) {
-            throw invalidResponse("图片模型必须且仅返回一张有效图片");
+            throw invalidResponse(label + "必须且仅返回一张有效图片");
         }
-        GeneratedImage source = response.images().get(0);
-        if (source.content().length == 0 || source.content().length > MAX_OUTPUT_IMAGE_BYTES) {
-            throw invalidResponse("图片模型返回的图片大小无效");
+        GeneratedImage image = response.images().get(0);
+        if (image.content().length == 0 || image.content().length > MAX_OUTPUT_IMAGE_BYTES) {
+            throw invalidResponse(label + "返回的图片大小无效");
         }
+        return image;
+    }
+
+    private static BufferedImage decodeImage(GeneratedImage image, String label) {
         BufferedImage decoded;
         try {
-            decoded = ImageIO.read(new ByteArrayInputStream(source.content()));
+            decoded = ImageIO.read(new ByteArrayInputStream(image.content()));
         } catch (IOException exception) {
-            throw invalidResponse("图片模型返回了无法读取的图片");
+            throw invalidResponse(label + "返回了无法读取的图片");
         }
         if (decoded == null || decoded.getWidth() <= 0 || decoded.getHeight() <= 0) {
-            throw invalidResponse("图片模型返回了无效图片");
+            throw invalidResponse(label + "返回了无效图片");
         }
+        if (decoded.getWidth() > MAX_IMAGE_DIMENSION || decoded.getHeight() > MAX_IMAGE_DIMENSION
+                || (long) decoded.getWidth() * decoded.getHeight() > MAX_IMAGE_PIXELS) {
+            throw invalidResponse(label + "返回的图片尺寸过大");
+        }
+        return decoded;
+    }
 
-        BufferedImage prepared = decoded;
-        if (requireTransparentPixels && !hasTransparentPixel(prepared)) {
-            prepared = removeBorderConnectedChromaKey(prepared);
-        }
-        if (requireTransparentPixels && !hasTransparentPixel(prepared)) {
-            throw invalidResponse("抠图模型未返回透明背景或标准绿幕背景");
-        }
-
-        BufferedImage argb = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
+    private static BufferedImage resizeToTarget(BufferedImage source, int targetWidth, int targetHeight) {
+        BufferedImage result = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
         double scale = Math.max(
-                targetWidth / (double) prepared.getWidth(),
-                targetHeight / (double) prepared.getHeight()
+                targetWidth / (double) source.getWidth(),
+                targetHeight / (double) source.getHeight()
         );
-        int drawWidth = Math.max(1, (int) Math.round(prepared.getWidth() * scale));
-        int drawHeight = Math.max(1, (int) Math.round(prepared.getHeight() * scale));
+        int drawWidth = Math.max(1, (int) Math.round(source.getWidth() * scale));
+        int drawHeight = Math.max(1, (int) Math.round(source.getHeight() * scale));
         int drawX = (targetWidth - drawWidth) / 2;
         int drawY = (targetHeight - drawHeight) / 2;
-        Graphics2D graphics = argb.createGraphics();
+        Graphics2D graphics = result.createGraphics();
         try {
             graphics.setRenderingHint(
                     RenderingHints.KEY_INTERPOLATION,
@@ -225,39 +380,40 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
                     RenderingHints.KEY_RENDERING,
                     RenderingHints.VALUE_RENDER_QUALITY
             );
-            graphics.drawImage(prepared, drawX, drawY, drawWidth, drawHeight, null);
+            graphics.drawImage(source, drawX, drawY, drawWidth, drawHeight, null);
         } finally {
             graphics.dispose();
         }
-        if (requireTransparentPixels && !hasTransparentPixel(argb)) {
-            throw invalidResponse("抠图结果没有透明像素");
-        }
+        return result;
+    }
 
-        byte[] png;
+    private static BufferedImage flattenOnBackground(BufferedImage source, int backgroundRgb) {
+        BufferedImage result = new BufferedImage(
+                source.getWidth(),
+                source.getHeight(),
+                BufferedImage.TYPE_INT_RGB
+        );
+        Graphics2D graphics = result.createGraphics();
+        try {
+            graphics.setColor(new java.awt.Color(backgroundRgb));
+            graphics.fillRect(0, 0, result.getWidth(), result.getHeight());
+            graphics.drawImage(source, 0, 0, null);
+        } finally {
+            graphics.dispose();
+        }
+        return result;
+    }
+
+    private static byte[] encodePng(BufferedImage image) {
         try {
             ByteArrayOutputStream output = new ByteArrayOutputStream();
-            if (!ImageIO.write(argb, "png", output)) {
+            if (!ImageIO.write(image, "png", output)) {
                 throw invalidResponse("图片结果无法转换为 PNG");
             }
-            png = output.toByteArray();
+            return output.toByteArray();
         } catch (IOException exception) {
             throw invalidResponse("图片结果无法转换为 PNG");
         }
-
-        GeneratedImage normalized = new GeneratedImage(
-                source.sourceUrl(),
-                "image/png",
-                source.revisedPrompt(),
-                png
-        );
-        return new ImageGenerationResponse(
-                List.of(normalized),
-                response.provider(),
-                response.model(),
-                response.providerRequestId(),
-                response.inputUnits(),
-                response.outputUnits()
-        );
     }
 
     private static boolean hasTransparentPixel(BufferedImage image) {
@@ -269,73 +425,22 @@ public final class BackgroundEditFeatureHandler implements FeatureHandler {
         return false;
     }
 
-    private static BufferedImage removeBorderConnectedChromaKey(BufferedImage source) {
-        int width = source.getWidth();
-        int height = source.getHeight();
-        boolean[] background = new boolean[width * height];
-        ArrayDeque<Integer> queue = new ArrayDeque<>();
-
-        for (int x = 0; x < width; x++) {
-            enqueueChromaPixel(source, x, 0, background, queue);
-            enqueueChromaPixel(source, x, height - 1, background, queue);
-        }
-        for (int y = 1; y < height - 1; y++) {
-            enqueueChromaPixel(source, 0, y, background, queue);
-            enqueueChromaPixel(source, width - 1, y, background, queue);
-        }
-
-        while (!queue.isEmpty()) {
-            int index = queue.removeFirst();
-            int x = index % width;
-            int y = index / width;
-            if (x > 0) enqueueChromaPixel(source, x - 1, y, background, queue);
-            if (x + 1 < width) enqueueChromaPixel(source, x + 1, y, background, queue);
-            if (y > 0) enqueueChromaPixel(source, x, y - 1, background, queue);
-            if (y + 1 < height) enqueueChromaPixel(source, x, y + 1, background, queue);
-        }
-
-        BufferedImage result = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int index = y * width + x;
-                int argb = source.getRGB(x, y);
-                if (background[index]) {
-                    result.setRGB(x, y, argb & 0x00FFFFFF);
-                } else {
-                    result.setRGB(x, y, argb);
-                }
-            }
-        }
-        return result;
+    private static Integer sumUnits(Integer first, Integer second) {
+        if (first == null && second == null) return null;
+        return (first == null ? 0 : first) + (second == null ? 0 : second);
     }
 
-    private static void enqueueChromaPixel(
-            BufferedImage source,
-            int x,
-            int y,
-            boolean[] background,
-            ArrayDeque<Integer> queue
+    private static void putIfPresent(Map<String, Object> target, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    private record CutoutGeneration(
+            ImageGenerationResponse response,
+            String whitePassRequestId,
+            String blackPassRequestId
     ) {
-        int index = y * source.getWidth() + x;
-        if (background[index] || !isChromaKey(source.getRGB(x, y))) return;
-        background[index] = true;
-        queue.addLast(index);
-    }
-
-    private static boolean isChromaKey(int argb) {
-        int red = (argb >>> 16) & 0xFF;
-        int green = (argb >>> 8) & 0xFF;
-        int blue = argb & 0xFF;
-        int keyRed = (CHROMA_KEY_RGB >>> 16) & 0xFF;
-        int keyGreen = (CHROMA_KEY_RGB >>> 8) & 0xFF;
-        int keyBlue = CHROMA_KEY_RGB & 0xFF;
-        int redDifference = red - keyRed;
-        int greenDifference = green - keyGreen;
-        int blueDifference = blue - keyBlue;
-        int distanceSquared = redDifference * redDifference
-                + greenDifference * greenDifference
-                + blueDifference * blueDifference;
-        return distanceSquared <= CHROMA_KEY_DISTANCE * CHROMA_KEY_DISTANCE;
     }
 
     private static void validateInputAssets(FeatureExecutionContext context, List<UUID> expectedAssets) {

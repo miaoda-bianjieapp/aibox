@@ -19,6 +19,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -145,9 +146,9 @@ class BackgroundEditFeatureHandlerTest {
     }
 
     @Test
-    void convertsAChromaKeyCutoutIntoARealTransparentPng() throws IOException {
+    void extractsAlphaFromWhiteAndBlackBackgroundPair() throws IOException {
         UUID sourceId = UUID.randomUUID();
-        AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
+        List<ImageGenerationRequest> captured = new ArrayList<>();
         FeatureExecutionContext context = context(
                 Map.of("mode", "remove_background", "sourceImage", sourceId.toString()),
                 List.of(sourceId),
@@ -158,17 +159,34 @@ class BackgroundEditFeatureHandlerTest {
         handler.validate(context);
         FeatureExecutionResult result = handler.execute(
                 context,
-                capturingGateway(captured, chromaKeyPng())
+                sequenceGateway(captured, whiteBackgroundPng(), blackBackgroundPng())
         );
 
-        assertEquals("png", captured.get().metadata().get("outputFormat"));
-        assertEquals(null, captured.get().metadata().get("background"));
-        assertTrue(captured.get().prompt().contains("#00FF00"));
+        assertEquals(2, captured.size());
+        assertEquals(List.of(sourceId), captured.get(0).inputAssetIds());
+        assertTrue(captured.get(0).inlineInputAssets().isEmpty());
+        assertTrue(captured.get(0).prompt().contains("#FFFFFF"));
+        assertEquals("alpha_white", captured.get(0).metadata().get("providerInvocationKey"));
+        assertTrue(captured.get(1).inputAssetIds().isEmpty());
+        assertEquals(1, captured.get(1).inlineInputAssets().size());
+        BufferedImage inlineWhite = ImageIO.read(
+                new java.io.ByteArrayInputStream(
+                        captured.get(1).inlineInputAssets().get(0).content()
+                )
+        );
+        assertEquals(0xFFFFFFFF, inlineWhite.getRGB(0, 0));
+        assertEquals(0xFFFF0000, inlineWhite.getRGB(1, 0));
+        assertTrue(captured.get(1).prompt().contains("#000000"));
+        assertEquals("alpha_black", captured.get(1).metadata().get("providerInvocationKey"));
         BufferedImage output = ImageIO.read(
                 new java.io.ByteArrayInputStream(result.artifacts().get(0).outputAssets().get(0).content())
         );
         assertTrue(output.getColorModel().hasAlpha());
-        assertTrue((output.getRGB(0, 0) >>> 24) < 255);
+        assertEquals(0, output.getRGB(0, 0) >>> 24);
+        assertEquals(0xFFFF0000, output.getRGB(1, 0));
+        assertTrue(Math.abs((output.getRGB(0, 1) >>> 24) - 128) <= 1);
+        assertTrue((output.getRGB(0, 1) & 0xFF) >= 254);
+        assertEquals(0xFF00FF00, output.getRGB(1, 1));
     }
 
     @Test
@@ -262,18 +280,54 @@ class BackgroundEditFeatureHandlerTest {
         };
     }
 
+    private static ModelGateway sequenceGateway(
+            List<ImageGenerationRequest> captured,
+            byte[] firstOutput,
+            byte[] secondOutput
+    ) {
+        return new ModelGateway() {
+            @Override
+            public TextGenerationResponse generateText(TextGenerationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public ImageGenerationResponse generateImage(ImageGenerationRequest request) {
+                captured.add(request);
+                byte[] output = captured.size() == 1 ? firstOutput : secondOutput;
+                return new ImageGenerationResponse(
+                        List.of(new GeneratedImage(null, "image/png", null, output)),
+                        "test-provider",
+                        "test-model",
+                        "request-" + captured.size(),
+                        null,
+                        null
+                );
+            }
+        };
+    }
+
     private static byte[] opaquePng() {
         BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
         image.setRGB(0, 0, 0xFFFF0000);
         return png(image);
     }
 
-    private static byte[] chromaKeyPng() {
+    private static byte[] whiteBackgroundPng() {
         BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
-        image.setRGB(0, 0, 0x0000FF00);
-        image.setRGB(0, 1, 0x0000FF00);
+        image.setRGB(0, 0, 0x00FFFFFF);
         image.setRGB(1, 0, 0x00FF0000);
-        image.setRGB(1, 1, 0x00FF0000);
+        image.setRGB(0, 1, 0x007F7FFF);
+        image.setRGB(1, 1, 0x0000FF00);
+        return png(image);
+    }
+
+    private static byte[] blackBackgroundPng() {
+        BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
+        image.setRGB(0, 0, 0x00000000);
+        image.setRGB(1, 0, 0x00FF0000);
+        image.setRGB(0, 1, 0x00000080);
+        image.setRGB(1, 1, 0x0000FF00);
         return png(image);
     }
 
