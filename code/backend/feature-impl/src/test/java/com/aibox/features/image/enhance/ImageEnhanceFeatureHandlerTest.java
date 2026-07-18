@@ -249,7 +249,35 @@ class ImageEnhanceFeatureHandlerTest {
     }
 
     @Test
-    void rejectsAProviderResultThatChangesTheOriginalAspectRatio() {
+    void fitsAStandardPortraitProviderResultBackIntoTheOriginalPortraitCanvas() throws IOException {
+        UUID sourceId = UUID.randomUUID();
+        AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
+        FeatureExecutionContext context = context(
+                Map.of(
+                        "mode", "deblur",
+                        "sourceImage", sourceId.toString()
+                ),
+                sourceId,
+                4,
+                9
+        );
+
+        handler.validate(context);
+        FeatureExecutionResult result = handler.execute(
+                context,
+                capturingGateway(captured, png(9, 16))
+        );
+
+        assertEquals("9:16", captured.get().size());
+        BufferedImage output = ImageIO.read(new ByteArrayInputStream(
+                result.artifacts().get(0).outputAssets().get(0).content()
+        ));
+        assertEquals(4, output.getWidth());
+        assertEquals(9, output.getHeight());
+    }
+
+    @Test
+    void rejectsAProviderResultWithTheOppositeOrientation() {
         UUID sourceId = UUID.randomUUID();
         FeatureExecutionContext context = context(
                 Map.of(
@@ -258,7 +286,7 @@ class ImageEnhanceFeatureHandlerTest {
                 ),
                 sourceId,
                 4,
-                3
+                9
         );
 
         handler.validate(context);
@@ -266,12 +294,12 @@ class ImageEnhanceFeatureHandlerTest {
                 ModelProviderException.class,
                 () -> handler.execute(
                         context,
-                        capturingGateway(new AtomicReference<>(), png(4, 4))
+                        capturingGateway(new AtomicReference<>(), png(16, 9))
                 )
         );
 
         assertEquals("PROVIDER_INVALID_RESPONSE", exception.code());
-        assertTrue(exception.getMessage().contains("比例"));
+        assertTrue(exception.getMessage().contains("方向"));
     }
 
     @Test

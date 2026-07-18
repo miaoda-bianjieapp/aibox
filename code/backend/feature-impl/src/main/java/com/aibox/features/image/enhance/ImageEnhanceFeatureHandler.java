@@ -18,6 +18,7 @@ import com.aibox.feature.spi.ModelProviderException;
 import org.springframework.stereotype.Component;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
@@ -190,7 +191,7 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
                 prompt,
                 inputAssetIds,
                 inlineInputAssets,
-                null,
+                preferredModelSize(source),
                 1,
                 Map.of(
                         "featureCode", FEATURE_CODE,
@@ -220,8 +221,8 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
             throw invalidResponse("图片模型返回的图片大小无效");
         }
         BufferedImage decoded = decodeImage(generated);
-        requireMatchingAspectRatio(decoded, target);
-        byte[] png = encodePng(resize(decoded, target.width(), target.height()));
+        requireCompatibleOrientation(decoded, target);
+        byte[] png = encodePng(fitToCanvas(decoded, target.width(), target.height()));
         if (png.length > MAX_OUTPUT_IMAGE_BYTES) {
             throw invalidResponse("修复结果超过 50 MB，无法保存");
         }
@@ -257,21 +258,44 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
         }
     }
 
-    private static void requireMatchingAspectRatio(BufferedImage image, Dimensions target) {
+    private static void requireCompatibleOrientation(BufferedImage image, Dimensions target) {
         double actual = image.getWidth() / (double) image.getHeight();
         double expected = target.width() / (double) target.height();
-        if (Math.abs(actual - expected) / expected > 0.01d) {
-            throw invalidResponse("图片模型改变了原图比例，无法生成保真结果");
+        boolean expectedPortrait = expected < 0.9d;
+        boolean expectedLandscape = expected > 1.1d;
+        boolean actualPortrait = actual < 0.9d;
+        boolean actualLandscape = actual > 1.1d;
+        if ((expectedPortrait && actualLandscape) || (expectedLandscape && actualPortrait)) {
+            throw invalidResponse("图片模型返回了与原图相反的横竖方向，无法生成保真结果");
         }
     }
 
-    private static BufferedImage resize(BufferedImage source, int width, int height) {
+    private static BufferedImage fitToCanvas(BufferedImage source, int width, int height) {
         int imageType = source.getColorModel().hasAlpha()
                 ? BufferedImage.TYPE_INT_ARGB
                 : BufferedImage.TYPE_INT_RGB;
         BufferedImage result = new BufferedImage(width, height, imageType);
+        double scale = Math.min(
+                width / (double) source.getWidth(),
+                height / (double) source.getHeight()
+        );
+        int renderedWidth = Math.min(
+                width,
+                Math.max(1, (int) Math.round(source.getWidth() * scale))
+        );
+        int renderedHeight = Math.min(
+                height,
+                Math.max(1, (int) Math.round(source.getHeight() * scale))
+        );
+        int x = (width - renderedWidth) / 2;
+        int y = (height - renderedHeight) / 2;
+
         Graphics2D graphics = result.createGraphics();
         try {
+            graphics.setColor(source.getColorModel().hasAlpha()
+                    ? new Color(0, 0, 0, 0)
+                    : averageBorderColor(source));
+            graphics.fillRect(0, 0, width, height);
             graphics.setRenderingHint(
                     RenderingHints.KEY_INTERPOLATION,
                     RenderingHints.VALUE_INTERPOLATION_BICUBIC
@@ -280,11 +304,60 @@ public final class ImageEnhanceFeatureHandler implements FeatureHandler {
                     RenderingHints.KEY_RENDERING,
                     RenderingHints.VALUE_RENDER_QUALITY
             );
-            graphics.drawImage(source, 0, 0, width, height, null);
+            graphics.drawImage(
+                    source,
+                    x,
+                    y,
+                    x + renderedWidth,
+                    y + renderedHeight,
+                    0,
+                    0,
+                    source.getWidth(),
+                    source.getHeight(),
+                    null
+            );
         } finally {
             graphics.dispose();
         }
         return result;
+    }
+
+    private static Color averageBorderColor(BufferedImage image) {
+        long red = 0;
+        long green = 0;
+        long blue = 0;
+        long count = 0;
+        int lastX = image.getWidth() - 1;
+        int lastY = image.getHeight() - 1;
+        for (int x = 0; x <= lastX; x++) {
+            int top = image.getRGB(x, 0);
+            int bottom = image.getRGB(x, lastY);
+            red += ((top >> 16) & 0xff) + ((bottom >> 16) & 0xff);
+            green += ((top >> 8) & 0xff) + ((bottom >> 8) & 0xff);
+            blue += (top & 0xff) + (bottom & 0xff);
+            count += 2;
+        }
+        for (int y = 1; y < lastY; y++) {
+            int left = image.getRGB(0, y);
+            int right = image.getRGB(lastX, y);
+            red += ((left >> 16) & 0xff) + ((right >> 16) & 0xff);
+            green += ((left >> 8) & 0xff) + ((right >> 8) & 0xff);
+            blue += (left & 0xff) + (right & 0xff);
+            count += 2;
+        }
+        return new Color(
+                (int) (red / count),
+                (int) (green / count),
+                (int) (blue / count)
+        );
+    }
+
+    private static String preferredModelSize(InputAssetReference source) {
+        double aspectRatio = source.width() / (double) source.height();
+        if (aspectRatio < 0.75d) return "9:16";
+        if (aspectRatio > 4d / 3d) return "16:9";
+        if (aspectRatio >= 0.9d && aspectRatio <= 1.1d) return "1:1";
+        return null;
     }
 
     private static byte[] encodePng(BufferedImage image) {
