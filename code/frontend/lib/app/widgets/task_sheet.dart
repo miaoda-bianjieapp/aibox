@@ -3,14 +3,16 @@ import 'package:flutter/material.dart';
 import '../models/feature_models.dart';
 import '../network/api_exception.dart';
 import '../network/task_execution_result.dart';
+import '../pages/outline_result_page.dart';
 import '../pages/writing_result_page.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
 
-Future<void> showTaskSheet(
+Future<TaskExecutionResult?> showTaskSheet(
   BuildContext context, {
   required AppDataController data,
   required TaskLaunchRequest request,
+  bool openResult = true,
 }) async {
   final result = await showModalBottomSheet<TaskExecutionResult>(
     context: context,
@@ -21,14 +23,67 @@ Future<void> showTaskSheet(
   );
   if (result != null && context.mounted) {
     await data.refresh();
-    if (!context.mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (context) => ArtifactResultPage(
+    if (!context.mounted) return result;
+    if (openResult) {
+      await openArtifactResultPage(
+        context,
+        data: data,
         artifact: result.artifact,
         rendererKey: result.feature.rendererKey,
+      );
+    }
+  }
+  return result;
+}
+
+Future<void> openArtifactResultPage(
+  BuildContext context, {
+  required AppDataController data,
+  required ArtifactView artifact,
+  required String? rendererKey,
+  VoidCallback? onContinue,
+}) async {
+  if (rendererKey == 'outline_text_editor') {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (context) => OutlineResultPage(
+        artifact: artifact,
+        onExecuteVersion: ({
+          required baseArtifact,
+          required operation,
+          editedText,
+          required onStatus,
+        }) =>
+            executeOutlineVersion(
+          data: data,
+          baseArtifact: baseArtifact,
+          operation: operation,
+          editedText: editedText,
+          onStatus: onStatus,
+        ),
+        onAdjustInput: (baseArtifact) async {
+          final request = await buildOutlineLaunchRequest(
+            data: data,
+            baseArtifact: baseArtifact,
+          );
+          if (!context.mounted) return null;
+          return showTaskSheet(
+            context,
+            data: data,
+            request: request,
+            openResult: false,
+          );
+        },
       ),
     ));
+    return;
   }
+  await Navigator.of(context).push(MaterialPageRoute<void>(
+    builder: (context) => ArtifactResultPage(
+      artifact: artifact,
+      rendererKey: rendererKey,
+      onContinue: onContinue,
+    ),
+  ));
 }
 
 class _TaskSheetContent extends StatefulWidget {

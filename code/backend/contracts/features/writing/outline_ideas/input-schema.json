@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["articleTitle", "thesis", "style"],
+  "properties": {
+    "articleTitle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "title": "文章标题",
+      "description": "输入计划撰写的文章标题。"
+    },
+    "thesis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "title": "文章主旨",
+      "description": "说明文章想表达的中心思想和写作目标。"
+    },
+    "style": {
+      "type": "string",
+      "enum": ["professional", "concise", "friendly", "creative"],
+      "default": "professional",
+      "title": "表达风格"
+    },
+    "operation": {
+      "type": "string",
+      "enum": ["generate", "regenerate", "save_edit"],
+      "default": "generate"
+    },
+    "editedText": {
+      "type": "string",
+      "maxLength": 10000
+    }
+  },
+  "additionalProperties": false
+}

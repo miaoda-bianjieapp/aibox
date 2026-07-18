@@ -1,0 +1,163 @@
+insert into feature_definition (
+    id,
+    workspace_id,
+    code,
+    display_name,
+    description,
+    status,
+    current_version,
+    result_type,
+    renderer_key,
+    execution_mode,
+    sort_order,
+    created_at,
+    updated_at
+)
+select
+    '3e43c7cb-6f6a-4d02-a415-c28e2a0e2c93',
+    workspace.id,
+    'writing.outline_ideas',
+    '大纲与思路',
+    '根据文章标题、主旨和风格生成可编辑的纯文本写作框架。',
+    'INTERNAL',
+    1,
+    'outline_text',
+    'outline_text_editor',
+    'ASYNC',
+    40,
+    now(),
+    now()
+from workspace
+where workspace.code = 'writing';
+
+insert into feature_version (
+    id,
+    feature_id,
+    version,
+    input_schema_json,
+    ui_schema_json,
+    output_schema_json,
+    config_json,
+    created_at
+) values (
+    '98fd543f-b065-4db3-b932-029711867857',
+    '3e43c7cb-6f6a-4d02-a415-c28e2a0e2c93',
+    1,
+    '{
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["articleTitle","thesis","style"],
+      "properties":{
+        "articleTitle":{
+          "type":"string",
+          "minLength":1,
+          "maxLength":200,
+          "title":"文章标题",
+          "description":"输入计划撰写的文章标题。"
+        },
+        "thesis":{
+          "type":"string",
+          "minLength":1,
+          "maxLength":1000,
+          "title":"文章主旨",
+          "description":"说明文章想表达的中心思想和写作目标。"
+        },
+        "style":{
+          "type":"string",
+          "enum":["professional","concise","friendly","creative"],
+          "default":"professional",
+          "title":"表达风格"
+        },
+        "operation":{
+          "type":"string",
+          "enum":["generate","regenerate","save_edit"],
+          "default":"generate"
+        },
+        "editedText":{"type":"string","maxLength":10000}
+      },
+      "additionalProperties":false
+    }'::jsonb,
+    '{
+      "order":["articleTitle","thesis","style"],
+      "widgets":{"articleTitle":"text","thesis":"textarea","style":"segmented"},
+      "enumLabels":{
+        "style":{
+          "professional":"专业",
+          "concise":"简洁",
+          "friendly":"亲切",
+          "creative":"创意"
+        }
+      },
+      "feeNotice":"生成写作框架将调用所选文本模型，可能产生费用；点击“生成框架”即表示确认本次调用。",
+      "submitLabel":"生成框架",
+      "revisionSubmitLabel":"生成新框架"
+    }'::jsonb,
+    '{
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["format","text"],
+      "properties":{
+        "format":{"const":"plain_text"},
+        "text":{"type":"string","minLength":1}
+      },
+      "additionalProperties":false
+    }'::jsonb,
+    '{
+      "modelAlias":"text.default",
+      "maxOutputTokens":2000,
+      "maxEditedCharacters":10000,
+      "capabilities":["TEXT_GENERATION"]
+    }'::jsonb,
+    now()
+);
+
+insert into feature_model_policy (
+    id,
+    feature_code,
+    capability,
+    default_deployment_code,
+    allow_user_selection,
+    created_at,
+    updated_at
+) values (
+    'b81a198e-449f-416f-b6ec-6449645986e7',
+    'writing.outline_ideas',
+    'TEXT_GENERATION',
+    'codex2api-gpt-5-6-text',
+    true,
+    now(),
+    now()
+);
+
+insert into feature_model_option (
+    policy_id,
+    deployment_code,
+    display_name,
+    description,
+    sort_order,
+    enabled
+) values
+    (
+        'b81a198e-449f-416f-b6ec-6449645986e7',
+        'codex2api-gpt-5-4-mini-text',
+        'GPT-5.4 Mini',
+        '响应较轻，适合常规文章框架。',
+        10,
+        true
+    ),
+    (
+        'b81a198e-449f-416f-b6ec-6449645986e7',
+        'codex2api-gpt-5-6-text',
+        'GPT-5.6',
+        '默认模型，适合复杂主题和结构规划。',
+        20,
+        true
+    ),
+    (
+        'b81a198e-449f-416f-b6ec-6449645986e7',
+        'zhipu-glm-5v-turbo-text',
+        'GLM-5V Turbo',
+        '通用中文和多语言构思模型。',
+        30,
+        true
+    );

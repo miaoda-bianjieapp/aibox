@@ -1,0 +1,19 @@
+{
+  "order": ["articleTitle", "thesis", "style"],
+  "widgets": {
+    "articleTitle": "text",
+    "thesis": "textarea",
+    "style": "segmented"
+  },
+  "enumLabels": {
+    "style": {
+      "professional": "专业",
+      "concise": "简洁",
+      "friendly": "亲切",
+      "creative": "创意"
+    }
+  },
+  "feeNotice": "生成写作框架将调用所选文本模型，可能产生费用；点击“生成框架”即表示确认本次调用。",
+  "submitLabel": "生成框架",
+  "revisionSubmitLabel": "生成新框架"
+}
