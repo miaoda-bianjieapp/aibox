@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["mode", "sourceImage"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["upscale", "deblur", "denoise", "old_photo_restore"],
+      "default": "upscale",
+      "title": "处理方式",
+      "description": "每次只执行一种图片清晰化或修复处理。"
+    },
+    "sourceImage": {
+      "type": "string",
+      "format": "uuid",
+      "title": "原始图片",
+      "description": "上传需要提升清晰度或修复的单张图片。"
+    },
+    "scale": {
+      "type": "string",
+      "enum": ["2x", "4x"],
+      "default": "2x",
+      "title": "放大倍率",
+      "description": "最终宽高严格放大为原图的 2 倍或 4 倍。"
+    },
+    "colorize": {
+      "type": "boolean",
+      "default": false,
+      "title": "为黑白照片上色",
+      "description": "仅在老照片修复时使用；关闭时保持原来的黑白或彩色状态。"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {"const": "upscale"}
+        },
+        "required": ["mode"]
+      },
+      "then": {
+        "required": ["scale"]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

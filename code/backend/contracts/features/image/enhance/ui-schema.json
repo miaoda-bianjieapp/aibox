@@ -1,0 +1,45 @@
+{
+  "order": ["mode", "sourceImage", "scale", "colorize"],
+  "widgets": {
+    "mode": "segmented",
+    "sourceImage": "image",
+    "scale": "segmented",
+    "colorize": "boolean"
+  },
+  "visibility": {
+    "scale": {
+      "field": "mode",
+      "equals": "upscale"
+    },
+    "colorize": {
+      "field": "mode",
+      "equals": "old_photo_restore"
+    }
+  },
+  "enumLabels": {
+    "mode": {
+      "upscale": "图片放大",
+      "deblur": "去模糊",
+      "denoise": "图片降噪",
+      "old_photo_restore": "老照片修复"
+    },
+    "scale": {
+      "2x": "2x",
+      "4x": "4x"
+    }
+  },
+  "fieldOptions": {
+    "sourceImage": {
+      "acceptedMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+      "allowedExtensions": [".png", ".jpg", ".jpeg", ".webp"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 10485760,
+      "showPreview": true,
+      "uploadLabel": "上传原始图片"
+    }
+  },
+  "feeNotice": "图片修复将调用所选付费模型，费用按实际模型计费；点击“开始修复”即表示确认本次调用。",
+  "submitLabel": "开始修复",
+  "revisionSubmitLabel": "生成新版本"
+}
