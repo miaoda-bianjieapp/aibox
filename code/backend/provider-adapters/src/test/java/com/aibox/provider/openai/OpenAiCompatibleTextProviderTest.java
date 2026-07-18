@@ -5,13 +5,21 @@ import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelProviderException;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -83,6 +91,145 @@ class OpenAiCompatibleTextProviderTest {
         assertThrows(
                 ModelProviderException.class,
                 () -> provider.generateImage(target, request, List.of(invalidAsset))
+        );
+    }
+
+    @Test
+    void transparentImageEditWritesOutputOptionsIntoMultipart() throws IOException {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/images/edits", exchange -> {
+            capturedBody.set(new String(
+                    exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.ISO_8859_1
+            ));
+            byte[] response = (
+                    "{\"data\":[{\"b64_json\":\""
+                            + Base64.getEncoder().encodeToString(new byte[]{1})
+                            + "\",\"media_type\":\"image/png\"}]}"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("test-provider", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "test-image",
+                    "test-provider",
+                    "test-model",
+                    ModelCapability.IMAGE_GENERATION,
+                    Map.of()
+            );
+            UUID assetId = UUID.randomUUID();
+            ImageGenerationRequest request = new ImageGenerationRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "image.generation.default",
+                    "test-image",
+                    "移除背景",
+                    List.of(assetId),
+                    null,
+                    1,
+                    Map.of("outputFormat", "png", "background", "transparent")
+            );
+
+            provider.generateImage(
+                    target,
+                    request,
+                    List.of(new ModelAsset(assetId, "subject.png", "image/png", new byte[]{1}))
+            );
+
+            assertTrue(capturedBody.get().contains("name=\"output_format\""));
+            assertTrue(capturedBody.get().contains("name=\"background\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void imageEditUsesDistinctIdempotencyKeysForInvocationStages() throws IOException {
+        List<String> capturedKeys = new ArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/images/edits", exchange -> {
+            capturedKeys.add(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
+            exchange.getRequestBody().readAllBytes();
+            byte[] response = (
+                    "{\"data\":[{\"b64_json\":\""
+                            + Base64.getEncoder().encodeToString(new byte[]{1})
+                            + "\",\"media_type\":\"image/png\"}]}"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("test-provider", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "test-image",
+                    "test-provider",
+                    "test-model",
+                    ModelCapability.IMAGE_GENERATION,
+                    Map.of()
+            );
+            UUID runId = UUID.randomUUID();
+            UUID assetId = UUID.randomUUID();
+            ModelAsset asset = new ModelAsset(
+                    assetId,
+                    "subject.png",
+                    "image/png",
+                    new byte[]{1}
+            );
+
+            provider.generateImage(
+                    target,
+                    imageRequest(runId, assetId, "alpha_white"),
+                    List.of(asset)
+            );
+            provider.generateImage(
+                    target,
+                    imageRequest(runId, assetId, "alpha_black"),
+                    List.of(asset)
+            );
+
+            assertEquals(2, capturedKeys.size());
+            assertNotEquals(capturedKeys.get(0), capturedKeys.get(1));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static ImageGenerationRequest imageRequest(
+            UUID runId,
+            UUID assetId,
+            String invocationKey
+    ) {
+        return new ImageGenerationRequest(
+                UUID.randomUUID(),
+                runId,
+                "image.generation.default",
+                "test-image",
+                "edit image",
+                List.of(assetId),
+                null,
+                1,
+                Map.of("providerInvocationKey", invocationKey)
         );
     }
 }

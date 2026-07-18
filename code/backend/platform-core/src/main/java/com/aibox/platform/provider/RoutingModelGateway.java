@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -107,13 +108,17 @@ public final class RoutingModelGateway implements ModelGateway {
         ProviderTarget selected = requireProvider(
                 ModelCapability.IMAGE_GENERATION, request.modelAlias(), request.deploymentCode()
         );
-        List<ModelAsset> assets = request.inputAssetIds().stream().map(assetService::readForModel).toList();
+        List<ModelAsset> assets = new ArrayList<>(
+                request.inputAssetIds().stream().map(assetService::readForModel).toList()
+        );
+        assets.addAll(request.inlineInputAssets());
+        List<ModelAsset> immutableAssets = List.copyOf(assets);
         return invoke(
                 request.tenantId(), request.runId(), ModelCapability.IMAGE_GENERATION, request.modelAlias(),
                 selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
                         request.prompt(), request.inputAssetIds().toString(), request.size(),
-                        Integer.toString(request.count())),
-                () -> selected.provider().generateImage(selected.target(), request, assets),
+                        Integer.toString(request.count()), inlineAssetFingerprint(request.inlineInputAssets())),
+                () -> selected.provider().generateImage(selected.target(), request, immutableAssets),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputUnits(), response.outputUnits())
         );
@@ -217,6 +222,24 @@ public final class RoutingModelGateway implements ModelGateway {
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static String inlineAssetFingerprint(List<ModelAsset> assets) {
+        return assets.stream()
+                .map(asset -> fingerprint(
+                        asset.fileName(),
+                        asset.mediaType(),
+                        sha256(asset.content())
+                ))
+                .collect(java.util.stream.Collectors.joining(","));
+    }
+
+    private static String sha256(byte[] value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
         }

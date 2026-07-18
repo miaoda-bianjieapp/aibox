@@ -99,7 +99,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   late final Future<FeatureDetail> _featureFuture;
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, Object?> _values = {};
-  final List<AssetView> _assets = [];
+  final Map<String, List<AssetView>> _assetsByField = {};
   String? _projectId;
   final Map<String, String> _selectedModels = {};
   String? _status;
@@ -115,8 +115,6 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     _nameController = TextEditingController(
         text: widget.request.taskTitle ?? widget.request.entry.title);
     _projectId = widget.request.projectId;
-    _assets.addAll(widget.data.assets
-        .where((asset) => widget.request.initialAssetIds.contains(asset.id)));
     _featureFuture = widget.data.api.getFeature(widget.request.entry.id);
   }
 
@@ -274,6 +272,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
               ? requested!
               : policy.defaultModelCode;
     }
+    _initializeAssetFields(feature);
     for (final field in feature.fieldOrder) {
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
@@ -284,6 +283,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       final initial = revisionText?.trim().isNotEmpty == true
           ? revisionText
           : widget.request.initialParameters[field] ?? schema['default'];
+      if (_isAssetField(schema, feature.widgetFor(field) ?? 'text')) {
+        continue;
+      }
       if (schema['type'] == 'boolean') {
         _values[field] = initial == true;
       } else if (schema['enum'] is List) {
@@ -296,6 +298,44 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             TextEditingController(text: initial?.toString() ?? '');
       }
     }
+  }
+
+  void _initializeAssetFields(FeatureDetail feature) {
+    final consumedIds = <String>{};
+    final assetFields = <String>[];
+    for (final field in feature.fieldOrder) {
+      final schema =
+          Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
+      final widgetType = feature.widgetFor(field) ?? 'text';
+      if (!_isAssetField(schema, widgetType)) continue;
+      assetFields.add(field);
+
+      final initialIds =
+          _assetIdsFromValue(widget.request.initialParameters[field]);
+      consumedIds.addAll(initialIds);
+      final revisionIds = widget.request.isRevision &&
+              field == feature.revisionSourceAssetField &&
+              widget.request.baseArtifactAssetIds.isNotEmpty
+          ? widget.request.baseArtifactAssetIds
+          : initialIds;
+      consumedIds.addAll(revisionIds);
+      _assetsByField[field] = _assetsForIds(revisionIds);
+    }
+
+    if (assetFields.isEmpty) return;
+    final legacyIds = widget.request.initialAssetIds
+        .where((id) => !consumedIds.contains(id))
+        .toList();
+    if (legacyIds.isNotEmpty) {
+      _assetsByField[assetFields.first] = [
+        ...?_assetsByField[assetFields.first],
+        ..._assetsForIds(legacyIds),
+      ];
+    }
+  }
+
+  List<AssetView> _assetsForIds(List<String> ids) {
+    return widget.data.assets.where((asset) => ids.contains(asset.id)).toList();
   }
 
   List<Widget> _buildModelSelectors(FeatureDetail feature) {
@@ -457,35 +497,45 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   Widget _buildAssetField(FeatureDetail feature, String field,
       Map<String, dynamic> schema, String widgetType) {
     final options = feature.fieldOptions(field);
+    final assets = _assetsByField[field] ?? const <AssetView>[];
     final maxItems = _integerOption(options, 'maxItems') ?? 1;
     final acceptedMimeTypes = _stringListOption(options, 'acceptedMimeTypes',
         fallback: _mimeTypesForWidget(widgetType));
     final allowedExtensions = _stringListOption(options, 'allowedExtensions');
     final maxTotalSizeBytes = _integerOption(options, 'maxTotalSizeBytes');
     final currentBytes =
-        _assets.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
+        assets.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (schema['description']?.toString().trim().isNotEmpty == true)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            schema['description'].toString(),
+            style: const TextStyle(color: AppColors.muted, fontSize: 12),
+          ),
+        ),
       if (maxItems > 1)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: Text('已选择 ${_assets.length}/$maxItems',
+          child: Text('已选择 ${assets.length}/$maxItems',
               style: const TextStyle(color: AppColors.muted, fontSize: 11)),
         ),
-      if (_assets.isNotEmpty)
+      if (assets.isNotEmpty)
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: _assets
+          children: assets
               .map((asset) => _AssetPreview(
                     asset: asset,
                     onRemove: _submitting
                         ? null
-                        : () => setState(() => _assets.remove(asset)),
+                        : () => setState(
+                            () => _assetsByField[field]?.remove(asset)),
                     contentUrl: widget.data.api.assetContentUrl(asset.id),
                   ))
               .toList(),
         ),
-      if (maxTotalSizeBytes != null && _assets.isNotEmpty)
+      if (maxTotalSizeBytes != null && assets.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 7),
           child: Text(
@@ -495,9 +545,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ),
       const SizedBox(height: 8),
       OutlinedButton.icon(
-        onPressed: _submitting || _assets.length >= maxItems
+        onPressed: _submitting || assets.length >= maxItems
             ? null
             : () => _pickAsset(
+                  field,
                   widgetType,
                   acceptedMimeTypes: acceptedMimeTypes,
                   allowedExtensions: allowedExtensions,
@@ -505,12 +556,15 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                   maxTotalSizeBytes: maxTotalSizeBytes,
                 ),
         icon: const Icon(Icons.upload_file_outlined),
-        label: Text(_assets.length >= maxItems ? '已达到数量上限' : '选择并上传图片'),
+        label: Text(assets.length >= maxItems
+            ? '已达到数量上限'
+            : options['uploadLabel']?.toString() ?? '选择并上传图片'),
       ),
     ]);
   }
 
   Future<void> _pickAsset(
+    String field,
     String widgetType, {
     required List<String> acceptedMimeTypes,
     required List<String> allowedExtensions,
@@ -525,13 +579,16 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       );
       if (asset != null &&
           maxTotalSizeBytes != null &&
-          _assets.fold<int>(0, (sum, item) => sum + item.sizeBytes) +
+          (_assetsByField[field] ?? const <AssetView>[])
+                      .fold<int>(0, (sum, item) => sum + item.sizeBytes) +
                   asset.sizeBytes >
               maxTotalSizeBytes) {
         await widget.data.deleteAsset(asset.id);
-        throw ApiException('参考图片总大小不能超过 ${_formatBytes(maxTotalSizeBytes)}');
+        throw ApiException('图片总大小不能超过 ${_formatBytes(maxTotalSizeBytes)}');
       }
-      if (asset != null && mounted) setState(() => _assets.add(asset));
+      if (asset != null && mounted) {
+        setState(() => (_assetsByField[field] ??= []).add(asset));
+      }
     } catch (exception) {
       if (mounted) setState(() => _error = '$exception');
     }
@@ -549,7 +606,19 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
-      if (_isAssetField(schema, widgetType)) continue;
+      if (_isAssetField(schema, widgetType)) {
+        final assets = _assetsByField[field] ?? const <AssetView>[];
+        if (feature.requiredFields.contains(field) && assets.isEmpty) {
+          setState(() => _error = '请上传${schema['title'] ?? field}');
+          return;
+        }
+        if (assets.isNotEmpty) {
+          final assetIds = assets.map((asset) => asset.id).toList();
+          parameters[field] =
+              schema['type'] == 'array' ? assetIds : assetIds.first;
+        }
+        continue;
+      }
       Object? value;
       if (schema['type'] == 'boolean' || schema['enum'] is List) {
         value = _values[field];
@@ -577,6 +646,13 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _status = '准备连接后端';
     });
     try {
+      final inputAssetIds = <String>[];
+      for (final field in feature.fieldOrder) {
+        if (!feature.isFieldVisible(field, _values)) continue;
+        for (final asset in _assetsByField[field] ?? const <AssetView>[]) {
+          if (!inputAssetIds.contains(asset.id)) inputAssetIds.add(asset.id);
+        }
+      }
       final result = await widget.data.api.executeFeature(
         feature: feature,
         taskTitle: taskName,
@@ -587,7 +663,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             _selectedModels.length == 1 ? _selectedModels.values.first : null,
         selectedModels: _selectedModels,
         parameters: parameters,
-        inputAssetIds: _assets.map((asset) => asset.id).toList(),
+        inputAssetIds: inputAssetIds,
         onStatus: (status) {
           if (mounted) setState(() => _status = status);
         },
@@ -675,7 +751,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
 
   void _resetParameters(FeatureDetail feature) {
     setState(() {
-      _assets.clear();
+      _assetsByField.clear();
       for (final field in feature.fieldOrder) {
         final schema =
             Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
@@ -701,6 +777,17 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     return schema['format'] == 'binary' ||
         schema['type'] == 'asset' ||
         const {'file', 'image', 'audio', 'video'}.contains(widgetType);
+  }
+
+  static List<String> _assetIdsFromValue(Object? value) {
+    if (value is List) {
+      return value
+          .map((item) => item.toString())
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+    final single = value?.toString();
+    return single == null || single.isEmpty ? const [] : [single];
   }
 
   Future<void> _cancelRun() async {

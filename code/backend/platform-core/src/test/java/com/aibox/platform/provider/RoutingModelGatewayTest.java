@@ -4,7 +4,11 @@ import com.aibox.feature.spi.ModelProviderClient;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.GeneratedAudio;
+import com.aibox.feature.spi.GeneratedImage;
 import com.aibox.feature.spi.GeneratedVideo;
+import com.aibox.feature.spi.ImageGenerationRequest;
+import com.aibox.feature.spi.ImageGenerationResponse;
+import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import com.aibox.feature.spi.TextToSpeechRequest;
@@ -21,6 +25,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -92,11 +97,80 @@ class RoutingModelGatewayTest {
         verify(repository, times(4)).save(any(ProviderInvocationEntity.class));
     }
 
+    @Test
+    void appendsInlineImagesAfterPersistedInputAssets() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.IMAGE_GENERATION,
+                "image.generation.default",
+                "test-image"
+        )).thenReturn(List.of(target("test-image", ModelCapability.IMAGE_GENERATION)));
+        UUID persistedId = UUID.randomUUID();
+        ModelAsset persisted = new ModelAsset(
+                persistedId,
+                "source.png",
+                "image/png",
+                new byte[]{1}
+        );
+        ModelAsset inline = new ModelAsset(
+                UUID.randomUUID(),
+                "white-background.png",
+                "image/png",
+                new byte[]{2}
+        );
+        AssetService assetService = mock(AssetService.class);
+        when(assetService.readForModel(persistedId)).thenReturn(persisted);
+        AtomicReference<List<ModelAsset>> capturedAssets = new AtomicReference<>();
+        ModelProviderClient provider = new TestProvider() {
+            @Override
+            public ImageGenerationResponse generateImage(
+                    ModelCallTarget target,
+                    ImageGenerationRequest request,
+                    List<ModelAsset> assets
+            ) {
+                capturedAssets.set(assets);
+                return new ImageGenerationResponse(
+                        List.of(new GeneratedImage(null, "image/png", null, new byte[]{3})),
+                        "test",
+                        "model",
+                        "image-request",
+                        1,
+                        1
+                );
+            }
+        };
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(provider),
+                repository,
+                assetService,
+                routingService,
+                Clock.fixed(Instant.parse("2026-07-18T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        gateway.generateImage(new ImageGenerationRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "image.generation.default",
+                "test-image",
+                "change the background",
+                List.of(persistedId),
+                List.of(inline),
+                null,
+                1,
+                Map.of()
+        ));
+
+        assertThat(capturedAssets.get()).containsExactly(persisted, inline);
+        verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
+    }
+
     private static ModelCallTarget target(String deployment, ModelCapability capability) {
         return new ModelCallTarget(deployment, "test", "provider-model", capability, Map.of());
     }
 
-    private static final class TestProvider implements ModelProviderClient {
+    private static class TestProvider implements ModelProviderClient {
 
         @Override
         public String adapterCode() {

@@ -11,14 +11,41 @@ public record ImageGenerationRequest(
         String deploymentCode,
         String prompt,
         List<UUID> inputAssetIds,
+        List<ModelAsset> inlineInputAssets,
         String size,
         int count,
         Map<String, Object> metadata
 ) {
     public ImageGenerationRequest {
         inputAssetIds = inputAssetIds == null ? List.of() : List.copyOf(inputAssetIds);
+        inlineInputAssets = inlineInputAssets == null ? List.of() : List.copyOf(inlineInputAssets);
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
         count = Math.max(1, count);
+    }
+
+    public ImageGenerationRequest(
+            UUID tenantId,
+            UUID runId,
+            String modelAlias,
+            String deploymentCode,
+            String prompt,
+            List<UUID> inputAssetIds,
+            String size,
+            int count,
+            Map<String, Object> metadata
+    ) {
+        this(
+                tenantId,
+                runId,
+                modelAlias,
+                deploymentCode,
+                prompt,
+                inputAssetIds,
+                List.of(),
+                size,
+                count,
+                metadata
+        );
     }
 
     public ImageGenerationRequest(
@@ -31,7 +58,18 @@ public record ImageGenerationRequest(
             int count,
             Map<String, Object> metadata
     ) {
-        this(tenantId, runId, modelAlias, deploymentCode, prompt, List.of(), size, count, metadata);
+        this(
+                tenantId,
+                runId,
+                modelAlias,
+                deploymentCode,
+                prompt,
+                List.of(),
+                List.of(),
+                size,
+                count,
+                metadata
+        );
     }
 
     public ImageGenerationRequest(
@@ -43,6 +81,17 @@ public record ImageGenerationRequest(
             int count,
             Map<String, Object> metadata
     ) {
-        this(tenantId, runId, modelAlias, null, prompt, List.of(), size, count, metadata);
+        this(
+                tenantId,
+                runId,
+                modelAlias,
+                null,
+                prompt,
+                List.of(),
+                List.of(),
+                size,
+                count,
+                metadata
+        );
     }
 }

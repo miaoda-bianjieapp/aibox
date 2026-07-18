@@ -29,12 +29,14 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 @Component
 public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
@@ -169,6 +171,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             body.part("prompt", request.prompt());
             body.part("n", request.count());
             if (!isBlank(imageSize)) body.part("size", imageSize);
+            addImageOutputOptions(body, request);
             String imagePartName = setting(target, "imagePartName", "image");
             for (ModelAsset asset : assets) {
                 if (!asset.mediaType().startsWith("image/")) {
@@ -184,7 +187,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             return execute(() -> {
                 JsonNode response = provider.client().post()
                         .uri(provider.config().getImageEditPath())
-                        .header("Idempotency-Key", request.runId().toString())
+                        .header("Idempotency-Key", imageIdempotencyKey(request))
                         .contentType(MediaType.MULTIPART_FORM_DATA)
                         .body(body.build())
                         .retrieve()
@@ -198,10 +201,11 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         body.put("prompt", request.prompt());
         body.put("n", request.count());
         if (!isBlank(imageSize)) body.put("size", imageSize);
+        addImageOutputOptions(body, request);
 
         return execute(() -> parseImageResponse(
                 postJson(
-                    provider, provider.config().getImagePath(), request.runId().toString(), body
+                    provider, provider.config().getImagePath(), imageIdempotencyKey(request), body
                 ), provider.code(), target.providerModel()
         ));
     }
@@ -448,6 +452,57 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     private static void addGenerationOptions(Map<String, Object> body, Integer maxTokens, Double temperature) {
         if (maxTokens != null) body.put("max_tokens", maxTokens);
         if (temperature != null) body.put("temperature", temperature);
+    }
+
+    private static void addImageOutputOptions(
+            MultipartBodyBuilder body,
+            ImageGenerationRequest request
+    ) {
+        String outputFormat = imageOption(request, "outputFormat");
+        String background = imageOption(request, "background");
+        if (isAllowed(outputFormat, "png", "jpeg", "webp")) {
+            body.part("output_format", outputFormat);
+        }
+        if (isAllowed(background, "transparent", "opaque", "auto")) {
+            body.part("background", background);
+        }
+    }
+
+    private static void addImageOutputOptions(
+            Map<String, Object> body,
+            ImageGenerationRequest request
+    ) {
+        String outputFormat = imageOption(request, "outputFormat");
+        String background = imageOption(request, "background");
+        if (isAllowed(outputFormat, "png", "jpeg", "webp")) {
+            body.put("output_format", outputFormat);
+        }
+        if (isAllowed(background, "transparent", "opaque", "auto")) {
+            body.put("background", background);
+        }
+    }
+
+    private static String imageOption(ImageGenerationRequest request, String name) {
+        Object value = request.metadata().get(name);
+        return value == null ? null : value.toString().trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String imageIdempotencyKey(ImageGenerationRequest request) {
+        Object configured = request.metadata().get("providerInvocationKey");
+        if (configured == null || configured.toString().isBlank()) {
+            return request.runId().toString();
+        }
+        return UUID.nameUUIDFromBytes((
+                request.runId() + ":" + configured.toString().trim()
+        ).getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private static boolean isAllowed(String value, String... allowedValues) {
+        if (isBlank(value)) return false;
+        for (String allowed : allowedValues) {
+            if (allowed.equals(value)) return true;
+        }
+        return false;
     }
 
     private static Integer nullableInt(JsonNode node, String field) {

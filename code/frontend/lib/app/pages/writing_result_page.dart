@@ -221,21 +221,17 @@ class _ImageRenderer extends StatelessWidget {
             .map((id) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _PreviewableImage(
-                    image: Image.network(
+                    image: _networkImage(
                       BackendApi.instance.assetContentUrl(id.toString()),
-                      fit: BoxFit.contain,
                     ),
                   ),
                 ))
             .toList(),
       );
     } else if (assetId != null && assetId.isNotEmpty) {
-      image = Image.network(
-        BackendApi.instance.assetContentUrl(assetId),
-        fit: BoxFit.contain,
-      );
+      image = _networkImage(BackendApi.instance.assetContentUrl(assetId));
     } else if (url != null && url.isNotEmpty) {
-      image = Image.network(url, fit: BoxFit.contain);
+      image = _networkImage(url);
     } else if (base64Data != null && base64Data.isNotEmpty) {
       image = Image.memory(base64Decode(base64Data), fit: BoxFit.contain);
     } else {
@@ -246,6 +242,31 @@ class _ImageRenderer extends StatelessWidget {
     }
     return _PreviewableImage(image: image);
   }
+
+  static Widget _networkImage(String url) => Image.network(
+        url,
+        fit: BoxFit.contain,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 72),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        },
+        errorBuilder: (context, error, stackTrace) => const Padding(
+          padding: EdgeInsets.symmetric(vertical: 48),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.broken_image_outlined, size: 36),
+                SizedBox(height: 8),
+                Text('图片加载失败'),
+              ],
+            ),
+          ),
+        ),
+      );
 }
 
 class _PreviewableImage extends StatelessWidget {
@@ -272,7 +293,7 @@ class _PreviewableImage extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: image,
+          child: _TransparencyBackdrop(child: image),
         ),
       );
 }
@@ -292,11 +313,58 @@ class _FullscreenImagePreview extends StatelessWidget {
               minScale: 1,
               maxScale: 4,
               clipBehavior: Clip.none,
-              child: SizedBox.expand(child: image),
+              child: SizedBox.expand(
+                child: _TransparencyBackdrop(child: image),
+              ),
             ),
           ),
         ),
       );
+}
+
+class _TransparencyBackdrop extends StatelessWidget {
+  const _TransparencyBackdrop({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+        key: const ValueKey('image-transparency-backdrop'),
+        painter: const _CheckerboardPainter(),
+        child: child,
+      );
+}
+
+class _CheckerboardPainter extends CustomPainter {
+  const _CheckerboardPainter();
+
+  static const _tileSize = 14.0;
+  static const _light = Color(0xFFF4F4F4);
+  static const _dark = Color(0xFFE2E2E2);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    for (double y = 0; y < size.height; y += _tileSize) {
+      for (double x = 0; x < size.width; x += _tileSize) {
+        final column = (x / _tileSize).floor();
+        final row = (y / _tileSize).floor();
+        paint.color = (column + row).isEven ? _light : _dark;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            x,
+            y,
+            _tileSize.clamp(0, size.width - x),
+            _tileSize.clamp(0, size.height - y),
+          ),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheckerboardPainter oldDelegate) => false;
 }
 
 class _MediaRenderer extends StatelessWidget {
