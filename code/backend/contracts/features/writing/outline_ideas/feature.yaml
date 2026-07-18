@@ -1,0 +1,19 @@
+featureCode: writing.outline_ideas
+workspaceCode: writing
+version: 1
+displayName: 大纲与思路
+description: 根据文章标题、主旨和风格生成可编辑的纯文本写作框架。
+status: INTERNAL
+executionMode: ASYNC
+resultType: outline_text
+rendererKey: outline_text_editor
+requiredCapabilities:
+  - TEXT_GENERATION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxOutputTokens: 2000
+  maxEditedCharacters: 10000
+modelAlias: text.default
