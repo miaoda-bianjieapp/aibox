@@ -42,6 +42,26 @@ void main() {
     );
   });
 
+  test('maps unsupported expansion dimensions to an actionable message', () {
+    expect(
+      taskFailureMessage(
+        code: 'IMAGE_DIMENSIONS_UNSUPPORTED',
+        message: 'unsupported dimensions',
+      ),
+      '原图尺寸与目标比例超出模型支持范围，请调整比例或更换尺寸较小的原图。',
+    );
+  });
+
+  test('maps an oversized expansion scale to a model-aware message', () {
+    expect(
+      taskFailureMessage(
+        code: 'IMAGE_EXPANSION_SCALE_UNSUPPORTED',
+        message: 'scale exceeds limits',
+      ),
+      '当前比例和扩展倍数超过所选模型的尺寸限制，请降低倍数或切换模型。',
+    );
+  });
+
   test('keeps an unknown backend message', () {
     expect(
       taskFailureMessage(code: 'CUSTOM_ERROR', message: '自定义错误'),

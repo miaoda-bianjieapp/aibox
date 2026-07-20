@@ -8,6 +8,7 @@ abstract final class AppColors {
   static const wash = Color(0xFFF3F6F4);
   static const accent = Color(0xFF0D8068);
   static const accentSoft = Color(0xFFDFF3ED);
+  static const danger = Color(0xFFB33A3A);
 }
 
 abstract final class AppTheme {

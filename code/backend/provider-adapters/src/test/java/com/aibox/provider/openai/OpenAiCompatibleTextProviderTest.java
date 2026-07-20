@@ -1,6 +1,8 @@
 package com.aibox.provider.openai;
 
+import com.aibox.feature.spi.ImageExpansionRequest;
 import com.aibox.feature.spi.ImageGenerationRequest;
+import com.aibox.feature.spi.ImagePreservationMode;
 import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
@@ -8,6 +10,7 @@ import com.aibox.feature.spi.ModelProviderException;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -51,6 +54,51 @@ class OpenAiCompatibleTextProviderTest {
         assertEquals("PROVIDER_HTTP_503", exception.code());
         assertEquals("模型服务暂时不可用，请稍后重试", exception.getMessage());
         assertTrue(exception.retryable());
+    }
+
+    @Test
+    void includesSafeUpstreamReasonForBadRequest() {
+        ModelProviderException exception = OpenAiCompatibleTextProvider.mapHttpFailure(
+                400,
+                """
+                {"error":{"message":"Invalid value for size: 1152x2048"}}
+                """,
+                new RuntimeException("provider failure")
+        );
+
+        assertEquals("PROVIDER_HTTP_400", exception.code());
+        assertEquals(
+                "模型供应商请求失败（HTTP 400）：Invalid value for size: 1152x2048",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void resolvesFixedExpansionSizeByRequestedOrientation() {
+        ModelCallTarget target = new ModelCallTarget(
+                "gpt-image",
+                "codex2api",
+                "gpt-image-2",
+                ModelCapability.IMAGE_GENERATION,
+                Map.of("imageSizeMap", Map.of(
+                        "1:1", "1024x1024",
+                        "16:9", "1536x864",
+                        "9:16", "864x1536"
+                ))
+        );
+
+        assertEquals(
+                "1024x1024",
+                OpenAiCompatibleTextProvider.resolveExpansionProviderSize(target, "1:1")
+        );
+        assertEquals(
+                "1536x864",
+                OpenAiCompatibleTextProvider.resolveExpansionProviderSize(target, "7:5")
+        );
+        assertEquals(
+                "864x1536",
+                OpenAiCompatibleTextProvider.resolveExpansionProviderSize(target, "4:5")
+        );
     }
 
     @Test
@@ -306,5 +354,53 @@ class OpenAiCompatibleTextProviderTest {
                 1,
                 Map.of("providerInvocationKey", invocationKey)
         );
+    }
+
+    @Test
+    void buildsDashScopeExpansionRequestWithOfficialSizeSyntax() throws Exception {
+        ModelCallTarget target = new ModelCallTarget(
+                "qwen-image",
+                "aliyun-maas",
+                "qwen-image-2.0",
+                ModelCapability.IMAGE_GENERATION,
+                Map.of("imageExpansionProtocol", "dashscope-multimodal")
+        );
+        ImageExpansionRequest request = new ImageExpansionRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "image.generation.default",
+                "qwen-image",
+                "自然扩展画布",
+                UUID.randomUUID(),
+                "4:5",
+                1.25,
+                ImagePreservationMode.STRICT,
+                Map.of()
+        );
+        ImageExpansionSupport.PreparedExpansion prepared =
+                new ImageExpansionSupport.PreparedExpansion(
+                        new BufferedImage(20, 20, BufferedImage.TYPE_INT_ARGB),
+                        1024,
+                        1280,
+                        502,
+                        630,
+                        1024,
+                        1280,
+                        0,
+                        0,
+                        1024,
+                        1280,
+                        new byte[]{1, 2},
+                        new byte[]{3, 4}
+                );
+
+        String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(
+                OpenAiCompatibleTextProvider.dashScopeExpansionBody(target, request, prepared)
+        );
+
+        assertTrue(json.contains("\"model\":\"qwen-image-2.0\""));
+        assertTrue(json.contains("\"size\":\"1024*1280\""));
+        assertTrue(json.contains("data:image/png;base64,AQI="));
+        assertTrue(json.contains("自然扩展画布"));
     }
 }

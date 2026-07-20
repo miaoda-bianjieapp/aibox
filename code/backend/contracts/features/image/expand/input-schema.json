@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "sourceImage",
+    "preservationMode",
+    "operationMode",
+    "ratioMode",
+    "expansionScaleMode"
+  ],
+  "properties": {
+    "sourceImage": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "title": "原图",
+      "description": "上传一张需要扩展画布的图片。"
+    },
+    "preservationMode": {
+      "type": "string",
+      "enum": ["strict", "flexible"],
+      "default": "strict",
+      "title": "保真方式",
+      "description": "严格保留会确保原图区域像素不变；自然重绘允许模型轻微调整原图区域。"
+    },
+    "operationMode": {
+      "type": "string",
+      "enum": ["change_ratio", "expand"],
+      "default": "change_ratio",
+      "title": "处理方式",
+      "description": "改比例会扩展到指定画布比例；扩图会保持原图比例并按倍数向四周扩展。"
+    },
+    "ratioMode": {
+      "type": "string",
+      "enum": ["preset", "custom"],
+      "default": "preset",
+      "title": "比例方式",
+      "description": "仅在改比例模式下使用。"
+    },
+    "presetAspectRatio": {
+      "type": "string",
+      "enum": ["1:1", "3:4", "16:9", "9:16", "4:5"],
+      "default": "1:1",
+      "title": "目标比例",
+      "description": "选择扩图后的画布比例。"
+    },
+    "customAspectRatio": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 7,
+      "pattern": "^[1-9][0-9]{0,2}:[1-9][0-9]{0,2}$",
+      "title": "自定义比例",
+      "description": "输入宽:高，例如 7:5；支持范围为 1:3 至 3:1。"
+    },
+    "expansionScaleMode": {
+      "type": "string",
+      "enum": ["preset", "custom"],
+      "default": "preset",
+      "title": "倍数方式",
+      "description": "仅在扩图模式下使用。"
+    },
+    "presetExpansionScale": {
+      "type": "string",
+      "enum": ["1.0", "1.25", "1.5", "2.0"],
+      "default": "1.0",
+      "title": "扩展倍数",
+      "description": "保持原图宽高比，将画布宽度和高度按该倍数向四周扩展。"
+    },
+    "customExpansionScale": {
+      "type": "number",
+      "minimum": 1.0,
+      "multipleOf": 0.05,
+      "title": "自定义倍数",
+      "description": "输入不小于 1.0 的倍数，例如 1.8；可用上限由所选模型和原图尺寸决定。"
+    }
+  },
+  "additionalProperties": false
+}

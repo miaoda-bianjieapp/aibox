@@ -1,0 +1,112 @@
+{
+  "order": [
+    "sourceImage",
+    "preservationMode",
+    "operationMode",
+    "ratioMode",
+    "presetAspectRatio",
+    "customAspectRatio",
+    "expansionScaleMode",
+    "presetExpansionScale",
+    "customExpansionScale"
+  ],
+  "widgets": {
+    "sourceImage": "image",
+    "preservationMode": "segmented",
+    "operationMode": "segmented",
+    "ratioMode": "segmented",
+    "presetAspectRatio": "select",
+    "customAspectRatio": "text",
+    "expansionScaleMode": "segmented",
+    "presetExpansionScale": "select",
+    "customExpansionScale": "number"
+  },
+  "visibility": {
+    "ratioMode": {
+      "field": "operationMode",
+      "equals": "change_ratio"
+    },
+    "presetAspectRatio": {
+      "all": [
+        {"field": "operationMode", "equals": "change_ratio"},
+        {"field": "ratioMode", "equals": "preset"}
+      ]
+    },
+    "customAspectRatio": {
+      "all": [
+        {"field": "operationMode", "equals": "change_ratio"},
+        {"field": "ratioMode", "equals": "custom"}
+      ]
+    },
+    "expansionScaleMode": {
+      "field": "operationMode",
+      "equals": "expand"
+    },
+    "presetExpansionScale": {
+      "all": [
+        {"field": "operationMode", "equals": "expand"},
+        {"field": "expansionScaleMode", "equals": "preset"}
+      ]
+    },
+    "customExpansionScale": {
+      "all": [
+        {"field": "operationMode", "equals": "expand"},
+        {"field": "expansionScaleMode", "equals": "custom"}
+      ]
+    }
+  },
+  "enumLabels": {
+    "preservationMode": {
+      "strict": "严格保留",
+      "flexible": "自然重绘"
+    },
+    "operationMode": {
+      "change_ratio": "改比例",
+      "expand": "扩图"
+    },
+    "ratioMode": {
+      "preset": "预设比例",
+      "custom": "自定义"
+    },
+    "expansionScaleMode": {
+      "preset": "预设倍数",
+      "custom": "自定义"
+    },
+    "presetAspectRatio": {
+      "1:1": "1:1",
+      "3:4": "3:4",
+      "16:9": "16:9",
+      "9:16": "9:16",
+      "4:5": "4:5"
+    },
+    "presetExpansionScale": {
+      "1.0": "1.0×",
+      "1.25": "1.25×",
+      "1.5": "1.5×",
+      "2.0": "2.0×"
+    }
+  },
+  "fieldOptions": {
+    "sourceImage": {
+      "acceptedMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+      "allowedExtensions": [".png", ".jpg", ".jpeg", ".webp"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 10485760,
+      "showPreview": true
+    }
+  },
+  "fieldHelp": {
+    "operationMode": {
+      "when": {
+        "field": "operationMode",
+        "equals": "change_ratio"
+      },
+      "text": "该选项会给改比例后的图片进行填充处理",
+      "tone": "danger"
+    }
+  },
+  "feeNotice": "图片处理将调用付费图片模型，费用按实际调用计费。点击“开始生成”即表示确认本次调用。",
+  "submitLabel": "开始生成",
+  "revisionSubmitLabel": "生成新版本"
+}

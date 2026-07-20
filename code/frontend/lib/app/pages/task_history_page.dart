@@ -124,7 +124,8 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
         workspace: workspace,
         entry: feature,
         initialParameters: run.parameters,
-        initialAssetIds: run.inputAssetIds,
+        initialAssetIds: revisionInputAssetIds(
+            feature: feature, run: run, artifact: artifact),
         existingTaskId: detail.task.id,
         baseArtifactId: artifact.id,
         baseVersion: artifact.versionNumber,
@@ -151,6 +152,17 @@ List<String> _artifactAssetIds(ArtifactView artifact) {
         .toList();
   }
   return const [];
+}
+
+List<String> revisionInputAssetIds({
+  required FeatureEntry feature,
+  required RunView run,
+  required ArtifactView artifact,
+}) {
+  if (feature.resultType != 'image') return run.inputAssetIds;
+  final artifactAssetIds = _artifactAssetIds(artifact);
+  if (artifactAssetIds.isNotEmpty) return artifactAssetIds;
+  return run.inputAssetIds;
 }
 
 class _ArtifactRow extends StatelessWidget {
