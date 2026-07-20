@@ -126,13 +126,13 @@ class _ImageMaskEditorPageState extends State<ImageMaskEditorPage> {
         constraints.maxWidth,
         constraints.maxHeight,
       );
-      final fitted = applyBoxFit(
-        BoxFit.contain,
+      final canvasSize = applyBoxFit(
+        BoxFit.cover,
         Size(image.width.toDouble(), image.height.toDouble()),
         available,
       ).destination;
       return ColoredBox(
-        color: const Color(0xFF151515),
+        color: Colors.white,
         child: InteractiveViewer(
           transformationController: _transformationController,
           alignment: Alignment.center,
@@ -142,16 +142,16 @@ class _ImageMaskEditorPageState extends State<ImageMaskEditorPage> {
           panEnabled: _tool == _EditorTool.view,
           scaleEnabled: _tool == _EditorTool.view,
           child: SizedBox(
-            width: fitted.width,
-            height: fitted.height,
+            width: canvasSize.width,
+            height: canvasSize.height,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onPanStart: _tool == _EditorTool.view
                   ? null
-                  : (details) => _startStroke(details, fitted),
+                  : (details) => _startStroke(details, canvasSize),
               onPanUpdate: _tool == _EditorTool.view
                   ? null
-                  : (details) => _updateStroke(details, fitted),
+                  : (details) => _updateStroke(details, canvasSize),
               onPanEnd: _tool == _EditorTool.view ? null : _finishStroke,
               child: Stack(fit: StackFit.expand, children: [
                 RawImage(image: image, fit: BoxFit.fill),
