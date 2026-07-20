@@ -458,22 +458,50 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     if (options is List) {
       final values = options.map((item) => item.toString()).toList();
       if (widgetType == 'segmented' && values.length <= 4) {
+        final fieldOptions = feature.fieldOptions(field);
+        final showSelectedIcon = fieldOptions['showSelectedIcon'] != false;
+        final labelMaxLines =
+            _integerOption(fieldOptions, 'labelMaxLines')?.clamp(1, 2) ?? 2;
+        final compact = fieldOptions['compact'] == true;
         return SizedBox(
           width: double.infinity,
           child: SegmentedButton<String>(
             segments: values
-                .map((value) => ButtonSegment<String>(
-                      value: value,
-                      label: Text(feature.optionLabel(field, value)),
-                    ))
+                .map((value) {
+                  final label = Text(
+                    feature.optionLabel(field, value),
+                    maxLines: labelMaxLines,
+                    overflow: labelMaxLines > 1
+                        ? TextOverflow.ellipsis
+                        : TextOverflow.visible,
+                    softWrap: labelMaxLines > 1,
+                    textAlign: TextAlign.center,
+                  );
+                  return ButtonSegment<String>(
+                    value: value,
+                    label: labelMaxLines == 1
+                        ? FittedBox(fit: BoxFit.scaleDown, child: label)
+                        : label,
+                  );
+                })
                 .toList(),
             selected: {_values[field]?.toString() ?? values.first},
+            showSelectedIcon: showSelectedIcon,
             onSelectionChanged: _submitting
                 ? null
                 : (selection) =>
                     setState(() => _values[field] = selection.first),
             style: ButtonStyle(
               textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 12)),
+              minimumSize: compact
+                  ? const WidgetStatePropertyAll(Size(0, 44))
+                  : null,
+              padding: compact
+                  ? const WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 5, vertical: 10),
+                    )
+                  : null,
+              visualDensity: compact ? VisualDensity.compact : null,
               shape: WidgetStatePropertyAll(RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8))),
             ),
