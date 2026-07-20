@@ -132,7 +132,7 @@ class _ImageMaskEditorPageState extends State<ImageMaskEditorPage> {
         viewportSize: available,
       );
       return ColoredBox(
-        color: const Color(0xFF151515),
+        color: Colors.white,
         child: InteractiveViewer(
           transformationController: _transformationController,
           alignment: Alignment.center,
