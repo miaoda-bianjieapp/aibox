@@ -214,9 +214,9 @@ class _ImageMaskEditorPageState extends State<ImageMaskEditorPage> {
         if (_tool != _EditorTool.view) ...[
           const SizedBox(height: 10),
           Row(children: [
-            const Text(
-              '画笔大小',
-              style: TextStyle(
+            Text(
+              _tool == _EditorTool.eraser ? '橡皮擦粗细' : '画笔粗细',
+              style: const TextStyle(
                 color: AppColors.muted,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,

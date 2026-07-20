@@ -19,8 +19,8 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 500,
-      "title": "修改指令",
-      "description": "说明涂抹区域需要变成什么，避免要求修改选区外内容。"
+      "title": "选区修改内容",
+      "description": "涂抹区域决定允许修改的范围；这里只描述选区内需要变成什么。"
     }
   },
   "additionalProperties": false

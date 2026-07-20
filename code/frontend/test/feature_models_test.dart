@@ -105,6 +105,26 @@ void main() {
     expect(request.baseArtifactAssetIds, ['asset-1']);
   });
 
+  test('single selectable model still exposes its selector', () {
+    final policy = ModelPolicy.fromJson({
+      'capability': 'IMAGE_GENERATION',
+      'defaultModelCode': 'gpt-image-2',
+      'allowUserSelection': true,
+      'options': [
+        {
+          'code': 'gpt-image-2',
+          'displayName': 'GPT Image 2',
+          'description': '局部编辑模型',
+          'isDefault': true,
+          'sourceType': 'RELAY',
+          'sourceName': 'Codex2API Relay',
+        },
+      ],
+    });
+
+    expect(policy.shouldShowSelector, isTrue);
+  });
+
   test('feature visibility supports combined all conditions', () {
     final feature = FeatureDetail.fromJson({
       'code': 'image.expand',

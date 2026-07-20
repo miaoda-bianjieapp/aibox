@@ -347,7 +347,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   List<Widget> _buildModelSelectors(FeatureDetail feature) {
     final widgets = <Widget>[];
     for (final policy in feature.modelPolicies) {
-      if (!policy.allowUserSelection || policy.options.length <= 1) continue;
+      if (!policy.shouldShowSelector) continue;
       widgets.addAll(_buildModelSelector(policy));
     }
     return widgets;
@@ -663,18 +663,22 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           style: TextStyle(color: AppColors.muted, fontSize: 12),
         ),
       const SizedBox(height: 8),
-      OutlinedButton.icon(
-        onPressed: _submitting || source == null
-            ? null
-            : () => _editMask(
-                  field,
-                  source,
-                  maxSizeBytes: _integerOption(options, 'maxFileSizeBytes'),
-                ),
-        icon: Icon(masks.isEmpty ? Icons.brush_outlined : Icons.edit_outlined),
-        label: Text(masks.isEmpty
-            ? options['editorLabel']?.toString() ?? '涂抹编辑区域'
-            : '重新涂抹编辑区域'),
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _submitting || source == null
+              ? null
+              : () => _editMask(
+                    field,
+                    source,
+                    maxSizeBytes: _integerOption(options, 'maxFileSizeBytes'),
+                  ),
+          icon:
+              Icon(masks.isEmpty ? Icons.brush_outlined : Icons.edit_outlined),
+          label: Text(masks.isEmpty
+              ? options['editorLabel']?.toString() ?? '在原图上涂抹编辑区域'
+              : '重新涂抹编辑区域'),
+        ),
       ),
     ]);
   }
