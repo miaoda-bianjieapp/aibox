@@ -192,6 +192,22 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                         false
                 );
             }
+            if (maskAsset != null && imageAssets.size() == 1) {
+                if ("auto".equalsIgnoreCase(imageSize) && hasImageSizeMap(target)) {
+                    String orientationKey =
+                            MaskedImageEditSupport.orientationSizeKey(imageAssets.get(0));
+                    String configuredSize = mappedImageSize(target, orientationKey);
+                    if (!isBlank(configuredSize)) imageSize = configuredSize;
+                }
+                MaskedImageEditSupport.Prepared prepared = MaskedImageEditSupport.prepare(
+                        imageAssets.get(0),
+                        maskAsset,
+                        imageSize
+                );
+                imageAssets = List.of(prepared.source());
+                maskAsset = prepared.mask();
+                imageSize = prepared.providerSize();
+            }
             MultipartBodyBuilder body = new MultipartBodyBuilder();
             body.part("model", target.providerModel());
             body.part("prompt", request.prompt());
@@ -787,6 +803,11 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         return resolved == null || resolved.toString().isBlank()
                 ? null
                 : resolved.toString();
+    }
+
+    private static boolean hasImageSizeMap(ModelCallTarget target) {
+        return target.settings().get("imageSizeMap") instanceof Map<?, ?> mapping
+                && !mapping.isEmpty();
     }
 
     private static String setting(ModelCallTarget target, String name, String fallback) {

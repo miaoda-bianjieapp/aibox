@@ -10,11 +10,17 @@ import com.aibox.feature.spi.ModelProviderException;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -279,6 +285,95 @@ class OpenAiCompatibleTextProviderTest {
     }
 
     @Test
+    void maskedImageEditNormalizesSourceAndMaskToConfiguredProviderCanvas() throws IOException {
+        AtomicReference<byte[]> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedContentType = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/images/edits", exchange -> {
+            capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+            capturedBody.set(exchange.getRequestBody().readAllBytes());
+            byte[] response = (
+                    "{\"data\":[{\"b64_json\":\""
+                            + Base64.getEncoder().encodeToString(new byte[]{1})
+                            + "\",\"media_type\":\"image/png\"}]}"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("test-provider", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "test-image",
+                    "test-provider",
+                    "test-model",
+                    ModelCapability.IMAGE_GENERATION,
+                    Map.of(
+                            "supportsImageMask", true,
+                            "imagePartName", "image[]",
+                            "maskPartName", "mask",
+                            "imageSizeMap", Map.of(
+                                    "1:1", "8x8",
+                                    "16:9", "16x9",
+                                    "9:16", "9x16"
+                            )
+                    )
+            );
+            UUID sourceId = UUID.randomUUID();
+            UUID maskId = UUID.randomUUID();
+            ImageGenerationRequest request = new ImageGenerationRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "image.generation.default",
+                    "test-image",
+                    "change the selected area",
+                    List.of(sourceId),
+                    List.of(),
+                    maskId,
+                    true,
+                    "auto",
+                    1,
+                    Map.of("outputFormat", "png")
+            );
+
+            provider.generateImage(
+                    target,
+                    request,
+                    List.of(
+                            new ModelAsset(sourceId, "source.png", "image/png", png(6, 10, false)),
+                            new ModelAsset(maskId, "mask.png", "image/png", png(6, 10, true))
+                    )
+            );
+
+            String boundary = multipartBoundary(capturedContentType.get());
+            BufferedImage uploadedSource = ImageIO.read(new ByteArrayInputStream(
+                    multipartFile(capturedBody.get(), boundary, "image[]")
+            ));
+            BufferedImage uploadedMask = ImageIO.read(new ByteArrayInputStream(
+                    multipartFile(capturedBody.get(), boundary, "mask")
+            ));
+            assertEquals(9, uploadedSource.getWidth());
+            assertEquals(16, uploadedSource.getHeight());
+            assertEquals(9, uploadedMask.getWidth());
+            assertEquals(16, uploadedMask.getHeight());
+            assertEquals(255, uploadedMask.getRGB(0, 0) >>> 24);
+            assertTrue((uploadedMask.getRGB(4, 8) >>> 24) < 255);
+            assertTrue(new String(capturedBody.get(), StandardCharsets.ISO_8859_1)
+                    .contains("\r\n\r\n9x16\r\n"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void imageEditUsesDistinctIdempotencyKeysForInvocationStages() throws IOException {
         List<String> capturedKeys = new ArrayList<>();
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
@@ -402,5 +497,55 @@ class OpenAiCompatibleTextProviderTest {
         assertTrue(json.contains("\"size\":\"1024*1280\""));
         assertTrue(json.contains("data:image/png;base64,AQI="));
         assertTrue(json.contains("自然扩展画布"));
+    }
+
+    private static byte[] png(int width, int height, boolean mask) throws IOException {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        try {
+            graphics.setColor(mask ? Color.WHITE : new Color(40, 80, 120));
+            graphics.fillRect(0, 0, width, height);
+        } finally {
+            graphics.dispose();
+        }
+        if (mask) image.setRGB(width / 2, height / 2, 0x00ffffff);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
+    }
+
+    private static String multipartBoundary(String contentType) {
+        String boundary = contentType.substring(contentType.indexOf("boundary=") + "boundary=".length());
+        return boundary.replace("\"", "").trim();
+    }
+
+    private static byte[] multipartFile(byte[] body, String boundary, String partName) {
+        byte[] name = ("name=\"" + partName + "\"").getBytes(StandardCharsets.ISO_8859_1);
+        int headerStart = indexOf(body, name, 0);
+        int contentStart = indexOf(
+                body,
+                "\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1),
+                headerStart
+        ) + 4;
+        int contentEnd = indexOf(
+                body,
+                ("\r\n--" + boundary).getBytes(StandardCharsets.ISO_8859_1),
+                contentStart
+        );
+        return Arrays.copyOfRange(body, contentStart, contentEnd);
+    }
+
+    private static int indexOf(byte[] source, byte[] target, int start) {
+        for (int index = Math.max(0, start); index <= source.length - target.length; index++) {
+            boolean matches = true;
+            for (int offset = 0; offset < target.length; offset++) {
+                if (source[index + offset] != target[offset]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) return index;
+        }
+        throw new IllegalArgumentException("Multipart marker not found");
     }
 }
