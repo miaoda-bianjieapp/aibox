@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/feature_models.dart';
 import '../network/backend_api.dart';
 import '../theme/app_theme.dart';
+import 'image_mask_viewport_layout.dart';
 
 Future<Uint8List?> showImageMaskEditor(
   BuildContext context, {
@@ -126,44 +127,53 @@ class _ImageMaskEditorPageState extends State<ImageMaskEditorPage> {
         constraints.maxWidth,
         constraints.maxHeight,
       );
-      final canvasSize = applyBoxFit(
-        BoxFit.cover,
-        Size(image.width.toDouble(), image.height.toDouble()),
-        available,
-      ).destination;
+      final layout = ImageMaskViewportLayout.calculate(
+        sourceSize: Size(image.width.toDouble(), image.height.toDouble()),
+        viewportSize: available,
+      );
       return ColoredBox(
-        color: Colors.white,
+        color: const Color(0xFF151515),
         child: InteractiveViewer(
           transformationController: _transformationController,
           alignment: Alignment.center,
-          constrained: false,
-          minScale: 1,
-          maxScale: 6,
+          boundaryMargin: layout.boundaryMargin,
+          clipBehavior: Clip.hardEdge,
+          minScale: 0.75,
+          maxScale: 8,
+          panAxis: PanAxis.free,
           panEnabled: _tool == _EditorTool.view,
           scaleEnabled: _tool == _EditorTool.view,
           child: SizedBox(
-            width: canvasSize.width,
-            height: canvasSize.height,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onPanStart: _tool == _EditorTool.view
-                  ? null
-                  : (details) => _startStroke(details, canvasSize),
-              onPanUpdate: _tool == _EditorTool.view
-                  ? null
-                  : (details) => _updateStroke(details, canvasSize),
-              onPanEnd: _tool == _EditorTool.view ? null : _finishStroke,
-              child: Stack(fit: StackFit.expand, children: [
-                RawImage(image: image, fit: BoxFit.fill),
-                CustomPaint(
-                  painter: _MaskOverlayPainter(
-                    strokes: _activeStroke == null
-                        ? _strokes
-                        : [..._strokes, _activeStroke!],
-                  ),
+            width: layout.viewportSize.width,
+            height: layout.viewportSize.height,
+            child: Stack(children: [
+              Positioned(
+                left: layout.imageOffset.dx,
+                top: layout.imageOffset.dy,
+                width: layout.imageSize.width,
+                height: layout.imageSize.height,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: _tool == _EditorTool.view
+                      ? null
+                      : (details) => _startStroke(details, layout.imageSize),
+                  onPanUpdate: _tool == _EditorTool.view
+                      ? null
+                      : (details) => _updateStroke(details, layout.imageSize),
+                  onPanEnd: _tool == _EditorTool.view ? null : _finishStroke,
+                  child: Stack(fit: StackFit.expand, children: [
+                    RawImage(image: image, fit: BoxFit.contain),
+                    CustomPaint(
+                      painter: _MaskOverlayPainter(
+                        strokes: _activeStroke == null
+                            ? _strokes
+                            : [..._strokes, _activeStroke!],
+                      ),
+                    ),
+                  ]),
                 ),
-              ]),
-            ),
+              ),
+            ]),
           ),
         ),
       );
