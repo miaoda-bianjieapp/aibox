@@ -6,8 +6,11 @@ import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.GeneratedAudio;
 import com.aibox.feature.spi.GeneratedImage;
 import com.aibox.feature.spi.GeneratedVideo;
+import com.aibox.feature.spi.ImageExpansionRequest;
+import com.aibox.feature.spi.ImageExpansionResponse;
 import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImageGenerationResponse;
+import com.aibox.feature.spi.ImagePreservationMode;
 import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
@@ -166,6 +169,43 @@ class RoutingModelGatewayTest {
         verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
     }
 
+    @Test
+    void routesImageExpansionWithTheOwnedSourceAsset() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.IMAGE_GENERATION, "image.generation.default", "test-image"
+        )).thenReturn(List.of(target("test-image", ModelCapability.IMAGE_GENERATION)));
+        AssetService assetService = mock(AssetService.class);
+        UUID assetId = UUID.randomUUID();
+        when(assetService.readForModel(assetId)).thenReturn(
+                new ModelAsset(assetId, "source.png", "image/png", new byte[]{1})
+        );
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(new TestProvider()), repository, assetService, routingService,
+                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        ImageExpansionResponse response = gateway.expandImage(new ImageExpansionRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "image.generation.default",
+                "test-image",
+                "expand",
+                assetId,
+                "16:9",
+                1.25,
+                ImagePreservationMode.STRICT,
+                Map.of()
+        ));
+
+        assertThat(response.targetWidth()).isEqualTo(1280);
+        assertThat(response.generation().images()).hasSize(1);
+        verify(assetService).readForModel(assetId);
+        verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
+    }
+
     private static ModelCallTarget target(String deployment, ModelCapability capability) {
         return new ModelCallTarget(deployment, "test", "provider-model", capability, Map.of());
     }
@@ -204,6 +244,24 @@ class RoutingModelGatewayTest {
             return new VideoGenerationResponse(
                     List.of(new GeneratedVideo(null, "video.mp4", "video/mp4", new byte[]{1})),
                     "test", "model", "video-request", 1, 1
+            );
+        }
+
+        @Override
+        public ImageExpansionResponse expandImage(
+                ModelCallTarget target,
+                ImageExpansionRequest request,
+                ModelAsset asset
+        ) {
+            return new ImageExpansionResponse(
+                    new ImageGenerationResponse(
+                            List.of(new GeneratedImage(null, "image/png", null, new byte[]{1})),
+                            "test", "model", "image-request", 1, 1
+                    ),
+                    640,
+                    480,
+                    1280,
+                    720
             );
         }
     }

@@ -405,6 +405,22 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ..add(_FieldLabel(schema['title']?.toString() ?? field,
             required: feature.requiredFields.contains(field)))
         ..add(_buildField(feature, field, schema, widgetType));
+      final fieldHelp = feature.fieldHelp(field, _values);
+      final helpText = fieldHelp['text']?.toString().trim();
+      if (helpText?.isNotEmpty == true) {
+        fields
+          ..add(const SizedBox(height: 5))
+          ..add(Text(
+            helpText!,
+            style: TextStyle(
+              color: fieldHelp['tone'] == 'danger'
+                  ? AppColors.danger
+                  : AppColors.muted,
+              fontSize: 11,
+              height: 1.4,
+            ),
+          ));
+      }
       final example = feature.exampleFor(field);
       if (example != null) {
         fields

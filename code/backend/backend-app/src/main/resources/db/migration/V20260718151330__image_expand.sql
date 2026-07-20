@@ -1,0 +1,170 @@
+insert into feature_definition (
+    id,
+    workspace_id,
+    code,
+    display_name,
+    description,
+    status,
+    current_version,
+    result_type,
+    renderer_key,
+    execution_mode,
+    sort_order,
+    created_at,
+    updated_at
+)
+select
+    'af9b8384-1ca6-4cc8-888d-a71b6965ea50',
+    workspace.id,
+    'image.expand',
+    '扩图与改比例',
+    '将一张原图居中扩展到目标比例，并生成与原图一致的新画面区域。',
+    'INTERNAL',
+    1,
+    'image',
+    'image',
+    'ASYNC',
+    20,
+    now(),
+    now()
+from workspace
+where workspace.code = 'image';
+
+insert into feature_version (
+    id,
+    feature_id,
+    version,
+    input_schema_json,
+    ui_schema_json,
+    output_schema_json,
+    config_json,
+    created_at
+) values (
+    '5b620ad6-4013-48a8-9091-d12b40b5874b',
+    'af9b8384-1ca6-4cc8-888d-a71b6965ea50',
+    1,
+    '{
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["sourceImage","preservationMode","ratioMode"],
+      "properties":{
+        "sourceImage":{
+          "type":"array",
+          "minItems":1,
+          "maxItems":1,
+          "items":{"type":"string","format":"uuid"},
+          "title":"原图",
+          "description":"上传一张需要扩展画布的图片。"
+        },
+        "preservationMode":{
+          "type":"string",
+          "enum":["strict","flexible"],
+          "default":"strict",
+          "title":"保真方式",
+          "description":"严格保留会确保原图区域像素不变；自然重绘允许模型轻微调整原图区域。"
+        },
+        "ratioMode":{
+          "type":"string",
+          "enum":["preset","custom"],
+          "default":"preset",
+          "title":"比例方式"
+        },
+        "presetAspectRatio":{
+          "type":"string",
+          "enum":["1:1","3:4","16:9","9:16","4:5"],
+          "default":"1:1",
+          "title":"目标比例",
+          "description":"选择扩图后的画布比例。"
+        },
+        "customAspectRatio":{
+          "type":"string",
+          "minLength":3,
+          "maxLength":7,
+          "pattern":"^[1-9][0-9]{0,2}:[1-9][0-9]{0,2}$",
+          "title":"自定义比例",
+          "description":"输入宽:高，例如 7:5；支持范围为 1:3 至 3:1。"
+        }
+      },
+      "additionalProperties":false
+    }'::jsonb,
+    '{
+      "order":["sourceImage","preservationMode","ratioMode","presetAspectRatio","customAspectRatio"],
+      "widgets":{
+        "sourceImage":"image",
+        "preservationMode":"segmented",
+        "ratioMode":"segmented",
+        "presetAspectRatio":"select",
+        "customAspectRatio":"text"
+      },
+      "visibility":{
+        "presetAspectRatio":{"field":"ratioMode","equals":"preset"},
+        "customAspectRatio":{"field":"ratioMode","equals":"custom"}
+      },
+      "enumLabels":{
+        "preservationMode":{"strict":"严格保留","flexible":"自然重绘"},
+        "ratioMode":{"preset":"预设比例","custom":"自定义"},
+        "presetAspectRatio":{"1:1":"1:1","3:4":"3:4","16:9":"16:9","9:16":"9:16","4:5":"4:5"}
+      },
+      "fieldOptions":{"sourceImage":{
+        "acceptedMimeTypes":["image/png","image/jpeg","image/webp"],
+        "allowedExtensions":[".png",".jpg",".jpeg",".webp"],
+        "maxItems":1,
+        "maxFileSizeBytes":10485760,
+        "maxTotalSizeBytes":10485760,
+        "showPreview":true
+      }},
+      "feeNotice":"扩图将调用付费图片模型，费用按实际调用计费。点击“开始扩图”即表示确认本次调用。",
+      "submitLabel":"开始扩图",
+      "revisionSubmitLabel":"生成新版本"
+    }'::jsonb,
+    '{
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["assetId"],
+      "properties":{"assetId":{"type":"string","format":"uuid"}},
+      "additionalProperties":false
+    }'::jsonb,
+    '{
+      "modelAlias":"image.generation.default",
+      "capabilities":["IMAGE_GENERATION"],
+      "outputCount":1,
+      "maxSourceImages":1,
+      "maxSourceImageBytes":10485760,
+      "revisionUsesBaseArtifactImage":true
+    }'::jsonb,
+    now()
+);
+
+insert into feature_model_policy (
+    id,
+    feature_code,
+    capability,
+    default_deployment_code,
+    allow_user_selection,
+    created_at,
+    updated_at
+) values (
+    '62aafc57-9d39-4bc0-b50f-126e09b58aae',
+    'image.expand',
+    'IMAGE_GENERATION',
+    'codex2api-gpt-image-2-image',
+    false,
+    now(),
+    now()
+);
+
+insert into feature_model_option (
+    policy_id,
+    deployment_code,
+    display_name,
+    description,
+    sort_order,
+    enabled
+) values (
+    '62aafc57-9d39-4bc0-b50f-126e09b58aae',
+    'codex2api-gpt-image-2-image',
+    'GPT Image 2',
+    '支持居中扩图、遮罩编辑和严格保留原图区域，通过 Codex2API 中转调用。',
+    10,
+    true
+);

@@ -5,8 +5,11 @@ import com.aibox.feature.spi.AudioTranscriptionResponse;
 import com.aibox.feature.spi.GeneratedImage;
 import com.aibox.feature.spi.GeneratedAudio;
 import com.aibox.feature.spi.GeneratedVideo;
+import com.aibox.feature.spi.ImageExpansionRequest;
+import com.aibox.feature.spi.ImageExpansionResponse;
 import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImageGenerationResponse;
+import com.aibox.feature.spi.ImagePreservationMode;
 import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelProviderClient;
@@ -211,6 +214,122 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     }
 
     @Override
+    public ImageExpansionResponse expandImage(
+            ModelCallTarget target,
+            ImageExpansionRequest request,
+            ModelAsset asset
+    ) {
+        ProviderContext provider = requireProvider(target);
+        ImageExpansionSupport.Limits limits = expansionLimits(target);
+        String protocol = setting(target, "imageExpansionProtocol", "openai-edit");
+        boolean scaleFromSourceDimensions =
+                "source".equalsIgnoreCase(request.aspectRatio());
+        String aspectRatio = ImageExpansionSupport.resolveAspectRatio(
+                asset,
+                request.aspectRatio(),
+                limits
+        );
+        String providerSize = "openai-edit".equals(protocol)
+                ? resolveExpansionProviderSize(target, aspectRatio)
+                : null;
+        ImageExpansionSupport.PreparedExpansion prepared =
+                ImageExpansionSupport.prepare(
+                        asset,
+                        aspectRatio,
+                        request.expansionScale(),
+                        limits,
+                        providerSize,
+                        scaleFromSourceDimensions
+                );
+        return execute(() -> {
+            ImageGenerationResponse response = switch (protocol) {
+                case "openai-edit" -> executeOpenAiExpansion(provider, target, request, prepared);
+                case "dashscope-multimodal" ->
+                        executeDashScopeExpansion(provider, target, request, prepared);
+                default -> throw new ModelProviderException(
+                        "IMAGE_EXPANSION_PROTOCOL_UNSUPPORTED",
+                        "所选模型尚未配置可用的扩图协议",
+                        false
+                );
+            };
+            if (response.images().size() != 1) {
+                throw invalidResponse("Image expansion response must contain exactly one image");
+            }
+            GeneratedImage finalized = ImageExpansionSupport.finalizeImage(
+                    response.images().get(0), prepared, request.preservationMode()
+            );
+            return new ImageExpansionResponse(
+                    new ImageGenerationResponse(
+                            List.of(finalized),
+                            response.provider(),
+                            response.model(),
+                            response.providerRequestId(),
+                            response.inputUnits(),
+                            response.outputUnits()
+                    ),
+                    prepared.source().getWidth(),
+                    prepared.source().getHeight(),
+                    prepared.targetWidth(),
+                    prepared.targetHeight()
+            );
+        });
+    }
+
+    private ImageGenerationResponse executeOpenAiExpansion(
+            ProviderContext provider,
+            ModelCallTarget target,
+            ImageExpansionRequest request,
+            ImageExpansionSupport.PreparedExpansion prepared
+    ) {
+        MultipartBodyBuilder body = new MultipartBodyBuilder();
+        body.part("model", target.providerModel());
+        body.part("prompt", request.prompt());
+        body.part("n", 1);
+        body.part("size", prepared.size());
+        body.part("response_format", "b64_json");
+        String imagePartName = setting(target, "imageExpansionImagePartName", "image");
+        body.part(imagePartName, new NamedByteArrayResource(prepared.inputPng(), "expand-source.png"))
+                .contentType(MediaType.IMAGE_PNG);
+        if (request.preservationMode() == ImagePreservationMode.STRICT
+                && booleanSetting(target, "imageExpansionSupportsMask", true)) {
+            body.part("mask", new NamedByteArrayResource(prepared.maskPng(), "expand-mask.png"))
+                    .contentType(MediaType.IMAGE_PNG);
+        }
+        JsonNode raw = provider.client().post()
+                .uri(provider.config().getImageEditPath())
+                .header("Idempotency-Key", request.runId().toString())
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(body.build())
+                .retrieve()
+                .body(JsonNode.class);
+        return parseImageResponse(raw, provider.code(), target.providerModel());
+    }
+
+    private ImageGenerationResponse executeDashScopeExpansion(
+            ProviderContext provider,
+            ModelCallTarget target,
+            ImageExpansionRequest request,
+            ImageExpansionSupport.PreparedExpansion prepared
+    ) {
+        String path = setting(target, "imageExpansionPath", "");
+        if (path.isBlank()) {
+            throw new ModelProviderException(
+                    "IMAGE_EXPANSION_PROTOCOL_NOT_CONFIGURED",
+                    "Qwen Image 2.0 扩图接口尚未配置",
+                    false
+            );
+        }
+        JsonNode raw = provider.client().post()
+                .uri(path)
+                .header("Idempotency-Key", request.runId().toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(dashScopeExpansionBody(target, request, prepared))
+                .retrieve()
+                .body(JsonNode.class);
+        return parseDashScopeImageResponse(raw, provider.code(), target.providerModel());
+    }
+
+    @Override
     public TextToSpeechResponse synthesizeSpeech(ModelCallTarget target, TextToSpeechRequest request) {
         ProviderContext provider = requireProvider(target);
         String format = isBlank(request.format()) ? "mp3" : request.format();
@@ -293,6 +412,65 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                 images, providerCode, response.path("model").asText(fallbackModel),
                 response.path("id").asText(null), nullableInt(usage, "input_tokens"),
                 nullableInt(usage, "output_tokens")
+        );
+    }
+
+    static Map<String, Object> dashScopeExpansionBody(
+            ModelCallTarget target,
+            ImageExpansionRequest request,
+            ImageExpansionSupport.PreparedExpansion prepared
+    ) {
+        String dataUrl = "data:image/png;base64,"
+                + Base64.getEncoder().encodeToString(prepared.inputPng());
+        return Map.of(
+                "model", target.providerModel(),
+                "input", Map.of(
+                        "messages", List.of(Map.of(
+                                "role", "user",
+                                "content", List.of(
+                                        Map.of("image", dataUrl),
+                                        Map.of("text", request.prompt())
+                                )
+                        ))
+                ),
+                "parameters", Map.of(
+                        "n", 1,
+                        "prompt_extend", true,
+                        "watermark", false,
+                        "size", prepared.dashScopeSize()
+                )
+        );
+    }
+
+    private static ImageGenerationResponse parseDashScopeImageResponse(
+            JsonNode response,
+            String providerCode,
+            String fallbackModel
+    ) {
+        JsonNode choices = response == null ? null : response.path("output").path("choices");
+        if (choices == null || !choices.isArray() || choices.isEmpty()) {
+            throw invalidResponse("DashScope image expansion response has no choices");
+        }
+        List<GeneratedImage> images = new ArrayList<>();
+        choices.forEach(choice -> choice.path("message").path("content").forEach(item -> {
+            String url = item.path("image").asText(null);
+            if (isBlank(url)) return;
+            byte[] content = RestClient.create().get().uri(url).retrieve().body(byte[].class);
+            if (content != null && content.length > 0) {
+                images.add(new GeneratedImage(url, "image/png", null, content));
+            }
+        }));
+        if (images.isEmpty()) {
+            throw invalidResponse("DashScope image expansion response has no image URLs");
+        }
+        JsonNode usage = response.path("usage");
+        return new ImageGenerationResponse(
+                images,
+                providerCode,
+                response.path("model").asText(fallbackModel),
+                response.path("request_id").asText(null),
+                null,
+                nullableInt(usage, "image_count")
         );
     }
 
@@ -392,6 +570,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
 
     static ModelProviderException mapHttpFailure(int status, String responseBody, Throwable cause) {
         String upstreamCode = upstreamErrorCode(responseBody);
+        String upstreamMessage = upstreamErrorMessage(responseBody);
         boolean retryable = status == 408 || status == 429 || status >= 500;
         if ("no_available_account".equals(upstreamCode)) {
             return new ModelProviderException(
@@ -416,6 +595,9 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             case 503 -> "模型服务暂时不可用，请稍后重试";
             default -> "模型供应商请求失败（HTTP " + status + "）";
         };
+        if (status == 400 && !isBlank(upstreamMessage)) {
+            message += "：" + upstreamMessage;
+        }
         return new ModelProviderException("PROVIDER_HTTP_" + status, message, retryable, cause);
     }
 
@@ -426,6 +608,31 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             String code = response.path("error").path("code").asText(null);
             if (isBlank(code)) code = response.path("code").asText(null);
             return isBlank(code) ? null : code.trim().toLowerCase(Locale.ROOT);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String upstreamErrorMessage(String responseBody) {
+        if (isBlank(responseBody)) return null;
+        try {
+            JsonNode response = ERROR_MAPPER.readTree(responseBody);
+            String message = response.path("error").path("message").asText(null);
+            if (isBlank(message)) message = response.path("message").asText(null);
+            if (isBlank(message)) return null;
+            String normalized = message.replaceAll("\\s+", " ").trim();
+            String lower = normalized.toLowerCase(Locale.ROOT);
+            if (lower.contains("api key")
+                    || lower.contains("apikey")
+                    || lower.contains("authorization")
+                    || lower.contains("bearer ")
+                    || lower.contains("token")
+                    || lower.contains("secret")) {
+                return null;
+            }
+            return normalized.length() <= 160
+                    ? normalized
+                    : normalized.substring(0, 157) + "...";
         } catch (Exception ignored) {
             return null;
         }
@@ -512,19 +719,67 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
 
     static String resolveImageSize(ModelCallTarget target, String requestedSize) {
         if (isBlank(requestedSize)) return requestedSize;
+        String resolved = mappedImageSize(target, requestedSize);
+        return isBlank(resolved) ? requestedSize : resolved;
+    }
+
+    static String resolveExpansionProviderSize(ModelCallTarget target, String aspectRatio) {
+        String orientationKey = ImageExpansionSupport.orientationSizeKey(aspectRatio);
+        String configured = mappedImageSize(target, orientationKey);
+        if (!isBlank(configured)) return configured;
+        return switch (orientationKey) {
+            case "1:1" -> "1024x1024";
+            case "16:9" -> "1536x864";
+            case "9:16" -> "864x1536";
+            default -> throw new IllegalStateException("Unsupported expansion orientation");
+        };
+    }
+
+    private static String mappedImageSize(ModelCallTarget target, String requestedSize) {
         Object configured = target.settings().get("imageSizeMap");
-        if (configured instanceof Map<?, ?> mapping) {
-            Object resolved = mapping.get(requestedSize);
-            if (resolved != null && !resolved.toString().isBlank()) {
-                return resolved.toString();
-            }
-        }
-        return requestedSize;
+        if (!(configured instanceof Map<?, ?> mapping)) return null;
+        Object resolved = mapping.get(requestedSize);
+        return resolved == null || resolved.toString().isBlank()
+                ? null
+                : resolved.toString();
     }
 
     private static String setting(ModelCallTarget target, String name, String fallback) {
         Object value = target.settings().get(name);
         return value == null || value.toString().isBlank() ? fallback : value.toString();
+    }
+
+    private static boolean booleanSetting(ModelCallTarget target, String name, boolean fallback) {
+        Object value = target.settings().get(name);
+        return value == null ? fallback : Boolean.parseBoolean(value.toString());
+    }
+
+    private static int intSetting(ModelCallTarget target, String name, int fallback) {
+        Object value = target.settings().get(name);
+        if (value instanceof Number number) return number.intValue();
+        try {
+            return value == null ? fallback : Integer.parseInt(value.toString());
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private static ImageExpansionSupport.Limits expansionLimits(ModelCallTarget target) {
+        return new ImageExpansionSupport.Limits(
+                intSetting(target, "imageExpansionMinPixels", ImageExpansionSupport.MIN_TOTAL_PIXELS),
+                intSetting(target, "imageExpansionMaxPixels", ImageExpansionSupport.MAX_TOTAL_PIXELS),
+                intSetting(target, "imageExpansionMaxEdge", ImageExpansionSupport.MAX_EDGE),
+                intSetting(
+                        target,
+                        "imageExpansionMaxUploadBytes",
+                        ImageExpansionSupport.MAX_PROVIDER_FILE_BYTES
+                ),
+                intSetting(
+                        target,
+                        "imageExpansionDimensionMultiple",
+                        ImageExpansionSupport.DIMENSION_MULTIPLE
+                )
+        );
     }
 
     private static MediaType safeMediaType(String value) {

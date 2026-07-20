@@ -2,6 +2,8 @@ package com.aibox.platform.provider;
 
 import com.aibox.feature.spi.AudioTranscriptionRequest;
 import com.aibox.feature.spi.AudioTranscriptionResponse;
+import com.aibox.feature.spi.ImageExpansionRequest;
+import com.aibox.feature.spi.ImageExpansionResponse;
 import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImageGenerationResponse;
 import com.aibox.feature.spi.ModelAsset;
@@ -121,6 +123,28 @@ public final class RoutingModelGateway implements ModelGateway {
                 () -> selected.provider().generateImage(selected.target(), request, immutableAssets),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputUnits(), response.outputUnits())
+        );
+    }
+
+    @Override
+    public ImageExpansionResponse expandImage(ImageExpansionRequest request) {
+        ProviderTarget selected = requireProvider(
+                ModelCapability.IMAGE_GENERATION, request.modelAlias(), request.deploymentCode()
+        );
+        ModelAsset asset = assetService.readForModel(request.inputAssetId());
+        return invoke(
+                request.tenantId(), request.runId(), ModelCapability.IMAGE_GENERATION, request.modelAlias(),
+                selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
+                        request.prompt(), request.inputAssetId().toString(), request.aspectRatio(),
+                        Double.toString(request.expansionScale()),
+                        request.preservationMode().name()),
+                () -> selected.provider().expandImage(selected.target(), request, asset),
+                response -> new InvocationOutcome(
+                        response.generation().model(),
+                        response.generation().providerRequestId(),
+                        response.generation().inputUnits(),
+                        response.generation().outputUnits()
+                )
         );
     }
 
