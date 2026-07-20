@@ -38,6 +38,14 @@ public interface ModelProviderClient {
         throw unsupported(target);
     }
 
+    default ImageExpansionResponse expandImage(
+            ModelCallTarget target,
+            ImageExpansionRequest request,
+            ModelAsset asset
+    ) {
+        throw unsupported(target);
+    }
+
     default TextToSpeechResponse synthesizeSpeech(ModelCallTarget target, TextToSpeechRequest request) {
         throw unsupported(target);
     }

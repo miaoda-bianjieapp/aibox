@@ -90,6 +90,25 @@ class FeatureDetail extends FeatureEntry {
   bool isFieldVisible(String field, Map<String, Object?> values) {
     final rule = _map(_map(uiSchema['visibility'])[field]);
     if (rule.isEmpty) return true;
+    return _matchesVisibilityRule(rule, values);
+  }
+
+  bool _matchesVisibilityRule(
+    Map<String, dynamic> rule,
+    Map<String, Object?> values,
+  ) {
+    final all = rule['all'];
+    if (all is List) {
+      return all
+          .map(_map)
+          .every((condition) => _matchesVisibilityRule(condition, values));
+    }
+    final any = rule['any'];
+    if (any is List) {
+      return any
+          .map(_map)
+          .any((condition) => _matchesVisibilityRule(condition, values));
+    }
     final dependency = rule['field']?.toString();
     if (dependency == null || dependency.isEmpty) return true;
     return values[dependency]?.toString() == rule['equals']?.toString();
@@ -102,6 +121,19 @@ class FeatureDetail extends FeatureEntry {
 
   Map<String, dynamic> fieldOptions(String field) =>
       _map(_map(uiSchema['fieldOptions'])[field]);
+
+  Map<String, dynamic> fieldHelp(
+    String field,
+    Map<String, Object?> values,
+  ) {
+    final help = _map(_map(uiSchema['fieldHelp'])[field]);
+    if (help.isEmpty) return const {};
+    final when = _map(help['when']);
+    if (when.isNotEmpty && !_matchesVisibilityRule(when, values)) {
+      return const {};
+    }
+    return help;
+  }
 
   String? get feeNotice => uiSchema['feeNotice']?.toString();
 

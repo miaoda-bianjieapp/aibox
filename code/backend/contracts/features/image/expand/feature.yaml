@@ -1,0 +1,23 @@
+featureCode: image.expand
+workspaceCode: image
+version: 5
+displayName: 扩图与改比例
+description: 可选择改变画布比例，或保持原图比例按倍数向四周扩展。
+status: INTERNAL
+executionMode: ASYNC
+resultType: image
+rendererKey: image
+requiredCapabilities:
+  - IMAGE_GENERATION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxSourceImages: 1
+  maxSourceImageBytes: 10485760
+  outputCount: 1
+  minExpansionScale: 1.0
+  expansionScaleLimit: selected-model
+  changeRatioSubjectLock: true
+modelAlias: image.generation.default

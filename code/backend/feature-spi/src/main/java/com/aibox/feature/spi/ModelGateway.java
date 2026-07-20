@@ -17,6 +17,10 @@ public interface ModelGateway {
         throw unsupported(ModelCapability.IMAGE_GENERATION);
     }
 
+    default ImageExpansionResponse expandImage(ImageExpansionRequest request) {
+        throw unsupported(ModelCapability.IMAGE_GENERATION);
+    }
+
     default TextToSpeechResponse synthesizeSpeech(TextToSpeechRequest request) {
         throw unsupported(ModelCapability.TEXT_TO_SPEECH);
     }

@@ -102,4 +102,87 @@ void main() {
     expect(request.baseArtifactText, '上一版成果');
     expect(request.baseArtifactAssetIds, ['asset-1']);
   });
+
+  test('feature visibility supports combined all conditions', () {
+    final feature = FeatureDetail.fromJson({
+      'code': 'image.expand',
+      'displayName': '扩图与改比例',
+      'description': '',
+      'version': 3,
+      'resultType': 'image',
+      'rendererKey': 'image',
+      'executionMode': 'ASYNC',
+      'inputSchema': {
+        'type': 'object',
+        'properties': {
+          'operationMode': {
+            'type': 'string',
+            'enum': ['change_ratio', 'expand'],
+          },
+          'ratioMode': {
+            'type': 'string',
+            'enum': ['preset', 'custom'],
+          },
+          'presetAspectRatio': {
+            'type': 'string',
+            'enum': ['1:1', '16:9'],
+          },
+        },
+      },
+      'uiSchema': {
+        'visibility': {
+          'presetAspectRatio': {
+            'all': [
+              {'field': 'operationMode', 'equals': 'change_ratio'},
+              {'field': 'ratioMode', 'equals': 'preset'},
+            ],
+          },
+        },
+        'fieldHelp': {
+          'operationMode': {
+            'when': {'field': 'operationMode', 'equals': 'change_ratio'},
+            'text': '该选项会给改比例后的图片进行填充处理',
+            'tone': 'danger',
+          },
+        },
+      },
+      'outputSchema': const <String, Object?>{},
+      'config': const <String, Object?>{},
+      'modelPolicies': const <Object?>[],
+    });
+
+    expect(
+      feature.isFieldVisible('presetAspectRatio', {
+        'operationMode': 'change_ratio',
+        'ratioMode': 'preset',
+      }),
+      isTrue,
+    );
+    expect(
+      feature.isFieldVisible('presetAspectRatio', {
+        'operationMode': 'expand',
+        'ratioMode': 'preset',
+      }),
+      isFalse,
+    );
+    expect(
+      feature.isFieldVisible('presetAspectRatio', {
+        'operationMode': 'change_ratio',
+        'ratioMode': 'custom',
+      }),
+      isFalse,
+    );
+    expect(
+      feature.fieldHelp('operationMode', {
+        'operationMode': 'change_ratio',
+      })['text'],
+      '该选项会给改比例后的图片进行填充处理',
+    );
+    expect(
+      feature.fieldHelp('operationMode', {
+        'operationMode': 'expand',
+      }),
+      isEmpty,
+    );
+  });
 }
