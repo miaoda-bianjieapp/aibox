@@ -48,6 +48,7 @@ void main() {
       'config': {
         'revisionSourceField': 'sourceText',
         'revisionSourceAssetField': 'sourceImage',
+        'revisionResetFields': ['maskImage'],
       },
       'modelPolicies': const <Object?>[],
     });
@@ -56,6 +57,7 @@ void main() {
     expect(feature.showResetAction, isTrue);
     expect(feature.revisionSourceField, 'sourceText');
     expect(feature.revisionSourceAssetField, 'sourceImage');
+    expect(feature.revisionResetFields, {'maskImage'});
     expect(
       feature.isFieldVisible('rewriteRequirements', {'mode': 'rewrite'}),
       isTrue,

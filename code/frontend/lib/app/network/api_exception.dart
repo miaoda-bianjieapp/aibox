@@ -20,6 +20,13 @@ String taskFailureMessage({String? code, String? message}) {
     'MODEL_ADAPTER_NOT_FOUND' ||
     'MODEL_ADAPTER_NOT_CONFIGURED' =>
       '所选模型尚未完成服务配置，请切换其他模型或联系管理员。',
+    'MODEL_MASK_NOT_SUPPORTED' => '所选图片模型不支持局部蒙版编辑，请联系管理员检查模型配置。',
+    'MASK_EMPTY' => '编辑区域为空，请重新使用画笔涂抹需要修改的位置。',
+    'MASK_DIMENSION_MISMATCH' => '编辑区域与原图尺寸不一致，请重新涂抹选区。',
+    'MASK_TYPE_UNSUPPORTED' ||
+    'MASK_ASSET_MISSING' ||
+    'MASK_INPUT_INVALID' =>
+      '编辑区域数据无效，请重新打开原图并涂抹选区。',
     'MODEL_EMPTY_RESPONSE' => '模型未返回可用内容，请重试或切换其他模型。',
     'PROVIDER_CONNECTION_FAILED' => '暂时无法连接模型服务，请稍后重试。',
     _ when message?.trim().isNotEmpty == true => message!.trim(),

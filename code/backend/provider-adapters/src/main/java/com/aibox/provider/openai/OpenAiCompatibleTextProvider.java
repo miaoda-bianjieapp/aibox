@@ -166,6 +166,29 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         ProviderContext provider = requireProvider(target);
         String imageSize = resolveImageSize(target, request.size());
         if (!assets.isEmpty()) {
+            ModelAsset maskAsset = null;
+            List<ModelAsset> imageAssets = new ArrayList<>();
+            for (ModelAsset asset : assets) {
+                if (request.maskAssetId() != null && request.maskAssetId().equals(asset.id())) {
+                    maskAsset = asset;
+                } else {
+                    imageAssets.add(asset);
+                }
+            }
+            if (request.maskAssetId() != null && maskAsset == null) {
+                throw new ModelProviderException(
+                        "MASK_ASSET_MISSING",
+                        "The configured image mask asset is unavailable",
+                        false
+                );
+            }
+            if (maskAsset != null && !booleanSetting(target, "supportsImageMask", false)) {
+                throw new ModelProviderException(
+                        "MODEL_MASK_NOT_SUPPORTED",
+                        "The selected image model does not support masked editing",
+                        false
+                );
+            }
             MultipartBodyBuilder body = new MultipartBodyBuilder();
             body.part("model", target.providerModel());
             body.part("prompt", request.prompt());
@@ -173,7 +196,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             if (!isBlank(imageSize)) body.part("size", imageSize);
             addImageOutputOptions(body, request);
             String imagePartName = setting(target, "imagePartName", "image");
-            for (ModelAsset asset : assets) {
+            for (ModelAsset asset : imageAssets) {
                 if (!asset.mediaType().startsWith("image/")) {
                     throw new ModelProviderException(
                             "PROVIDER_ASSET_TYPE_UNSUPPORTED",
@@ -183,6 +206,20 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                 }
                 body.part(imagePartName, new NamedByteArrayResource(asset.content(), asset.fileName()))
                         .contentType(safeMediaType(asset.mediaType()));
+            }
+            if (maskAsset != null) {
+                if (!"image/png".equalsIgnoreCase(maskAsset.mediaType())) {
+                    throw new ModelProviderException(
+                            "MASK_TYPE_UNSUPPORTED",
+                            "Image masks must use image/png",
+                            false
+                    );
+                }
+                String maskPartName = setting(target, "maskPartName", "mask");
+                body.part(maskPartName, new NamedByteArrayResource(
+                        maskAsset.content(),
+                        maskAsset.fileName()
+                )).contentType(MediaType.IMAGE_PNG);
             }
             return execute(() -> {
                 JsonNode response = provider.client().post()
@@ -460,11 +497,15 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     ) {
         String outputFormat = imageOption(request, "outputFormat");
         String background = imageOption(request, "background");
+        String inputFidelity = imageOption(request, "inputFidelity");
         if (isAllowed(outputFormat, "png", "jpeg", "webp")) {
             body.part("output_format", outputFormat);
         }
         if (isAllowed(background, "transparent", "opaque", "auto")) {
             body.part("background", background);
+        }
+        if (isAllowed(inputFidelity, "low", "high")) {
+            body.part("input_fidelity", inputFidelity);
         }
     }
 
@@ -474,11 +515,15 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     ) {
         String outputFormat = imageOption(request, "outputFormat");
         String background = imageOption(request, "background");
+        String inputFidelity = imageOption(request, "inputFidelity");
         if (isAllowed(outputFormat, "png", "jpeg", "webp")) {
             body.put("output_format", outputFormat);
         }
         if (isAllowed(background, "transparent", "opaque", "auto")) {
             body.put("background", background);
+        }
+        if (isAllowed(inputFidelity, "low", "high")) {
+            body.put("input_fidelity", inputFidelity);
         }
     }
 
@@ -525,6 +570,13 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     private static String setting(ModelCallTarget target, String name, String fallback) {
         Object value = target.settings().get(name);
         return value == null || value.toString().isBlank() ? fallback : value.toString();
+    }
+
+    private static boolean booleanSetting(ModelCallTarget target, String name, boolean fallback) {
+        Object value = target.settings().get(name);
+        if (value instanceof Boolean booleanValue) return booleanValue;
+        if (value == null || value.toString().isBlank()) return fallback;
+        return Boolean.parseBoolean(value.toString());
     }
 
     private static MediaType safeMediaType(String value) {

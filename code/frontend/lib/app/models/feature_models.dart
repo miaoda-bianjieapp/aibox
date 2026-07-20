@@ -126,6 +126,9 @@ class FeatureDetail extends FeatureEntry {
     final value = config['revisionSourceAssetField']?.toString().trim();
     return value == null || value.isEmpty ? null : value;
   }
+
+  Set<String> get revisionResetFields =>
+      _stringList(config['revisionResetFields']).toSet();
 }
 
 class ModelPolicy {

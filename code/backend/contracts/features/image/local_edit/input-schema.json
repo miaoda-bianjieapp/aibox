@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["sourceImage", "maskImage", "instruction"],
+  "properties": {
+    "sourceImage": {
+      "type": "string",
+      "format": "uuid",
+      "title": "原始图片",
+      "description": "上传需要局部修改的 PNG、JPG、JPEG 或 WebP 图片。"
+    },
+    "maskImage": {
+      "type": "string",
+      "format": "uuid",
+      "title": "编辑区域",
+      "description": "在原图上涂抹允许模型修改的区域，未涂抹区域会保留原图像素。"
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "title": "修改指令",
+      "description": "说明涂抹区域需要变成什么，避免要求修改选区外内容。"
+    }
+  },
+  "additionalProperties": false
+}

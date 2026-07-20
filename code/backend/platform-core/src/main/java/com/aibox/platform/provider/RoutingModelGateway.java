@@ -108,19 +108,44 @@ public final class RoutingModelGateway implements ModelGateway {
         ProviderTarget selected = requireProvider(
                 ModelCapability.IMAGE_GENERATION, request.modelAlias(), request.deploymentCode()
         );
-        List<ModelAsset> assets = new ArrayList<>(
+        List<ModelAsset> sourceAssets = new ArrayList<>(
                 request.inputAssetIds().stream().map(assetService::readForModel).toList()
         );
-        assets.addAll(request.inlineInputAssets());
-        List<ModelAsset> immutableAssets = List.copyOf(assets);
-        return invoke(
+        sourceAssets.addAll(request.inlineInputAssets());
+        ModelAsset maskAsset = request.maskAssetId() == null
+                ? null
+                : assetService.readForModel(request.maskAssetId());
+        if (request.preserveUnmaskedPixels()) {
+            if (sourceAssets.size() != 1 || maskAsset == null) {
+                throw new ModelProviderException(
+                        "MASK_INPUT_INVALID",
+                        "Masked image editing requires exactly one source image and one mask",
+                        false
+                );
+            }
+            MaskedImageCompositor.validateInputs(sourceAssets.get(0), maskAsset);
+        }
+        List<ModelAsset> providerAssets = new ArrayList<>(sourceAssets);
+        if (maskAsset != null) providerAssets.add(maskAsset);
+        List<ModelAsset> immutableAssets = List.copyOf(providerAssets);
+        ImageGenerationResponse response = invoke(
                 request.tenantId(), request.runId(), ModelCapability.IMAGE_GENERATION, request.modelAlias(),
                 selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
                         request.prompt(), request.inputAssetIds().toString(), request.size(),
-                        Integer.toString(request.count()), inlineAssetFingerprint(request.inlineInputAssets())),
+                        Integer.toString(request.count()), inlineAssetFingerprint(request.inlineInputAssets()),
+                        request.maskAssetId() == null ? "" : request.maskAssetId().toString(),
+                        maskAsset == null ? "" : sha256(maskAsset.content())),
                 () -> selected.provider().generateImage(selected.target(), request, immutableAssets),
-                response -> new InvocationOutcome(response.model(), response.providerRequestId(),
-                        response.inputUnits(), response.outputUnits())
+                generated -> new InvocationOutcome(generated.model(), generated.providerRequestId(),
+                        generated.inputUnits(), generated.outputUnits())
+        );
+        if (!request.preserveUnmaskedPixels()) {
+            return response;
+        }
+        return MaskedImageCompositor.preserveUnmaskedPixels(
+                response,
+                sourceAssets.get(0),
+                maskAsset
         );
     }
 

@@ -156,6 +156,81 @@ class OpenAiCompatibleTextProviderTest {
     }
 
     @Test
+    void maskedImageEditWritesSourceAndMaskAsDistinctMultipartFields() throws IOException {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/images/edits", exchange -> {
+            capturedBody.set(new String(
+                    exchange.getRequestBody().readAllBytes(),
+                    StandardCharsets.ISO_8859_1
+            ));
+            byte[] response = (
+                    "{\"data\":[{\"b64_json\":\""
+                            + Base64.getEncoder().encodeToString(new byte[]{1})
+                            + "\",\"media_type\":\"image/png\"}]}"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("test-provider", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "test-image",
+                    "test-provider",
+                    "test-model",
+                    ModelCapability.IMAGE_GENERATION,
+                    Map.of(
+                            "supportsImageMask", true,
+                            "imagePartName", "image",
+                            "maskPartName", "mask"
+                    )
+            );
+            UUID sourceId = UUID.randomUUID();
+            UUID maskId = UUID.randomUUID();
+            ImageGenerationRequest request = new ImageGenerationRequest(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    "image.generation.default",
+                    "test-image",
+                    "change the selected area",
+                    List.of(sourceId),
+                    List.of(),
+                    maskId,
+                    true,
+                    "auto",
+                    1,
+                    Map.of("outputFormat", "png", "inputFidelity", "high")
+            );
+
+            provider.generateImage(
+                    target,
+                    request,
+                    List.of(
+                            new ModelAsset(sourceId, "source.png", "image/png", new byte[]{1}),
+                            new ModelAsset(maskId, "mask.png", "image/png", new byte[]{2})
+                    )
+            );
+
+            assertTrue(capturedBody.get().contains("name=\"image\""));
+            assertTrue(capturedBody.get().contains("filename=\"source.png\""));
+            assertTrue(capturedBody.get().contains("name=\"mask\""));
+            assertTrue(capturedBody.get().contains("filename=\"mask.png\""));
+            assertTrue(capturedBody.get().contains("name=\"input_fidelity\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void imageEditUsesDistinctIdempotencyKeysForInvocationStages() throws IOException {
         List<String> capturedKeys = new ArrayList<>();
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
