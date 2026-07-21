@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../models/feature_models.dart';
 import '../network/api_exception.dart';
+import '../network/native_file_picker.dart';
 import '../network/task_execution_result.dart';
 import '../pages/outline_result_page.dart';
 import '../pages/writing_result_page.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
+import 'image_mask_editor.dart';
 
 Future<TaskExecutionResult?> showTaskSheet(
   BuildContext context, {
@@ -313,11 +315,15 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       final initialIds =
           _assetIdsFromValue(widget.request.initialParameters[field]);
       consumedIds.addAll(initialIds);
-      final revisionIds = widget.request.isRevision &&
-              field == feature.revisionSourceAssetField &&
-              widget.request.baseArtifactAssetIds.isNotEmpty
-          ? widget.request.baseArtifactAssetIds
-          : initialIds;
+      final resetForRevision = widget.request.isRevision &&
+          feature.revisionResetFields.contains(field);
+      final revisionIds = resetForRevision
+          ? const <String>[]
+          : widget.request.isRevision &&
+                  field == feature.revisionSourceAssetField &&
+                  widget.request.baseArtifactAssetIds.isNotEmpty
+              ? widget.request.baseArtifactAssetIds
+              : initialIds;
       consumedIds.addAll(revisionIds);
       _assetsByField[field] = _assetsForIds(revisionIds);
     }
@@ -341,7 +347,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   List<Widget> _buildModelSelectors(FeatureDetail feature) {
     final widgets = <Widget>[];
     for (final policy in feature.modelPolicies) {
-      if (!policy.allowUserSelection || policy.options.length <= 1) continue;
+      if (!policy.shouldShowSelector) continue;
       widgets.addAll(_buildModelSelector(policy));
     }
     return widgets;
@@ -466,25 +472,23 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         return SizedBox(
           width: double.infinity,
           child: SegmentedButton<String>(
-            segments: values
-                .map((value) {
-                  final label = Text(
-                    feature.optionLabel(field, value),
-                    maxLines: labelMaxLines,
-                    overflow: labelMaxLines > 1
-                        ? TextOverflow.ellipsis
-                        : TextOverflow.visible,
-                    softWrap: labelMaxLines > 1,
-                    textAlign: TextAlign.center,
-                  );
-                  return ButtonSegment<String>(
-                    value: value,
-                    label: labelMaxLines == 1
-                        ? FittedBox(fit: BoxFit.scaleDown, child: label)
-                        : label,
-                  );
-                })
-                .toList(),
+            segments: values.map((value) {
+              final label = Text(
+                feature.optionLabel(field, value),
+                maxLines: labelMaxLines,
+                overflow: labelMaxLines > 1
+                    ? TextOverflow.ellipsis
+                    : TextOverflow.visible,
+                softWrap: labelMaxLines > 1,
+                textAlign: TextAlign.center,
+              );
+              return ButtonSegment<String>(
+                value: value,
+                label: labelMaxLines == 1
+                    ? FittedBox(fit: BoxFit.scaleDown, child: label)
+                    : label,
+              );
+            }).toList(),
             selected: {_values[field]?.toString() ?? values.first},
             showSelectedIcon: showSelectedIcon,
             onSelectionChanged: _submitting
@@ -493,9 +497,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                     setState(() => _values[field] = selection.first),
             style: ButtonStyle(
               textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 12)),
-              minimumSize: compact
-                  ? const WidgetStatePropertyAll(Size(0, 44))
-                  : null,
+              minimumSize:
+                  compact ? const WidgetStatePropertyAll(Size(0, 44)) : null,
               padding: compact
                   ? const WidgetStatePropertyAll(
                       EdgeInsets.symmetric(horizontal: 5, vertical: 10),
@@ -540,6 +543,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
 
   Widget _buildAssetField(FeatureDetail feature, String field,
       Map<String, dynamic> schema, String widgetType) {
+    if (widgetType == 'image_mask') {
+      return _buildImageMaskField(feature, field, schema);
+    }
     final options = feature.fieldOptions(field);
     final assets = _assetsByField[field] ?? const <AssetView>[];
     final maxItems = _integerOption(options, 'maxItems') ?? 1;
@@ -573,8 +579,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                     asset: asset,
                     onRemove: _submitting
                         ? null
-                        : () => setState(
-                            () => _assetsByField[field]?.remove(asset)),
+                        : () => _removeAsset(feature, field, asset),
                     contentUrl: widget.data.api.assetContentUrl(asset.id),
                   ))
               .toList(),
@@ -592,6 +597,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         onPressed: _submitting || assets.length >= maxItems
             ? null
             : () => _pickAsset(
+                  feature,
                   field,
                   widgetType,
                   acceptedMimeTypes: acceptedMimeTypes,
@@ -607,7 +613,129 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     ]);
   }
 
+  Widget _buildImageMaskField(
+    FeatureDetail feature,
+    String field,
+    Map<String, dynamic> schema,
+  ) {
+    final options = feature.fieldOptions(field);
+    final sourceField = options['sourceField']?.toString() ?? 'sourceImage';
+    final sourceAssets = _assetsByField[sourceField] ?? const <AssetView>[];
+    final masks = _assetsByField[field] ?? const <AssetView>[];
+    final source = sourceAssets.firstOrNull;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (schema['description']?.toString().trim().isNotEmpty == true)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            schema['description'].toString(),
+            style: const TextStyle(color: AppColors.muted, fontSize: 12),
+          ),
+        ),
+      if (masks.isNotEmpty)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE9F5EF),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFB8DCC8)),
+          ),
+          child: const Row(children: [
+            Icon(Icons.check_circle_outline_rounded,
+                size: 19, color: Color(0xFF246B4A)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '已完成编辑区域涂抹',
+                style: TextStyle(
+                  color: Color(0xFF246B4A),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ]),
+        )
+      else if (source == null)
+        const Text(
+          '请先上传原始图片，再涂抹编辑区域。',
+          style: TextStyle(color: AppColors.muted, fontSize: 12),
+        ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: _submitting || source == null
+              ? null
+              : () => _editMask(
+                    field,
+                    source,
+                    maxSizeBytes: _integerOption(options, 'maxFileSizeBytes'),
+                  ),
+          icon:
+              Icon(masks.isEmpty ? Icons.brush_outlined : Icons.edit_outlined),
+          label: Text(masks.isEmpty
+              ? options['editorLabel']?.toString() ?? '在原图上涂抹编辑区域'
+              : '重新涂抹编辑区域'),
+        ),
+      ),
+    ]);
+  }
+
+  Future<void> _editMask(
+    String field,
+    AssetView source, {
+    required int? maxSizeBytes,
+  }) async {
+    try {
+      final bytes = await showImageMaskEditor(
+        context,
+        sourceAsset: source,
+        api: widget.data.api,
+      );
+      if (bytes == null || !mounted) return;
+      if (maxSizeBytes != null && bytes.length > maxSizeBytes) {
+        throw ApiException(
+          '编辑区域蒙版不能超过 ${_formatBytes(maxSizeBytes)}',
+        );
+      }
+      setState(() {
+        _error = null;
+        _status = '正在上传编辑区域';
+      });
+      final previous =
+          List<AssetView>.from(_assetsByField[field] ?? const <AssetView>[]);
+      final mask = await widget.data.api.uploadAsset(PickedLocalFile(
+        name: 'local-edit-mask-${DateTime.now().millisecondsSinceEpoch}.png',
+        mediaType: 'image/png',
+        bytes: bytes,
+      ));
+      for (final asset in previous) {
+        try {
+          await widget.data.api.deleteAsset(asset.id);
+        } catch (_) {
+          // Referenced historical masks remain in the asset library.
+        }
+      }
+      await widget.data.refresh();
+      if (!mounted) return;
+      setState(() {
+        _assetsByField[field] = [mask];
+        _status = null;
+      });
+    } catch (exception) {
+      if (mounted) {
+        setState(() {
+          _status = null;
+          _error = '$exception';
+        });
+      }
+    }
+  }
+
   Future<void> _pickAsset(
+    FeatureDetail feature,
     String field,
     String widgetType, {
     required List<String> acceptedMimeTypes,
@@ -631,11 +759,49 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         throw ApiException('图片总大小不能超过 ${_formatBytes(maxTotalSizeBytes)}');
       }
       if (asset != null && mounted) {
-        setState(() => (_assetsByField[field] ??= []).add(asset));
+        final staleMasks = <AssetView>[];
+        setState(() {
+          (_assetsByField[field] ??= []).add(asset);
+          staleMasks.addAll(_clearDependentMaskFields(feature, field));
+        });
+        for (final stale in staleMasks) {
+          try {
+            await widget.data.api.deleteAsset(stale.id);
+          } catch (_) {
+            // A mask already referenced by history cannot be removed.
+          }
+        }
       }
     } catch (exception) {
       if (mounted) setState(() => _error = '$exception');
     }
+  }
+
+  void _removeAsset(
+    FeatureDetail feature,
+    String field,
+    AssetView asset,
+  ) {
+    setState(() {
+      _assetsByField[field]?.remove(asset);
+      _clearDependentMaskFields(feature, field);
+    });
+  }
+
+  List<AssetView> _clearDependentMaskFields(
+    FeatureDetail feature,
+    String sourceField,
+  ) {
+    final removed = <AssetView>[];
+    for (final field in feature.fieldOrder) {
+      if (feature.widgetFor(field) != 'image_mask') continue;
+      final configuredSource =
+          feature.fieldOptions(field)['sourceField']?.toString();
+      if (configuredSource != sourceField) continue;
+      removed.addAll(_assetsByField[field] ?? const <AssetView>[]);
+      _assetsByField[field] = [];
+    }
+    return removed;
   }
 
   Future<void> _execute(FeatureDetail feature) async {
@@ -820,7 +986,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   static bool _isAssetField(Map<String, dynamic> schema, String widgetType) {
     return schema['format'] == 'binary' ||
         schema['type'] == 'asset' ||
-        const {'file', 'image', 'audio', 'video'}.contains(widgetType);
+        const {'file', 'image', 'image_mask', 'audio', 'video'}
+            .contains(widgetType);
   }
 
   static List<String> _assetIdsFromValue(Object? value) {

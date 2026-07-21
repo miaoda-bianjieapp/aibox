@@ -32,6 +32,16 @@ void main() {
     );
   });
 
+  test('maps invalid image masks to repaint guidance', () {
+    expect(
+      taskFailureMessage(
+        code: 'MASK_EMPTY',
+        message: 'The mask is empty',
+      ),
+      '编辑区域为空，请重新使用画笔涂抹需要修改的位置。',
+    );
+  });
+
   test('maps unsupported expansion dimensions to an actionable message', () {
     expect(
       taskFailureMessage(

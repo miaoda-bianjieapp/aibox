@@ -1,0 +1,32 @@
+{
+  "order": ["sourceImage", "maskImage", "instruction"],
+  "widgets": {
+    "sourceImage": "image",
+    "maskImage": "image_mask",
+    "instruction": "textarea"
+  },
+  "fieldOptions": {
+    "sourceImage": {
+      "acceptedMimeTypes": ["image/png", "image/jpeg", "image/webp"],
+      "allowedExtensions": [".png", ".jpg", ".jpeg", ".webp"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 10485760,
+      "showPreview": true,
+      "uploadLabel": "上传原始图片"
+    },
+    "maskImage": {
+      "sourceField": "sourceImage",
+      "acceptedMimeTypes": ["image/png"],
+      "allowedExtensions": [".png"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 10485760,
+      "showPreview": true,
+      "editorLabel": "在原图上涂抹编辑区域"
+    }
+  },
+  "feeNotice": "图片局部编辑会调用 1 次 GPT Image 2 付费模型。点击“开始编辑”即表示确认本次调用。",
+  "submitLabel": "开始编辑",
+  "revisionSubmitLabel": "生成新版本"
+}

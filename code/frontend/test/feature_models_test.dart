@@ -48,6 +48,7 @@ void main() {
       'config': {
         'revisionSourceField': 'sourceText',
         'revisionSourceAssetField': 'sourceImage',
+        'revisionResetFields': ['maskImage'],
       },
       'modelPolicies': const <Object?>[],
     });
@@ -56,6 +57,7 @@ void main() {
     expect(feature.showResetAction, isTrue);
     expect(feature.revisionSourceField, 'sourceText');
     expect(feature.revisionSourceAssetField, 'sourceImage');
+    expect(feature.revisionResetFields, {'maskImage'});
     expect(
       feature.isFieldVisible('rewriteRequirements', {'mode': 'rewrite'}),
       isTrue,
@@ -101,6 +103,26 @@ void main() {
     expect(request.isRevision, isTrue);
     expect(request.baseArtifactText, '上一版成果');
     expect(request.baseArtifactAssetIds, ['asset-1']);
+  });
+
+  test('single selectable model still exposes its selector', () {
+    final policy = ModelPolicy.fromJson({
+      'capability': 'IMAGE_GENERATION',
+      'defaultModelCode': 'gpt-image-2',
+      'allowUserSelection': true,
+      'options': [
+        {
+          'code': 'gpt-image-2',
+          'displayName': 'GPT Image 2',
+          'description': '局部编辑模型',
+          'isDefault': true,
+          'sourceType': 'RELAY',
+          'sourceName': 'Codex2API Relay',
+        },
+      ],
+    });
+
+    expect(policy.shouldShowSelector, isTrue);
   });
 
   test('feature visibility supports combined all conditions', () {
