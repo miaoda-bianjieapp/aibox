@@ -1,6 +1,6 @@
 featureCode: image.generate
 workspaceCode: image
-version: 1
+version: 2
 displayName: AI 生图
 description: 根据文字描述和可选参考图片生成一张新图片。
 status: INTERNAL

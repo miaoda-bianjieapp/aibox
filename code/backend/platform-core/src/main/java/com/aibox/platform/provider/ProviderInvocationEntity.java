@@ -2,6 +2,8 @@ package com.aibox.platform.provider;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
@@ -18,8 +20,12 @@ public class ProviderInvocationEntity {
     @Column(name = "tenant_id", nullable = false)
     private UUID tenantId;
 
-    @Column(name = "run_id", nullable = false)
+    @Column(name = "run_id")
     private UUID runId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "invocation_scope", nullable = false, length = 30)
+    private ProviderInvocationScope invocationScope;
 
     @Column(nullable = false, length = 80)
     private String capability;
@@ -74,9 +80,36 @@ public class ProviderInvocationEntity {
             String requestFingerprint,
             Instant startedAt
     ) {
+        this(
+                id,
+                tenantId,
+                runId,
+                ProviderInvocationScope.TASK_RUN,
+                capability,
+                providerCode,
+                deploymentCode,
+                modelAlias,
+                requestFingerprint,
+                startedAt
+        );
+    }
+
+    public ProviderInvocationEntity(
+            UUID id,
+            UUID tenantId,
+            UUID runId,
+            ProviderInvocationScope invocationScope,
+            String capability,
+            String providerCode,
+            String deploymentCode,
+            String modelAlias,
+            String requestFingerprint,
+            Instant startedAt
+    ) {
         this.id = id;
         this.tenantId = tenantId;
         this.runId = runId;
+        this.invocationScope = invocationScope;
         this.capability = capability;
         this.providerCode = providerCode;
         this.deploymentCode = deploymentCode;
@@ -109,5 +142,13 @@ public class ProviderInvocationEntity {
 
     public String getDeploymentCode() {
         return deploymentCode;
+    }
+
+    public UUID getRunId() {
+        return runId;
+    }
+
+    public ProviderInvocationScope getInvocationScope() {
+        return invocationScope;
     }
 }

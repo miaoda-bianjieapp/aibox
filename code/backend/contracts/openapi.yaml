@@ -31,6 +31,28 @@ paths:
                 $ref: "#/components/schemas/FeatureDetail"
         "404":
           $ref: "#/components/responses/NotFound"
+  /catalog/features/{featureCode}/prompt-optimization:
+    post:
+      operationId: optimizeFeaturePrompt
+      parameters:
+        - $ref: "#/components/parameters/FeatureCode"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromptOptimizationRequest"
+      responses:
+        "200":
+          description: 优化后的字段文本；不会创建任务、运行或成果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromptOptimizationResult"
+        "400":
+          description: 字段未开放、输入为空或参数不符合当前功能契约
+        "404":
+          $ref: "#/components/responses/NotFound"
   /projects:
     get:
       operationId: listProjects
@@ -301,6 +323,33 @@ components:
           type: string
           enum: [OFFICIAL, RELAY]
         sourceName: {type: string}
+    PromptOptimizationRequest:
+      type: object
+      required: [field, currentText, parameters]
+      properties:
+        field:
+          type: string
+          maxLength: 120
+        currentText:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        parameters:
+          type: object
+          additionalProperties: true
+        assetIdsByField:
+          type: object
+          additionalProperties:
+            type: array
+            items: {type: string, format: uuid}
+    PromptOptimizationResult:
+      type: object
+      required: [optimizedText]
+      properties:
+        optimizedText:
+          type: string
+          minLength: 1
+          maxLength: 2000
     CreateTaskRequest:
       type: object
       required: [featureCode, title]

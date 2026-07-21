@@ -1,6 +1,6 @@
 featureCode: writing.rewrite_polish
 workspaceCode: writing
-version: 2
+version: 3
 displayName: 改写与润色
 description: 在保持事实、核心含义和原文语言的前提下改写或润色文本。
 status: INTERNAL

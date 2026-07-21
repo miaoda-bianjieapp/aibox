@@ -18,5 +18,12 @@
       "medium": "中等",
       "long": "长"
     }
+  },
+  "promptAssist": {
+    "fields": {
+      "topic": {
+        "contextFields": ["audience", "tone", "length"]
+      }
+    }
   }
 }

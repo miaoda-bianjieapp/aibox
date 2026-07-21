@@ -147,6 +147,14 @@ class FeatureDetail extends FeatureEntry {
     return value == null || value.isEmpty ? null : value;
   }
 
+  Map<String, dynamic> promptAssistFor(String field) =>
+      _map(_map(_map(uiSchema['promptAssist'])['fields'])[field]);
+
+  bool supportsPromptAssist(String field) => promptAssistFor(field).isNotEmpty;
+
+  List<String> promptAssistContextFields(String field) =>
+      _stringList(promptAssistFor(field)['contextFields']);
+
   bool get showResetAction => _map(uiSchema['actions'])['showReset'] == true;
 
   String? get revisionSourceField {

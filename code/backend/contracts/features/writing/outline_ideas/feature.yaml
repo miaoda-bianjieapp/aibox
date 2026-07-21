@@ -1,6 +1,6 @@
 featureCode: writing.outline_ideas
 workspaceCode: writing
-version: 1
+version: 2
 displayName: 大纲与思路
 description: 根据文章标题、主旨和风格生成可编辑的纯文本写作框架。
 status: INTERNAL

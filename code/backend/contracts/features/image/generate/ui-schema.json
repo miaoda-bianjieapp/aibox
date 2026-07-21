@@ -22,6 +22,13 @@
       "showPreview": true
     }
   },
+  "promptAssist": {
+    "fields": {
+      "prompt": {
+        "contextFields": ["referenceImages", "aspectRatio"]
+      }
+    }
+  },
   "feeNotice": "生成图片将调用付费模型，费用按所选模型实际计费。点击“生成图片”即表示确认本次调用。",
   "submitLabel": "生成图片",
   "revisionSubmitLabel": "生成新版本"
