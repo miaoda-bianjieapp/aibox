@@ -99,6 +99,58 @@ class OpenAiCompatibleTextProviderTest {
     }
 
     @Test
+    void stopsStreamingWithoutConsumingTheLastDeltaTwice() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] response = """
+                    data: {"id":"chat-1","model":"test-model","choices":[{"delta":{"content":"first"}}]}
+
+                    data: {"id":"chat-1","model":"test-model","choices":[{"delta":{"content":"second"}}]}
+
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("test-provider", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "test-text",
+                    "test-provider",
+                    "test-model",
+                    ModelCapability.TEXT_GENERATION,
+                    Map.of()
+            );
+            List<String> deltas = new ArrayList<>();
+
+            TextGenerationResponse result = provider.generateTextStream(
+                    target,
+                    new TextGenerationRequest(
+                            UUID.randomUUID(), UUID.randomUUID(), "text.default", "test-text",
+                            "system", "user", 100, 0.5, Map.of()
+                    ),
+                    delta -> {
+                        deltas.add(delta);
+                        return false;
+                    }
+            );
+
+            assertEquals(List.of("first"), deltas);
+            assertEquals("first", result.text());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void mapsUnavailableAccountResponseToStableError() {
         ModelProviderException exception = OpenAiCompatibleTextProvider.mapHttpFailure(
                 503,

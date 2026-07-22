@@ -77,12 +77,13 @@ public class RunController {
             @PathVariable UUID runId,
             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId
     ) {
-        TaskApplicationService.RunDetailView current = taskService.getRun(runId);
+        taskService.getRun(runId);
         long replayAfter = parseEventId(lastEventId);
         return eventPublisher.subscribe(
                 runId,
-                current.run().status().name(),
-                outputService.getOwnedEventsAfter(runId, replayAfter)
+                replayAfter,
+                () -> taskService.getRun(runId).run().status().name(),
+                after -> outputService.getOwnedEventsAfter(runId, after)
         );
     }
 

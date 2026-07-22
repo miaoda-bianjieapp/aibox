@@ -671,8 +671,9 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.isEmpty()) {
-                    if (!consumeStreamEvent(eventData, accumulator, listener)) break;
+                    boolean continueReading = consumeStreamEvent(eventData, accumulator, listener);
                     eventData.setLength(0);
+                    if (!continueReading) break;
                     continue;
                 }
                 if (line.startsWith("data:")) {
