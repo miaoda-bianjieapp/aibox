@@ -28,6 +28,7 @@ public class RunExecutionStateService {
     private final AssetService assetService;
     private final OutboxService outboxService;
     private final RunEventPublisher eventPublisher;
+    private final RunOutputService outputService;
     private final Clock clock;
 
     public RunExecutionStateService(
@@ -36,6 +37,7 @@ public class RunExecutionStateService {
             AssetService assetService,
             OutboxService outboxService,
             RunEventPublisher eventPublisher,
+            RunOutputService outputService,
             Clock clock
     ) {
         this.runRepository = runRepository;
@@ -43,6 +45,7 @@ public class RunExecutionStateService {
         this.assetService = assetService;
         this.outboxService = outboxService;
         this.eventPublisher = eventPublisher;
+        this.outputService = outputService;
         this.clock = clock;
     }
 
@@ -80,6 +83,25 @@ public class RunExecutionStateService {
     public void succeed(UUID runId, List<ArtifactDraft> drafts) {
         TaskRunEntity run = requireRun(runId);
         if (run.getStatus() == RunStatus.CANCELLED) {
+            if (outputService.currentMainText(runId).isBlank() || drafts.isEmpty()) {
+                return;
+            }
+            List<ArtifactEntity> artifacts = artifactService.saveRunArtifacts(run, drafts);
+            run.markPartial(clock.instant());
+            outboxService.append(
+                    "TASK_RUN",
+                    runId,
+                    "TASK_RUN_PARTIAL",
+                    Map.of("artifactIds", artifacts.stream().map(item -> item.getId().toString()).toList())
+            );
+            publishAfterCommit(
+                    runId,
+                    "completed",
+                    Map.of(
+                            "status", RunStatus.PARTIAL.name(),
+                            "artifactIds", artifacts.stream().map(item -> item.getId().toString()).toList()
+                    )
+            );
             return;
         }
         if (run.getStatus() != RunStatus.RUNNING) {
@@ -109,6 +131,7 @@ public class RunExecutionStateService {
         if (run.getStatus().isTerminal()) {
             return;
         }
+        outputService.failRun(runId);
         run.markFailed(errorCode, abbreviate(errorMessage), clock.instant());
         outboxService.append(
                 "TASK_RUN",

@@ -1,6 +1,7 @@
 package com.aibox.api;
 
 import com.aibox.platform.task.TaskApplicationService;
+import com.aibox.platform.execution.RunOutputService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -27,10 +28,16 @@ public class RunController {
 
     private final TaskApplicationService taskService;
     private final SseRunEventPublisher eventPublisher;
+    private final RunOutputService outputService;
 
-    public RunController(TaskApplicationService taskService, SseRunEventPublisher eventPublisher) {
+    public RunController(
+            TaskApplicationService taskService,
+            SseRunEventPublisher eventPublisher,
+            RunOutputService outputService
+    ) {
         this.taskService = taskService;
         this.eventPublisher = eventPublisher;
+        this.outputService = outputService;
     }
 
     @PostMapping("/tasks/{taskId}/runs")
@@ -66,9 +73,31 @@ public class RunController {
     }
 
     @GetMapping("/runs/{runId}/events")
-    public SseEmitter events(@PathVariable UUID runId) {
+    public SseEmitter events(
+            @PathVariable UUID runId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId
+    ) {
         TaskApplicationService.RunDetailView current = taskService.getRun(runId);
-        return eventPublisher.subscribe(runId, current.run().status().name());
+        long replayAfter = parseEventId(lastEventId);
+        return eventPublisher.subscribe(
+                runId,
+                current.run().status().name(),
+                outputService.getOwnedEventsAfter(runId, replayAfter)
+        );
+    }
+
+    @GetMapping("/runs/{runId}/output")
+    public List<RunOutputService.RunOutputStreamView> output(@PathVariable UUID runId) {
+        return outputService.getOwnedStreams(runId);
+    }
+
+    private static long parseEventId(String value) {
+        if (value == null || value.isBlank()) return 0;
+        try {
+            return Math.max(0, Long.parseLong(value));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     public record CreateRunRequest(

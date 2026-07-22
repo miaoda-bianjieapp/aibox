@@ -3,11 +3,12 @@ package com.aibox.features.writing.outlineideas;
 import com.aibox.feature.spi.ArtifactDraft;
 import com.aibox.feature.spi.FeatureExecutionContext;
 import com.aibox.feature.spi.FeatureExecutionResult;
-import com.aibox.feature.spi.FeatureHandler;
+import com.aibox.feature.spi.FeatureOutputEmitter;
 import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelProviderException;
+import com.aibox.feature.spi.StreamingFeatureHandler;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,7 @@ import java.util.Map;
 import java.util.Set;
 
 @Component
-public final class WritingOutlineIdeasFeatureHandler implements FeatureHandler {
+public final class WritingOutlineIdeasFeatureHandler implements StreamingFeatureHandler {
 
     public static final String FEATURE_CODE = "writing.outline_ideas";
     private static final int MAX_TITLE_CHARACTERS = 200;
@@ -90,7 +91,11 @@ public final class WritingOutlineIdeasFeatureHandler implements FeatureHandler {
     }
 
     @Override
-    public FeatureExecutionResult execute(FeatureExecutionContext context, ModelGateway modelGateway) {
+    public FeatureExecutionResult execute(
+            FeatureExecutionContext context,
+            ModelGateway modelGateway,
+            FeatureOutputEmitter outputEmitter
+    ) {
         String operation = operation(context);
         String articleTitle = stringParameter(context, "articleTitle");
         String style = stringParameter(context, "style");
@@ -157,7 +162,8 @@ public final class WritingOutlineIdeasFeatureHandler implements FeatureHandler {
                 previousOutlinePrompt(previousOutline)
         );
 
-        TextGenerationResponse response = modelGateway.generateText(new TextGenerationRequest(
+        outputEmitter.start("main", "plain_text");
+        TextGenerationResponse response = modelGateway.generateTextStream(new TextGenerationRequest(
                 context.tenantId(),
                 context.runId(),
                 "text.default",
@@ -172,7 +178,10 @@ public final class WritingOutlineIdeasFeatureHandler implements FeatureHandler {
                         "style", style,
                         "promptVersion", PROMPT_VERSION
                 )
-        ));
+        ), delta -> {
+            outputEmitter.appendText("main", delta);
+            return !outputEmitter.isCancelled();
+        });
         if (response.text() == null || response.text().isBlank()) {
             throw new ModelProviderException(
                     "MODEL_EMPTY_RESPONSE",

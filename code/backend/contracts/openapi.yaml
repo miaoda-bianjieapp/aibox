@@ -178,6 +178,10 @@ paths:
       operationId: subscribeRunEvents
       parameters:
         - $ref: "#/components/parameters/RunId"
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: {type: integer, format: int64, minimum: 0}
       responses:
         "200":
           description: 状态与结果事件流，移动端必须同时支持 GET Run 轮询对账
@@ -185,6 +189,20 @@ paths:
             text/event-stream:
               schema:
                 type: string
+  /runs/{runId}/output:
+    get:
+      operationId: getRunOutput
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: Current streaming output snapshots for recovery and polling fallback
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RunOutputStream"
   /tasks/{taskId}/artifacts:
     get:
       operationId: listTaskArtifacts
@@ -349,6 +367,33 @@ components:
           additionalProperties: {type: string}
         errorCode: {type: [string, "null"]}
         errorMessage: {type: [string, "null"]}
+    RunOutputStream:
+      type: object
+      required: [runId, channel, format, content, status, lastSequence, updatedAt]
+      properties:
+        runId: {type: string, format: uuid}
+        channel: {type: string, maxLength: 80}
+        format: {type: string, maxLength: 40}
+        content: {type: string}
+        status:
+          type: string
+          enum: [STREAMING, COMPLETED, FAILED, PARTIAL]
+        lastSequence: {type: integer, format: int64, minimum: 0}
+        updatedAt: {type: string, format: date-time}
+    RunOutputEvent:
+      type: object
+      required: [eventId, channel, sequence, type]
+      properties:
+        eventId: {type: integer, format: int64, minimum: 1}
+        channel: {type: string, maxLength: 80}
+        sequence: {type: integer, format: int64, minimum: 1}
+        type:
+          type: string
+          enum: [started, append, replace, completed, failed, partial]
+        format: {type: [string, "null"]}
+        delta: {type: [string, "null"]}
+        content: {type: [string, "null"]}
+        status: {type: [string, "null"]}
     ApiError:
       type: object
       required: [code, message, timestamp]

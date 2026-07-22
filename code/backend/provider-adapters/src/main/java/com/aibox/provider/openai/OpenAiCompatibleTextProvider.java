@@ -16,6 +16,7 @@ import com.aibox.feature.spi.ModelProviderClient;
 import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.MultimodalTextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationRequest;
+import com.aibox.feature.spi.TextGenerationListener;
 import com.aibox.feature.spi.TextGenerationResponse;
 import com.aibox.feature.spi.TextToSpeechRequest;
 import com.aibox.feature.spi.TextToSpeechResponse;
@@ -32,6 +33,9 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -87,6 +91,51 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                 postJson(provider, provider.config().getChatPath(), request.runId().toString(), body),
                 provider.code(), target.providerModel()
         ));
+    }
+
+    @Override
+    public TextGenerationResponse generateTextStream(
+            ModelCallTarget target,
+            TextGenerationRequest request,
+            TextGenerationListener listener
+    ) {
+        ProviderContext provider = requireProvider(target);
+        Map<String, Object> body = chatBody(
+                target.providerModel(), request.systemPrompt(), request.userPrompt(),
+                request.maxOutputTokens(), request.temperature()
+        );
+        body.put("stream", true);
+        if (booleanSetting(target, "supportsStreamUsage", false)) {
+            body.put("stream_options", Map.of("include_usage", true));
+        }
+        return execute(() -> provider.client().post()
+                .uri(provider.config().getChatPath())
+                .header("Idempotency-Key", request.runId().toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.TEXT_EVENT_STREAM, MediaType.APPLICATION_JSON)
+                .body(body)
+                .exchange((httpRequest, response) -> {
+                    int status = response.getStatusCode().value();
+                    MediaType contentType = response.getHeaders().getContentType();
+                    if (status < 200 || status >= 300) {
+                        String errorBody = new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                        throw mapHttpFailure(status, errorBody, new IOException("Provider returned HTTP " + status));
+                    }
+                    if (contentType == null || !MediaType.TEXT_EVENT_STREAM.isCompatibleWith(contentType)) {
+                        JsonNode complete = ERROR_MAPPER.readTree(response.getBody());
+                        TextGenerationResponse parsed = parseTextResponse(
+                                complete, provider.code(), target.providerModel()
+                        );
+                        listener.onDelta(parsed.text());
+                        return parsed;
+                    }
+                    return parseTextStream(
+                            response,
+                            provider.code(),
+                            target.providerModel(),
+                            listener
+                    );
+                }));
     }
 
     @Override
@@ -608,6 +657,81 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         );
     }
 
+    private static TextGenerationResponse parseTextStream(
+            org.springframework.http.client.ClientHttpResponse response,
+            String providerCode,
+            String fallbackModel,
+            TextGenerationListener listener
+    ) throws IOException {
+        StreamAccumulator accumulator = new StreamAccumulator(providerCode, fallbackModel);
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(response.getBody(), StandardCharsets.UTF_8)
+        )) {
+            StringBuilder eventData = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    if (!consumeStreamEvent(eventData, accumulator, listener)) break;
+                    eventData.setLength(0);
+                    continue;
+                }
+                if (line.startsWith("data:")) {
+                    if (!eventData.isEmpty()) eventData.append('\n');
+                    eventData.append(line.substring(5).stripLeading());
+                }
+            }
+            if (!eventData.isEmpty()) {
+                consumeStreamEvent(eventData, accumulator, listener);
+            }
+        }
+        if (accumulator.text.isEmpty()) {
+            throw invalidResponse("Streaming model response has no text");
+        }
+        return accumulator.response();
+    }
+
+    private static boolean consumeStreamEvent(
+            StringBuilder eventData,
+            StreamAccumulator accumulator,
+            TextGenerationListener listener
+    ) throws IOException {
+        if (eventData.isEmpty()) return true;
+        String data = eventData.toString().trim();
+        if (data.isEmpty()) return true;
+        if ("[DONE]".equals(data)) return false;
+
+        JsonNode event = ERROR_MAPPER.readTree(data);
+        if (event.has("error")) {
+            String message = event.path("error").path("message").asText("Streaming provider failed");
+            throw invalidResponse(message);
+        }
+        accumulator.acceptMetadata(event);
+        JsonNode choices = event.path("choices");
+        if (!choices.isArray()) return true;
+        for (JsonNode choice : choices) {
+            String delta = streamDeltaText(choice);
+            if (delta.isEmpty()) continue;
+            accumulator.text.append(delta);
+            if (!listener.onDelta(delta)) return false;
+        }
+        return true;
+    }
+
+    private static String streamDeltaText(JsonNode choice) {
+        JsonNode content = choice.path("delta").path("content");
+        if (content.isTextual()) return content.asText();
+        if (content.isArray()) {
+            StringBuilder text = new StringBuilder();
+            content.forEach(part -> {
+                JsonNode value = part.path("text");
+                if (value.isTextual()) text.append(value.asText());
+            });
+            return text.toString();
+        }
+        JsonNode legacyText = choice.path("text");
+        return legacyText.isTextual() ? legacyText.asText() : "";
+    }
+
     private static <T> T execute(java.util.function.Supplier<T> call) {
         try {
             return call.get();
@@ -889,6 +1013,44 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             RestClient client,
             ModelProviderProperties.Provider config
     ) {
+    }
+
+    private static final class StreamAccumulator {
+        private final String provider;
+        private final String fallbackModel;
+        private final StringBuilder text = new StringBuilder();
+        private String model;
+        private String requestId;
+        private Integer inputTokens;
+        private Integer outputTokens;
+
+        private StreamAccumulator(String provider, String fallbackModel) {
+            this.provider = provider;
+            this.fallbackModel = fallbackModel;
+        }
+
+        private void acceptMetadata(JsonNode event) {
+            String eventModel = event.path("model").asText(null);
+            String eventId = event.path("id").asText(null);
+            if (!isBlank(eventModel)) model = eventModel;
+            if (!isBlank(eventId)) requestId = eventId;
+            JsonNode usage = event.path("usage");
+            Integer prompt = nullableInt(usage, "prompt_tokens");
+            Integer completion = nullableInt(usage, "completion_tokens");
+            if (prompt != null) inputTokens = prompt;
+            if (completion != null) outputTokens = completion;
+        }
+
+        private TextGenerationResponse response() {
+            return new TextGenerationResponse(
+                    text.toString(),
+                    provider,
+                    isBlank(model) ? fallbackModel : model,
+                    requestId,
+                    inputTokens,
+                    outputTokens
+            );
+        }
     }
 
     private static final class NamedByteArrayResource extends ByteArrayResource {

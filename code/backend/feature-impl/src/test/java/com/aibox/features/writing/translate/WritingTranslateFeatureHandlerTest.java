@@ -8,6 +8,7 @@ import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
+import com.aibox.features.support.RecordingFeatureOutputEmitter;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -88,10 +89,14 @@ class WritingTranslateFeatureHandlerTest {
             return response("First paragraph\n\n#include <stdio.h>\nhttps://example.com");
         };
 
+        RecordingFeatureOutputEmitter emitter = new RecordingFeatureOutputEmitter();
         handler.validate(context);
-        FeatureExecutionResult result = handler.execute(context, gateway);
+        FeatureExecutionResult result = handler.execute(context, gateway, emitter);
 
         assertEquals("codex2api-gpt-5-6-text", captured.get().deploymentCode());
+        assertEquals("main", emitter.channel());
+        assertEquals("plain_text", emitter.format());
+        assertEquals(result.artifacts().get(0).content().get("text"), emitter.content());
         assertTrue(captured.get().systemPrompt().contains("Detect the source language automatically"));
         assertTrue(captured.get().systemPrompt().contains("plain text"));
         assertTrue(captured.get().userPrompt().contains("English (en)"));

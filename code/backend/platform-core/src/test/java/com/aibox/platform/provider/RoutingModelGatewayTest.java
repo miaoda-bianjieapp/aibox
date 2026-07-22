@@ -73,6 +73,54 @@ class RoutingModelGatewayTest {
     }
 
     @Test
+    void routesStreamingTextAndRecordsOneInvocationLifecycle() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(ModelCapability.TEXT_GENERATION, "text.default", null))
+                .thenReturn(List.of(new ModelCallTarget(
+                        "test-text", "test", "provider-model", ModelCapability.TEXT_GENERATION, Map.of()
+                )));
+        ModelProviderClient provider = new TestProvider() {
+            @Override
+            public TextGenerationResponse generateTextStream(
+                    ModelCallTarget target,
+                    TextGenerationRequest request,
+                    com.aibox.feature.spi.TextGenerationListener listener
+            ) {
+                listener.onDelta("first");
+                listener.onDelta(" second");
+                return new TextGenerationResponse(
+                        "first second", "test", "model", "stream-request", 2, 3
+                );
+            }
+        };
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(provider),
+                repository,
+                mock(AssetService.class),
+                routingService,
+                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC)
+        );
+        List<String> deltas = new java.util.ArrayList<>();
+
+        TextGenerationResponse response = gateway.generateTextStream(
+                new TextGenerationRequest(
+                        UUID.randomUUID(), UUID.randomUUID(), "text.default",
+                        "system", "user", 100, 0.5, Map.of()
+                ),
+                delta -> {
+                    deltas.add(delta);
+                    return true;
+                }
+        );
+
+        assertThat(deltas).containsExactly("first", " second");
+        assertThat(response.text()).isEqualTo("first second");
+        verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
     void routesTextToSpeechAndVideoCapabilities() {
         ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));

@@ -3,11 +3,12 @@ package com.aibox.features.writing.translate;
 import com.aibox.feature.spi.ArtifactDraft;
 import com.aibox.feature.spi.FeatureExecutionContext;
 import com.aibox.feature.spi.FeatureExecutionResult;
-import com.aibox.feature.spi.FeatureHandler;
+import com.aibox.feature.spi.FeatureOutputEmitter;
 import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelProviderException;
+import com.aibox.feature.spi.StreamingFeatureHandler;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import org.springframework.stereotype.Component;
@@ -16,7 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Component
-public final class WritingTranslateFeatureHandler implements FeatureHandler {
+public final class WritingTranslateFeatureHandler implements StreamingFeatureHandler {
 
     public static final String FEATURE_CODE = "writing.translate";
     private static final int MAX_SOURCE_CHARACTERS = 2_000;
@@ -69,7 +70,11 @@ public final class WritingTranslateFeatureHandler implements FeatureHandler {
     }
 
     @Override
-    public FeatureExecutionResult execute(FeatureExecutionContext context, ModelGateway modelGateway) {
+    public FeatureExecutionResult execute(
+            FeatureExecutionContext context,
+            ModelGateway modelGateway,
+            FeatureOutputEmitter outputEmitter
+    ) {
         String sourceText = sourceText(context);
         String targetLanguage = stringParameter(context, "targetLanguage");
         String targetLanguageName = TARGET_LANGUAGES.get(targetLanguage);
@@ -90,7 +95,8 @@ public final class WritingTranslateFeatureHandler implements FeatureHandler {
                 --- END SOURCE TEXT ---
                 """.formatted(targetLanguageName, targetLanguage, sourceText);
 
-        TextGenerationResponse response = modelGateway.generateText(new TextGenerationRequest(
+        outputEmitter.start("main", "plain_text");
+        TextGenerationResponse response = modelGateway.generateTextStream(new TextGenerationRequest(
                 context.tenantId(),
                 context.runId(),
                 "text.default",
@@ -104,7 +110,10 @@ public final class WritingTranslateFeatureHandler implements FeatureHandler {
                         "targetLanguage", targetLanguage,
                         "promptVersion", PROMPT_VERSION
                 )
-        ));
+        ), delta -> {
+            outputEmitter.appendText("main", delta);
+            return !outputEmitter.isCancelled();
+        });
         String translatedText = response.text();
         if (translatedText == null || translatedText.isBlank()) {
             throw new ModelProviderException(

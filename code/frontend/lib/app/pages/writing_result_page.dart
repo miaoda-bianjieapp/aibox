@@ -7,6 +7,7 @@ import '../models/feature_models.dart';
 import '../network/backend_api.dart';
 import '../network/native_file_picker.dart';
 import '../theme/app_theme.dart';
+import '../widgets/markdown_output_view.dart';
 
 class ArtifactResultPage extends StatelessWidget {
   const ArtifactResultPage({
@@ -141,10 +142,7 @@ class _ArtifactBody extends StatelessWidget {
       );
     }
     if (artifact.kind == 'rich_text' || artifact.mimeType.startsWith('text/')) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: _markdownBlocks(context, text),
-      );
+      return MarkdownOutputView(markdown: text);
     }
     if (artifact.kind == 'transcript' || rendererKey == 'transcript') {
       return _TranscriptRenderer(content: artifact.content);
@@ -397,30 +395,6 @@ class _MediaRenderer extends StatelessWidget {
           ),
         ]),
       );
-}
-
-List<Widget> _markdownBlocks(BuildContext context, String markdown) {
-  return markdown.split('\n').map((line) {
-    if (line.startsWith('# ')) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Text(line.substring(2),
-            style: Theme.of(context).textTheme.headlineMedium),
-      );
-    }
-    if (line.startsWith('## ')) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 14, bottom: 8),
-        child: Text(line.substring(3),
-            style: Theme.of(context).textTheme.titleMedium),
-      );
-    }
-    if (line.trim().isEmpty) return const SizedBox(height: 8);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: SelectableText(line, style: Theme.of(context).textTheme.bodyLarge),
-    );
-  }).toList();
 }
 
 String _formatDate(DateTime value) =>

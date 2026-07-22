@@ -44,6 +44,17 @@ class TaskRunEntityTest {
         assertThat(run.getStatus()).isEqualTo(RunStatus.CANCELLED);
     }
 
+    @Test
+    void cancelledStreamingRunCanFinishAsPartial() {
+        TaskRunEntity run = newRun();
+        run.markRunning(Instant.parse("2026-07-14T00:30:00Z"));
+        run.cancel(Instant.parse("2026-07-14T01:00:00Z"));
+
+        run.markPartial(Instant.parse("2026-07-14T01:00:01Z"));
+
+        assertThat(run.getStatus()).isEqualTo(RunStatus.PARTIAL);
+    }
+
     private static TaskRunEntity newRun() {
         return new TaskRunEntity(
                 UUID.randomUUID(),

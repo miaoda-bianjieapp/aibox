@@ -14,6 +14,7 @@ import com.aibox.feature.spi.ModelProviderClient;
 import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.MultimodalTextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationRequest;
+import com.aibox.feature.spi.TextGenerationListener;
 import com.aibox.feature.spi.TextGenerationResponse;
 import com.aibox.feature.spi.TextToSpeechRequest;
 import com.aibox.feature.spi.TextToSpeechResponse;
@@ -67,6 +68,24 @@ public final class RoutingModelGateway implements ModelGateway {
                 selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
                         request.systemPrompt(), request.userPrompt()),
                 () -> selected.provider().generateText(selected.target(), request),
+                response -> new InvocationOutcome(response.model(), response.providerRequestId(),
+                        response.inputTokens(), response.outputTokens())
+        );
+    }
+
+    @Override
+    public TextGenerationResponse generateTextStream(
+            TextGenerationRequest request,
+            TextGenerationListener listener
+    ) {
+        ProviderTarget selected = requireProvider(
+                ModelCapability.TEXT_GENERATION, request.modelAlias(), request.deploymentCode()
+        );
+        return invoke(
+                request.tenantId(), request.runId(), ModelCapability.TEXT_GENERATION, request.modelAlias(),
+                selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
+                        request.systemPrompt(), request.userPrompt()),
+                () -> selected.provider().generateTextStream(selected.target(), request, listener),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputTokens(), response.outputTokens())
         );

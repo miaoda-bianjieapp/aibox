@@ -7,6 +7,8 @@ import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelProviderException;
+import com.aibox.feature.spi.TextGenerationRequest;
+import com.aibox.feature.spi.TextGenerationResponse;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
@@ -33,6 +35,68 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleTextProviderTest {
+
+    @Test
+    void streamsOpenAiCompatibleTextDeltasAndCollectsFinalResponse() throws IOException {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            capturedBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = """
+                    data: {"id":"chat-1","model":"test-model","choices":[{"delta":{"content":"Hello"}}]}
+
+                    data: {"id":"chat-1","model":"test-model","choices":[{"delta":{"content":" world"}}]}
+
+                    data: {"id":"chat-1","model":"test-model","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+                    data: [DONE]
+
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("test-provider", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "test-text",
+                    "test-provider",
+                    "test-model",
+                    ModelCapability.TEXT_GENERATION,
+                    Map.of()
+            );
+            List<String> deltas = new ArrayList<>();
+
+            TextGenerationResponse result = provider.generateTextStream(
+                    target,
+                    new TextGenerationRequest(
+                            UUID.randomUUID(), UUID.randomUUID(), "text.default", "test-text",
+                            "system", "user", 100, 0.5, Map.of()
+                    ),
+                    delta -> {
+                        deltas.add(delta);
+                        return true;
+                    }
+            );
+
+            assertEquals(List.of("Hello", " world"), deltas);
+            assertEquals("Hello world", result.text());
+            assertEquals("chat-1", result.providerRequestId());
+            assertEquals(3, result.inputTokens());
+            assertEquals(2, result.outputTokens());
+            assertTrue(capturedBody.get().contains("\"stream\":true"));
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     void mapsUnavailableAccountResponseToStableError() {

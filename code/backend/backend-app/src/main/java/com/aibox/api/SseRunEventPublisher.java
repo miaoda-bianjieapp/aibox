@@ -1,6 +1,7 @@
 package com.aibox.api;
 
 import com.aibox.platform.execution.RunEventPublisher;
+import com.aibox.platform.execution.RunOutputService;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -20,7 +21,11 @@ public class SseRunEventPublisher implements RunEventPublisher {
 
     private final Map<UUID, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
-    public SseEmitter subscribe(UUID runId, String currentStatus) {
+    public SseEmitter subscribe(
+            UUID runId,
+            String currentStatus,
+            List<RunOutputService.RunOutputEventView> replayEvents
+    ) {
         SseEmitter emitter = new SseEmitter(TIMEOUT_MILLIS);
         emitters.computeIfAbsent(runId, ignored -> new CopyOnWriteArrayList<>()).add(emitter);
         emitter.onCompletion(() -> remove(runId, emitter));
@@ -30,6 +35,14 @@ public class SseRunEventPublisher implements RunEventPublisher {
             emitter.send(SseEmitter.event()
                     .name("connected")
                     .data(Map.of("runId", runId, "status", currentStatus)));
+            for (RunOutputService.RunOutputEventView replayEvent : replayEvents) {
+                Map<String, Object> data = new java.util.LinkedHashMap<>(replayEvent.data());
+                data.put("eventId", replayEvent.id());
+                emitter.send(SseEmitter.event()
+                        .id(Long.toString(replayEvent.id()))
+                        .name("output")
+                        .data(Map.copyOf(data)));
+            }
         } catch (IOException exception) {
             remove(runId, emitter);
             emitter.completeWithError(exception);
@@ -42,7 +55,10 @@ public class SseRunEventPublisher implements RunEventPublisher {
         List<SseEmitter> subscribers = emitters.getOrDefault(runId, new CopyOnWriteArrayList<>());
         for (SseEmitter emitter : subscribers) {
             try {
-                emitter.send(SseEmitter.event().name(eventType).data(data));
+                SseEmitter.SseEventBuilder event = SseEmitter.event().name(eventType).data(data);
+                Object eventId = data.get("eventId");
+                if (eventId != null) event.id(eventId.toString());
+                emitter.send(event);
                 if ("completed".equals(eventType) || "failed".equals(eventType)) {
                     emitter.complete();
                 }

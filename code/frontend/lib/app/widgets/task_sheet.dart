@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/feature_models.dart';
@@ -5,6 +7,7 @@ import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
 import '../network/task_execution_result.dart';
 import '../pages/outline_result_page.dart';
+import '../pages/task_execution_page.dart';
 import '../pages/writing_result_page.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
@@ -16,17 +19,30 @@ Future<TaskExecutionResult?> showTaskSheet(
   required TaskLaunchRequest request,
   bool openResult = true,
 }) async {
-  final result = await showModalBottomSheet<TaskExecutionResult>(
+  final completion = Completer<_TaskSheetOutcome?>();
+  final sheetFuture = showModalBottomSheet<_TaskSheetOutcome>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     enableDrag: false,
-    builder: (context) => _TaskSheetContent(data: data, request: request),
+    builder: (context) => _TaskSheetContent(
+      data: data,
+      request: request,
+      openResult: openResult,
+      onCompleted: (outcome) {
+        if (!completion.isCompleted) completion.complete(outcome);
+      },
+    ),
   );
+  final outcome = await Future.any<_TaskSheetOutcome?>([
+    sheetFuture,
+    completion.future,
+  ]);
+  final result = outcome?.result;
   if (result != null && context.mounted) {
     await data.refresh();
     if (!context.mounted) return result;
-    if (openResult) {
+    if (openResult && outcome?.resultPageOpened != true) {
       await openArtifactResultPage(
         context,
         data: data,
@@ -45,9 +61,23 @@ Future<void> openArtifactResultPage(
   required String? rendererKey,
   VoidCallback? onContinue,
 }) async {
+  await Navigator.of(context).push(_artifactResultRoute(
+    data: data,
+    artifact: artifact,
+    rendererKey: rendererKey,
+    onContinue: onContinue,
+  ));
+}
+
+Route<void> _artifactResultRoute({
+  required AppDataController data,
+  required ArtifactView artifact,
+  required String? rendererKey,
+  VoidCallback? onContinue,
+}) {
   if (rendererKey == 'outline_text_editor') {
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (context) => OutlineResultPage(
+    return MaterialPageRoute<void>(
+      builder: (pageContext) => OutlineResultPage(
         artifact: artifact,
         onExecuteVersion: ({
           required baseArtifact,
@@ -67,33 +97,49 @@ Future<void> openArtifactResultPage(
             data: data,
             baseArtifact: baseArtifact,
           );
-          if (!context.mounted) return null;
+          if (!pageContext.mounted) return null;
           return showTaskSheet(
-            context,
+            pageContext,
             data: data,
             request: request,
             openResult: false,
           );
         },
       ),
-    ));
-    return;
+    );
   }
-  await Navigator.of(context).push(MaterialPageRoute<void>(
+  return MaterialPageRoute<void>(
     builder: (context) => ArtifactResultPage(
       artifact: artifact,
       rendererKey: rendererKey,
       onContinue: onContinue,
     ),
-  ));
+  );
 }
 
 class _TaskSheetContent extends StatefulWidget {
-  const _TaskSheetContent({required this.data, required this.request});
+  const _TaskSheetContent({
+    required this.data,
+    required this.request,
+    required this.openResult,
+    required this.onCompleted,
+  });
   final AppDataController data;
   final TaskLaunchRequest request;
+  final bool openResult;
+  final ValueChanged<_TaskSheetOutcome> onCompleted;
   @override
   State<_TaskSheetContent> createState() => _TaskSheetContentState();
+}
+
+class _TaskSheetOutcome {
+  const _TaskSheetOutcome({
+    required this.result,
+    required this.resultPageOpened,
+  });
+
+  final TaskExecutionResult result;
+  final bool resultPageOpened;
 }
 
 class _TaskSheetContentState extends State<_TaskSheetContent> {
@@ -106,9 +152,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, String> _selectedModels = {};
   String? _status;
   String? _error;
-  String? _runId;
   bool _submitting = false;
-  bool _cancelling = false;
   bool _initialized = false;
 
   @override
@@ -232,16 +276,6 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                     Text(_status!,
                         style: const TextStyle(
                             color: AppColors.accent, fontSize: 12)),
-                    if (_runId != null && !_cancelling) ...[
-                      const SizedBox(height: 4),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: _cancelRun,
-                          child: const Text('取消任务'),
-                        ),
-                      ),
-                    ],
                   ],
                   if (_error != null) ...[
                     const SizedBox(height: 14),
@@ -853,16 +887,36 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     setState(() {
       _submitting = true;
       _error = null;
-      _status = '准备连接后端';
+      _status = null;
     });
-    try {
-      final inputAssetIds = <String>[];
-      for (final field in feature.fieldOrder) {
-        if (!feature.isFieldVisible(field, _values)) continue;
-        for (final asset in _assetsByField[field] ?? const <AssetView>[]) {
-          if (!inputAssetIds.contains(asset.id)) inputAssetIds.add(asset.id);
-        }
+    final inputAssetIds = <String>[];
+    for (final field in feature.fieldOrder) {
+      if (!feature.isFieldVisible(field, _values)) continue;
+      for (final asset in _assetsByField[field] ?? const <AssetView>[]) {
+        if (!inputAssetIds.contains(asset.id)) inputAssetIds.add(asset.id);
       }
+    }
+
+    final navigator = Navigator.of(context);
+    final sheetRoute = ModalRoute.of(context);
+    final executionController = TaskExecutionController(
+      initialStatus: '正在创建任务',
+      onCancelRun: widget.data.api.cancelRun,
+      loadRunOutput: widget.data.api.getRunOutput,
+    );
+    unawaited(navigator.push<void>(MaterialPageRoute<void>(
+      builder: (context) => TaskExecutionPage(
+        title: feature.title,
+        controller: executionController,
+        openResult: widget.openResult,
+        resultRouteBuilder: (result) => _artifactResultRoute(
+          data: widget.data,
+          artifact: result.artifact,
+          rendererKey: result.feature.rendererKey,
+        ),
+      ),
+    )));
+    try {
       final result = await widget.data.api.executeFeature(
         feature: feature,
         taskTitle: taskName,
@@ -874,38 +928,39 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         selectedModels: _selectedModels,
         parameters: parameters,
         inputAssetIds: inputAssetIds,
-        onStatus: (status) {
-          if (mounted) setState(() => _status = status);
-        },
-        onRunCreated: (runId) {
-          if (mounted) setState(() => _runId = runId);
-        },
+        onStatus: executionController.updateStatus,
+        onRunCreated: executionController.attachRun,
+        onOutput: executionController.updateOutput,
       );
-      if (mounted) {
-        Navigator.of(context).pop(result);
+      executionController.complete(result);
+      widget.onCompleted(_TaskSheetOutcome(
+        result: result,
+        resultPageOpened: widget.openResult,
+      ));
+      if (sheetRoute != null && sheetRoute.isActive) {
+        navigator.removeRoute(sheetRoute);
       }
     } on ApiException catch (exception) {
       if (mounted) {
         if (exception.code == 'RUN_CANCELLED') {
+          executionController.markCancelled();
           setState(() {
             _submitting = false;
-            _cancelling = false;
-            _runId = null;
-            _status = '任务已取消';
+            _status = null;
             _error = null;
           });
           return;
         }
+        executionController.fail(exception.message);
         setState(() {
           _submitting = false;
-          _cancelling = false;
-          _runId = null;
           _status = null;
           _error = exception.message;
         });
       }
     } catch (exception) {
       if (mounted) {
+        executionController.fail('$exception');
         setState(() {
           _submitting = false;
           _status = null;
@@ -999,25 +1054,6 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
     final single = value?.toString();
     return single == null || single.isEmpty ? const [] : [single];
-  }
-
-  Future<void> _cancelRun() async {
-    final runId = _runId;
-    if (runId == null || _cancelling) return;
-    setState(() {
-      _cancelling = true;
-      _status = '正在取消任务';
-    });
-    try {
-      await widget.data.api.cancelRun(runId);
-    } catch (exception) {
-      if (mounted) {
-        setState(() {
-          _cancelling = false;
-          _error = '$exception';
-        });
-      }
-    }
   }
 }
 
