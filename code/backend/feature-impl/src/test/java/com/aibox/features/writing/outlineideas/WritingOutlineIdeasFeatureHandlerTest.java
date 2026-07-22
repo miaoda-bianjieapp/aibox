@@ -8,6 +8,7 @@ import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
+import com.aibox.features.support.RecordingFeatureOutputEmitter;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -85,10 +86,14 @@ class WritingOutlineIdeasFeatureHandlerTest {
             return response("选题方向\n1. 方向一\n2. 方向二\n3. 方向三");
         };
 
+        RecordingFeatureOutputEmitter emitter = new RecordingFeatureOutputEmitter();
         handler.validate(context);
-        FeatureExecutionResult result = handler.execute(context, gateway);
+        FeatureExecutionResult result = handler.execute(context, gateway, emitter);
 
         assertEquals("codex2api-gpt-5-6-text", captured.get().deploymentCode());
+        assertEquals("main", emitter.channel());
+        assertEquals("plain_text", emitter.format());
+        assertEquals(result.artifacts().get(0).content().get("text"), emitter.content());
         assertTrue(captured.get().systemPrompt().contains("never a complete article"));
         assertTrue(captured.get().systemPrompt().contains("1.1"));
         assertTrue(captured.get().userPrompt().contains("人工智能产品设计"));

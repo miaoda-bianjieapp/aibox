@@ -4,10 +4,11 @@ import com.aibox.feature.spi.ArtifactDraft;
 import com.aibox.feature.spi.ArtifactDrafts;
 import com.aibox.feature.spi.FeatureExecutionContext;
 import com.aibox.feature.spi.FeatureExecutionResult;
-import com.aibox.feature.spi.FeatureHandler;
+import com.aibox.feature.spi.FeatureOutputEmitter;
 import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelGateway;
+import com.aibox.feature.spi.StreamingFeatureHandler;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,7 @@ import java.util.Map;
 import java.util.Set;
 
 @Component
-public final class WritingRewritePolishFeatureHandler implements FeatureHandler {
+public final class WritingRewritePolishFeatureHandler implements StreamingFeatureHandler {
 
     public static final String FEATURE_CODE = "writing.rewrite_polish";
     private static final Set<String> MODES = Set.of("rewrite", "polish");
@@ -66,7 +67,11 @@ public final class WritingRewritePolishFeatureHandler implements FeatureHandler 
     }
 
     @Override
-    public FeatureExecutionResult execute(FeatureExecutionContext context, ModelGateway modelGateway) {
+    public FeatureExecutionResult execute(
+            FeatureExecutionContext context,
+            ModelGateway modelGateway,
+            FeatureOutputEmitter outputEmitter
+    ) {
         String mode = stringParameter(context, "mode");
         String sourceText = sourceText(context);
         String customRequirements = stringParameter(
@@ -115,7 +120,8 @@ public final class WritingRewritePolishFeatureHandler implements FeatureHandler 
             default -> throw new IllegalStateException("Unsupported mode: " + mode);
         };
 
-        TextGenerationResponse response = modelGateway.generateText(new TextGenerationRequest(
+        outputEmitter.start("main", "markdown");
+        TextGenerationResponse response = modelGateway.generateTextStream(new TextGenerationRequest(
                 context.tenantId(),
                 context.runId(),
                 "text.default",
@@ -129,7 +135,10 @@ public final class WritingRewritePolishFeatureHandler implements FeatureHandler 
                 3_000,
                 "rewrite".equals(mode) ? 0.7 : 0.3,
                 Map.of("featureCode", FEATURE_CODE, "mode", mode, "promptVersion", 3)
-        ));
+        ), delta -> {
+            outputEmitter.appendText("main", delta);
+            return !outputEmitter.isCancelled();
+        });
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("mode", mode);

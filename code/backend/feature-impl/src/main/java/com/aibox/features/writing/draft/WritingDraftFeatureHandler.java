@@ -3,10 +3,11 @@ package com.aibox.features.writing.draft;
 import com.aibox.feature.spi.ArtifactDraft;
 import com.aibox.feature.spi.FeatureExecutionContext;
 import com.aibox.feature.spi.FeatureExecutionResult;
-import com.aibox.feature.spi.FeatureHandler;
+import com.aibox.feature.spi.FeatureOutputEmitter;
 import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelCapability;
+import com.aibox.feature.spi.StreamingFeatureHandler;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import org.springframework.stereotype.Component;
@@ -15,7 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Component
-public final class WritingDraftFeatureHandler implements FeatureHandler {
+public final class WritingDraftFeatureHandler implements StreamingFeatureHandler {
 
     public static final String FEATURE_CODE = "writing.draft";
 
@@ -36,7 +37,11 @@ public final class WritingDraftFeatureHandler implements FeatureHandler {
     }
 
     @Override
-    public FeatureExecutionResult execute(FeatureExecutionContext context, ModelGateway modelGateway) {
+    public FeatureExecutionResult execute(
+            FeatureExecutionContext context,
+            ModelGateway modelGateway,
+            FeatureOutputEmitter outputEmitter
+    ) {
         String topic = stringParameter(context, "topic");
         String audience = defaultValue(stringParameter(context, "audience"), "general readers");
         String tone = defaultValue(stringParameter(context, "tone"), "clear and professional");
@@ -55,7 +60,8 @@ public final class WritingDraftFeatureHandler implements FeatureHandler {
                         + "Return the complete revised draft, not a list of changes.\n\n"
                         + requirements + "\n\nExisting draft:\n" + previousText;
 
-        TextGenerationResponse response = modelGateway.generateText(new TextGenerationRequest(
+        outputEmitter.start("main", "markdown");
+        TextGenerationResponse response = modelGateway.generateTextStream(new TextGenerationRequest(
                 context.tenantId(),
                 context.runId(),
                 "text.default",
@@ -65,7 +71,10 @@ public final class WritingDraftFeatureHandler implements FeatureHandler {
                 2_000,
                 0.7,
                 Map.of("featureCode", FEATURE_CODE, "runId", context.runId().toString())
-        ));
+        ), delta -> {
+            outputEmitter.appendText("main", delta);
+            return !outputEmitter.isCancelled();
+        });
 
         Map<String, Object> content = new LinkedHashMap<>();
         content.put("format", "markdown");

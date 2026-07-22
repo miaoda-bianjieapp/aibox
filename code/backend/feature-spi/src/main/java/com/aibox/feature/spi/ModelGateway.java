@@ -5,6 +5,15 @@ public interface ModelGateway {
 
     TextGenerationResponse generateText(TextGenerationRequest request);
 
+    default TextGenerationResponse generateTextStream(
+            TextGenerationRequest request,
+            TextGenerationListener listener
+    ) {
+        TextGenerationResponse response = generateText(request);
+        listener.onDelta(response.text());
+        return response;
+    }
+
     default TextGenerationResponse generateMultimodalText(MultimodalTextGenerationRequest request) {
         throw unsupported(ModelCapability.VISION);
     }
