@@ -67,6 +67,12 @@ yuanzuo:
         image-edit-path: /images/edits
         speech-path: /audio/speech
         video-path: /videos/generations
+      # 智谱官方文本模型 Deployment 由 Flyway 创建；真实 Key 仅写入本地 application.yml。
+      zhipu-bigmodel:
+        protocol: openai-compatible
+        base-url: https://open.bigmodel.cn/api/paas/v4
+        api-key: CHANGE_ME_ZHIPU_BIGMODEL_KEY
+        chat-path: /chat/completions
       # Qwen Image 2.0 Deployment 由 Flyway 创建；真实 Key 仅写入本地 application.yml。
       aliyun-maas:
         protocol: openai-compatible

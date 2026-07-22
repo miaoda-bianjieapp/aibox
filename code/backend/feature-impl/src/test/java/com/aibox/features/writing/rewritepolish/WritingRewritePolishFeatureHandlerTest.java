@@ -7,6 +7,7 @@ import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
+import com.aibox.features.support.RecordingFeatureOutputEmitter;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -96,10 +97,14 @@ class WritingRewritePolishFeatureHandlerTest {
             return response("改写后的内容");
         };
 
+        RecordingFeatureOutputEmitter emitter = new RecordingFeatureOutputEmitter();
         handler.validate(context);
-        FeatureExecutionResult result = handler.execute(context, gateway);
+        FeatureExecutionResult result = handler.execute(context, gateway, emitter);
 
         assertEquals("codex2api-gpt-5-6-text", captured.get().deploymentCode());
+        assertEquals("main", emitter.channel());
+        assertEquals("markdown", emitter.format());
+        assertEquals(result.artifacts().get(0).content().get("text"), emitter.content());
         assertTrue(captured.get().systemPrompt().contains("not a proofreader"));
         assertTrue(captured.get().userPrompt().contains("Preserve every fact"));
         assertTrue(captured.get().userPrompt().contains("Do not return a near-copy"));

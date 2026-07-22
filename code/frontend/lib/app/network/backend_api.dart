@@ -5,9 +5,11 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import '../models/feature_models.dart';
+import '../models/run_output_models.dart';
 import 'api_config.dart';
 import 'api_exception.dart';
 import 'native_file_picker.dart';
+import 'sse_event_parser.dart';
 import 'task_execution_result.dart';
 
 class BackendApi {
@@ -134,6 +136,12 @@ class BackendApi {
     await _request('POST', '/runs/$runId/cancel');
   }
 
+  Future<List<RunOutputSnapshot>> getRunOutput(String runId) async {
+    return _asMapList(await _request('GET', '/runs/$runId/output'))
+        .map(RunOutputSnapshot.fromJson)
+        .toList();
+  }
+
   Future<TaskExecutionResult> executeFeature({
     required FeatureDetail feature,
     required String taskTitle,
@@ -146,6 +154,7 @@ class BackendApi {
     required List<String> inputAssetIds,
     required ValueChanged<String> onStatus,
     ValueChanged<String>? onRunCreated,
+    ValueChanged<RunOutputSnapshot>? onOutput,
   }) async {
     late final String taskId;
     if (existingTaskId == null) {
@@ -181,37 +190,67 @@ class BackendApi {
     final runId = _requiredString(run, 'id');
     onRunCreated?.call(runId);
 
-    final pollingDeadline = DateTime.now().add(runPollingTimeout);
-    while (DateTime.now().isBefore(pollingDeadline)) {
-      final detail = _asMap(await _request('GET', '/runs/$runId'));
-      final runData = _asMap(detail['run']);
-      final status = _requiredString(runData, 'status');
-      onStatus(_statusLabel(status));
-      if (status == 'SUCCEEDED' || status == 'PARTIAL') {
-        final artifacts = _asMapList(detail['artifacts']);
-        if (artifacts.isEmpty) {
-          throw const ApiException('任务已完成，但没有返回可展示的结果');
+    final outputWatcher = onOutput == null
+        ? null
+        : _RunOutputWatcher(runId: runId, onOutput: onOutput);
+    unawaited(outputWatcher?.start());
+    try {
+      final pollingDeadline = DateTime.now().add(runPollingTimeout);
+      var nextOutputRefresh = DateTime.now();
+      while (DateTime.now().isBefore(pollingDeadline)) {
+        final detail = _asMap(await _request('GET', '/runs/$runId'));
+        final runData = _asMap(detail['run']);
+        final status = _requiredString(runData, 'status');
+        onStatus(_statusLabel(status));
+        if (onOutput != null && !DateTime.now().isBefore(nextOutputRefresh)) {
+          try {
+            for (final snapshot in await getRunOutput(runId)) {
+              outputWatcher?.applySnapshot(snapshot);
+            }
+          } catch (_) {
+            // SSE remains primary; snapshots are the recovery fallback.
+          }
+          nextOutputRefresh = DateTime.now().add(const Duration(seconds: 2));
         }
-        return TaskExecutionResult(
-          taskId: taskId,
-          runId: runId,
-          feature: feature,
-          artifact: ArtifactView.fromJson(artifacts.first),
-        );
-      }
-      if (status == 'FAILED' || status == 'CANCELLED' || status == 'EXPIRED') {
-        if (status == 'CANCELLED') {
-          throw const ApiException('任务已取消', code: 'RUN_CANCELLED');
+        if (status == 'SUCCEEDED' || status == 'PARTIAL') {
+          if (onOutput != null) {
+            try {
+              for (final snapshot in await getRunOutput(runId)) {
+                outputWatcher?.applySnapshot(snapshot);
+              }
+            } catch (_) {
+              // The final Artifact remains the source of truth.
+            }
+          }
+          final artifacts = _asMapList(detail['artifacts']);
+          if (artifacts.isEmpty) {
+            throw const ApiException('任务已完成，但没有返回可展示的结果');
+          }
+          return TaskExecutionResult(
+            taskId: taskId,
+            runId: runId,
+            feature: feature,
+            artifact: ArtifactView.fromJson(artifacts.first),
+          );
         }
-        final errorCode = runData['errorCode']?.toString();
-        throw ApiException(
-          runFailureMessage(errorCode, runData['errorMessage']?.toString()),
-          code: errorCode,
-        );
+        if (status == 'FAILED' ||
+            status == 'CANCELLED' ||
+            status == 'EXPIRED') {
+          if (status == 'CANCELLED') {
+            throw const ApiException('任务已取消', code: 'RUN_CANCELLED');
+          }
+          final errorCode = runData['errorCode']?.toString();
+          throw ApiException(
+            runFailureMessage(errorCode, runData['errorMessage']?.toString()),
+            code: errorCode,
+          );
+        }
+        await Future<void>.delayed(_runPollingInterval);
       }
-      await Future<void>.delayed(_runPollingInterval);
+      throw const ApiException('等待任务结果超时，请稍后在历史任务中查看');
+    } finally {
+      outputWatcher?.close();
     }
-    throw const ApiException('等待任务结果超时，请稍后在历史任务中查看');
   }
 
   Future<dynamic> _request(
@@ -295,6 +334,80 @@ class BackendApi {
         'WAITING_CALLBACK' => '等待模型返回',
         _ => '正在处理',
       };
+}
+
+class _RunOutputWatcher {
+  _RunOutputWatcher({
+    required this.runId,
+    required this.onOutput,
+  });
+
+  final String runId;
+  final ValueChanged<RunOutputSnapshot> onOutput;
+  final RunOutputAccumulator _accumulator = RunOutputAccumulator();
+  final HttpClient _client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 8);
+  bool _closed = false;
+
+  Future<void> start() async {
+    while (!_closed) {
+      try {
+        final request = await _client
+            .getUrl(Uri.parse('${ApiConfig.baseUrl}/runs/$runId/events'))
+            .timeout(const Duration(seconds: 10));
+        request.headers.set(HttpHeaders.acceptHeader, 'text/event-stream');
+        if (_accumulator.lastEventId > 0) {
+          request.headers.set(
+            'Last-Event-ID',
+            _accumulator.lastEventId.toString(),
+          );
+        }
+        final response =
+            await request.close().timeout(const Duration(seconds: 15));
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          await response.drain<void>();
+          if (!_closed) {
+            await Future<void>.delayed(const Duration(milliseconds: 750));
+          }
+          continue;
+        }
+        final lines =
+            response.transform(utf8.decoder).transform(const LineSplitter());
+        await for (final frame in parseSseLines(lines)) {
+          if (_closed) break;
+          if (frame.event != 'output' || frame.data.isEmpty) continue;
+          final decoded = jsonDecode(frame.data);
+          if (decoded is! Map) continue;
+          final data = Map<String, dynamic>.from(decoded);
+          if (data['eventId'] == null && frame.id != null) {
+            data['eventId'] = frame.id;
+          }
+          final snapshot = _accumulator.applyEvent(
+            runId,
+            RunOutputEvent.fromJson(data),
+          );
+          if (snapshot != null) onOutput(snapshot);
+        }
+      } catch (_) {
+        if (_closed) return;
+      }
+      if (!_closed) {
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+      }
+    }
+  }
+
+  void applySnapshot(RunOutputSnapshot snapshot) {
+    if (_closed) return;
+    final applied = _accumulator.applySnapshot(snapshot);
+    if (applied != null) onOutput(applied);
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _client.close(force: true);
+  }
 }
 
 typedef ValueChanged<T> = void Function(T value);

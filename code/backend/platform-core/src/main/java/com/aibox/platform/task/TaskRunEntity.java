@@ -185,6 +185,14 @@ public class TaskRunEntity {
         this.finishedAt = now;
     }
 
+    public void markPartial(Instant now) {
+        if (status != RunStatus.RUNNING && status != RunStatus.CANCELLED) {
+            throw new IllegalStateException("Run cannot become partial from status " + status);
+        }
+        this.status = RunStatus.PARTIAL;
+        this.finishedAt = now;
+    }
+
     public void markFailed(String code, String message, Instant now) {
         if (status.isTerminal()) {
             return;

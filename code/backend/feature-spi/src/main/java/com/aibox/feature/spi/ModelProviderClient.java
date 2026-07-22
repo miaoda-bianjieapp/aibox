@@ -10,6 +10,16 @@ public interface ModelProviderClient {
 
     TextGenerationResponse generateText(ModelCallTarget target, TextGenerationRequest request);
 
+    default TextGenerationResponse generateTextStream(
+            ModelCallTarget target,
+            TextGenerationRequest request,
+            TextGenerationListener listener
+    ) {
+        TextGenerationResponse response = generateText(target, request);
+        listener.onDelta(response.text());
+        return response;
+    }
+
     default TextGenerationResponse generateMultimodalText(
             ModelCallTarget target,
             MultimodalTextGenerationRequest request,
