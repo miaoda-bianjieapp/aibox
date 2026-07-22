@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/feature_models.dart';
+import '../models/prompt_optimization_undo_store.dart';
 import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
 import '../network/task_execution_result.dart';
@@ -102,7 +103,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, Object?> _values = {};
   final Map<String, List<AssetView>> _assetsByField = {};
-  final Map<String, String> _promptUndoValues = {};
+  final PromptOptimizationUndoStore _promptUndoStore =
+      PromptOptimizationUndoStore();
   final Map<String, String> _promptAssistErrors = {};
   String? _projectId;
   final Map<String, String> _selectedModels = {};
@@ -577,7 +579,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: 4,
           children: [
-            if (_promptUndoValues.containsKey(field))
+            if (_promptUndoStore.contains(field))
               IconButton(
                 onPressed: _submitting || optimizing
                     ? null
@@ -887,7 +889,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       );
       if (!mounted) return;
       setState(() {
-        _promptUndoValues[field] = originalText;
+        _promptUndoStore.captureOriginal(field, originalText);
         controller
           ..text = optimized
           ..selection = TextSelection.collapsed(offset: optimized.length);
@@ -904,14 +906,14 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   }
 
   void _undoPromptOptimization(String field) {
-    final previous = _promptUndoValues[field];
     final controller = _controllers[field];
-    if (previous == null || controller == null) return;
+    if (controller == null) return;
+    final previous = _promptUndoStore.takeOriginal(field);
+    if (previous == null) return;
     setState(() {
       controller
         ..text = previous
         ..selection = TextSelection.collapsed(offset: previous.length);
-      _promptUndoValues.remove(field);
       _promptAssistErrors.remove(field);
     });
   }
@@ -1109,7 +1111,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   void _resetParameters(FeatureDetail feature) {
     setState(() {
       _assetsByField.clear();
-      _promptUndoValues.clear();
+      _promptUndoStore.clear();
       _promptAssistErrors.clear();
       for (final field in feature.fieldOrder) {
         final schema =
