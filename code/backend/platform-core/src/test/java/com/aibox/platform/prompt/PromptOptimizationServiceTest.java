@@ -63,14 +63,22 @@ class PromptOptimizationServiceTest {
         assertThat(result.optimizedText()).contains("橘猫");
         assertThat(captured.get().modelAlias()).isEqualTo("prompt.optimize.default");
         assertThat(captured.get().deploymentCode()).isNull();
+        assertThat(captured.get().maxOutputTokens()).isEqualTo(320);
+        assertThat(captured.get().temperature()).isEqualTo(0.2);
         assertThat(captured.get().systemPrompt())
                 .contains("500")
                 .contains("禁止输出")
-                .contains("必须保留原文本中的核心主体");
+                .contains("必须保留原文本中的核心主体")
+                .contains("每次优化都必须重新组织")
+                .contains("合并同义、重复或相互堆叠的描述")
+                .contains("不要在上一版末尾继续追加名词");
         assertThat(captured.get().userPrompt())
+                .contains("功能目标：根据描述生成图片")
                 .contains("一只猫")
+                .contains("已确定参数")
                 .contains("图片比例")
                 .contains("16:9")
+                .contains("不要机械复述参数")
                 .doesNotContain("must not reach the model");
 
         Map<String, Object> parametersWithNull = new LinkedHashMap<>();
