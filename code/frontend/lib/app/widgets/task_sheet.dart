@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/feature_models.dart';
+import '../models/prompt_optimization_undo_store.dart';
 import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
 import '../network/task_execution_result.dart';
@@ -148,10 +149,14 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, Object?> _values = {};
   final Map<String, List<AssetView>> _assetsByField = {};
+  final PromptOptimizationUndoStore _promptUndoStore =
+      PromptOptimizationUndoStore();
+  final Map<String, String> _promptAssistErrors = {};
   String? _projectId;
   final Map<String, String> _selectedModels = {};
   String? _status;
   String? _error;
+  String? _optimizingPromptField;
   bool _submitting = false;
   bool _initialized = false;
 
@@ -445,6 +450,19 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ..add(_FieldLabel(schema['title']?.toString() ?? field,
             required: feature.requiredFields.contains(field)))
         ..add(_buildField(feature, field, schema, widgetType));
+      final promptError = _promptAssistErrors[field];
+      if (promptError != null) {
+        fields
+          ..add(const SizedBox(height: 5))
+          ..add(Text(
+            promptError,
+            style: const TextStyle(
+              color: AppColors.danger,
+              fontSize: 11,
+              height: 1.4,
+            ),
+          ));
+      }
       final fieldHelp = feature.fieldHelp(field, _values);
       final helpText = fieldHelp['text']?.toString().trim();
       if (helpText?.isNotEmpty == true) {
@@ -561,9 +579,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final multiline = widgetType == 'textarea';
     final numeric = schema['type'] == 'integer' || schema['type'] == 'number';
     final configuredMaxLength = schema['maxLength'];
-    return TextField(
+    final supportsPromptAssist =
+        multiline && feature.supportsPromptAssist(field);
+    final textField = TextField(
       controller: _controllers[field],
-      enabled: !_submitting,
+      enabled: !_submitting && _optimizingPromptField != field,
       minLines: multiline ? 3 : 1,
       maxLines: multiline ? 6 : 1,
       maxLength:
@@ -572,6 +592,51 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
       decoration: InputDecoration(hintText: schema['description']?.toString()),
+      onChanged: supportsPromptAssist
+          ? (_) => setState(() => _promptAssistErrors.remove(field))
+          : null,
+    );
+    if (!supportsPromptAssist) return textField;
+
+    final controller = _controllers[field]!;
+    final optimizing = _optimizingPromptField == field;
+    final optimizationBlocked = _submitting ||
+        _optimizingPromptField != null ||
+        controller.text.trim().isEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        textField,
+        const SizedBox(height: 4),
+        Wrap(
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 4,
+          children: [
+            if (_promptUndoStore.contains(field))
+              IconButton(
+                onPressed: _submitting || optimizing
+                    ? null
+                    : () => _undoPromptOptimization(field),
+                tooltip: '撤销提示词优化',
+                icon: const Icon(Icons.undo_rounded, size: 19),
+              ),
+            TextButton.icon(
+              onPressed: optimizationBlocked
+                  ? null
+                  : () => _optimizePrompt(feature, field),
+              icon: optimizing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.auto_fix_high_rounded, size: 18),
+              label: Text(optimizing ? '优化中' : '优化提示词'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -838,6 +903,85 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     return removed;
   }
 
+  Future<void> _optimizePrompt(FeatureDetail feature, String field) async {
+    final controller = _controllers[field];
+    if (controller == null) return;
+    final originalText = controller.text;
+    if (originalText.trim().isEmpty || _optimizingPromptField != null) return;
+
+    setState(() {
+      _optimizingPromptField = field;
+      _promptAssistErrors.remove(field);
+    });
+    try {
+      final optimized = await widget.data.api.optimizePrompt(
+        featureCode: feature.id,
+        field: field,
+        currentText: originalText,
+        parameters: _currentPromptParameters(feature),
+        assetIdsByField: _currentPromptAssetIds(feature),
+      );
+      if (!mounted) return;
+      setState(() {
+        _promptUndoStore.captureOriginal(field, originalText);
+        controller
+          ..text = optimized
+          ..selection = TextSelection.collapsed(offset: optimized.length);
+        _optimizingPromptField = null;
+        _promptAssistErrors.remove(field);
+      });
+    } catch (exception) {
+      if (!mounted) return;
+      setState(() {
+        _optimizingPromptField = null;
+        _promptAssistErrors[field] = '$exception';
+      });
+    }
+  }
+
+  void _undoPromptOptimization(String field) {
+    final controller = _controllers[field];
+    if (controller == null) return;
+    final previous = _promptUndoStore.takeOriginal(field);
+    if (previous == null) return;
+    setState(() {
+      controller
+        ..text = previous
+        ..selection = TextSelection.collapsed(offset: previous.length);
+      _promptAssistErrors.remove(field);
+    });
+  }
+
+  Map<String, Object?> _currentPromptParameters(FeatureDetail feature) {
+    final parameters = <String, Object?>{};
+    for (final field in feature.fieldOrder) {
+      if (!feature.isFieldVisible(field, _values)) continue;
+      final schema =
+          Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
+      final widgetType = feature.widgetFor(field) ?? 'text';
+      if (_isAssetField(schema, widgetType)) continue;
+      final value = schema['type'] == 'boolean' || schema['enum'] is List
+          ? _values[field]
+          : _controllers[field]?.text.trim();
+      if (value != null && value.toString().isNotEmpty) {
+        parameters[field] = value;
+      }
+    }
+    return parameters;
+  }
+
+  Map<String, List<String>> _currentPromptAssetIds(FeatureDetail feature) {
+    final assets = <String, List<String>>{};
+    for (final field in feature.fieldOrder) {
+      if (!feature.isFieldVisible(field, _values)) continue;
+      final ids = (_assetsByField[field] ?? const <AssetView>[])
+          .map((asset) => asset.id)
+          .toList();
+      if (ids.isNotEmpty) assets[field] = ids;
+    }
+    return assets;
+  }
+
   Future<void> _execute(FeatureDetail feature) async {
     final taskName = _nameController.text.trim();
     if (taskName.isEmpty) {
@@ -974,7 +1118,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final executeButton = SizedBox(
       height: 48,
       child: FilledButton.icon(
-        onPressed: _submitting ? null : () => _execute(feature),
+        onPressed: _submitting || _optimizingPromptField != null
+            ? null
+            : () => _execute(feature),
         style: FilledButton.styleFrom(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
@@ -992,7 +1138,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         child: SizedBox(
           height: 48,
           child: OutlinedButton.icon(
-            onPressed: _submitting ? null : () => _resetParameters(feature),
+            onPressed: _submitting || _optimizingPromptField != null
+                ? null
+                : () => _resetParameters(feature),
             icon: const Icon(Icons.delete_outline_rounded, size: 19),
             label: const Text('重置内容'),
           ),
@@ -1011,12 +1159,15 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ..text = example
         ..selection = TextSelection.collapsed(offset: example.length);
       _error = null;
+      _promptAssistErrors.remove(field);
     });
   }
 
   void _resetParameters(FeatureDetail feature) {
     setState(() {
       _assetsByField.clear();
+      _promptUndoStore.clear();
+      _promptAssistErrors.clear();
       for (final field in feature.fieldOrder) {
         final schema =
             Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});

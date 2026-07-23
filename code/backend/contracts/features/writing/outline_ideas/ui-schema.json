@@ -13,6 +13,13 @@
       "creative": "创意"
     }
   },
+  "promptAssist": {
+    "fields": {
+      "thesis": {
+        "contextFields": ["articleTitle", "style"]
+      }
+    }
+  },
   "feeNotice": "生成写作框架将调用所选文本模型，可能产生费用；点击“生成框架”即表示确认本次调用。",
   "submitLabel": "生成框架",
   "revisionSubmitLabel": "生成新框架"

@@ -26,6 +26,13 @@
       "editorLabel": "在原图上涂抹编辑区域"
     }
   },
+  "promptAssist": {
+    "fields": {
+      "instruction": {
+        "contextFields": ["sourceImage", "maskImage"]
+      }
+    }
+  },
   "feeNotice": "图片局部编辑会调用 1 次 GPT Image 2 付费模型。点击“开始编辑”即表示确认本次调用。",
   "submitLabel": "开始编辑",
   "revisionSubmitLabel": "生成新版本"

@@ -22,6 +22,7 @@ import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
 import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.model.ModelRoutingService;
+import com.aibox.platform.prompt.PromptOptimizationModelGateway;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -36,7 +37,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 @Component
-public final class RoutingModelGateway implements ModelGateway {
+public final class RoutingModelGateway implements ModelGateway, PromptOptimizationModelGateway {
 
     private final List<ModelProviderClient> providers;
     private final ProviderInvocationRepository invocationRepository;
@@ -60,11 +61,25 @@ public final class RoutingModelGateway implements ModelGateway {
 
     @Override
     public TextGenerationResponse generateText(TextGenerationRequest request) {
+        return generateText(request, ProviderInvocationScope.TASK_RUN, request.runId());
+    }
+
+    @Override
+    public TextGenerationResponse generatePromptOptimization(TextGenerationRequest request) {
+        return generateText(request, ProviderInvocationScope.PROMPT_ASSIST, null);
+    }
+
+    private TextGenerationResponse generateText(
+            TextGenerationRequest request,
+            ProviderInvocationScope invocationScope,
+            UUID auditRunId
+    ) {
         ProviderTarget selected = requireProvider(
                 ModelCapability.TEXT_GENERATION, request.modelAlias(), request.deploymentCode()
         );
         return invoke(
-                request.tenantId(), request.runId(), ModelCapability.TEXT_GENERATION, request.modelAlias(),
+                request.tenantId(), auditRunId, invocationScope,
+                ModelCapability.TEXT_GENERATION, request.modelAlias(),
                 selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
                         request.systemPrompt(), request.userPrompt()),
                 () -> selected.provider().generateText(selected.target(), request),
@@ -258,8 +273,33 @@ public final class RoutingModelGateway implements ModelGateway {
             Supplier<T> call,
             Function<T, InvocationOutcome> outcomeMapper
     ) {
+        return invoke(
+                tenantId,
+                runId,
+                ProviderInvocationScope.TASK_RUN,
+                capability,
+                modelAlias,
+                selected,
+                requestFingerprint,
+                call,
+                outcomeMapper
+        );
+    }
+
+    private <T> T invoke(
+            UUID tenantId,
+            UUID runId,
+            ProviderInvocationScope invocationScope,
+            ModelCapability capability,
+            String modelAlias,
+            ProviderTarget selected,
+            String requestFingerprint,
+            Supplier<T> call,
+            Function<T, InvocationOutcome> outcomeMapper
+    ) {
         ProviderInvocationEntity invocation = new ProviderInvocationEntity(
-                UUID.randomUUID(), tenantId, runId, capability.name(), selected.target().providerCode(),
+                UUID.randomUUID(), tenantId, runId, invocationScope,
+                capability.name(), selected.target().providerCode(),
                 selected.target().deploymentCode(), modelAlias, requestFingerprint, clock.instant()
         );
         invocationRepository.save(invocation);

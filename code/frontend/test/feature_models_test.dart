@@ -42,6 +42,13 @@ void main() {
           'polishRequirements': {'field': 'mode', 'equals': 'polish'},
         },
         'examples': {'sourceText': '示例文本'},
+        'promptAssist': {
+          'fields': {
+            'rewriteRequirements': {
+              'contextFields': ['mode', 'sourceText'],
+            },
+          },
+        },
         'actions': {'showReset': true},
       },
       'outputSchema': const <String, Object?>{},
@@ -58,6 +65,12 @@ void main() {
     expect(feature.revisionSourceField, 'sourceText');
     expect(feature.revisionSourceAssetField, 'sourceImage');
     expect(feature.revisionResetFields, {'maskImage'});
+    expect(feature.supportsPromptAssist('rewriteRequirements'), isTrue);
+    expect(
+      feature.promptAssistContextFields('rewriteRequirements'),
+      ['mode', 'sourceText'],
+    );
+    expect(feature.supportsPromptAssist('sourceText'), isFalse);
     expect(
       feature.isFieldVisible('rewriteRequirements', {'mode': 'rewrite'}),
       isTrue,

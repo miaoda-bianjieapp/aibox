@@ -1,6 +1,6 @@
 featureCode: image.background_edit
 workspaceCode: image
-version: 3
+version: 4
 displayName: 抠图与换背景
 description: 自动识别图片主体，移除背景或根据文字和参考图更换背景。
 status: INTERNAL

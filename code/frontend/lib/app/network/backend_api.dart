@@ -41,6 +41,27 @@ class BackendApi {
     );
   }
 
+  Future<String> optimizePrompt({
+    required String featureCode,
+    required String field,
+    required String currentText,
+    required Map<String, Object?> parameters,
+    required Map<String, List<String>> assetIdsByField,
+  }) async {
+    final result = _asMap(await _request(
+      'POST',
+      '/catalog/features/$featureCode/prompt-optimization',
+      body: {
+        'field': field,
+        'currentText': currentText,
+        'parameters': parameters,
+        'assetIdsByField': assetIdsByField,
+      },
+      responseTimeout: const Duration(seconds: 60),
+    ));
+    return _requiredString(result, 'optimizedText');
+  }
+
   Future<List<TaskView>> listTasks() async {
     return _asMapList(await _request('GET', '/tasks'))
         .map(TaskView.fromJson)
@@ -258,6 +279,7 @@ class BackendApi {
     String path, {
     Map<String, String> headers = const {},
     Map<String, Object?>? body,
+    Duration responseTimeout = const Duration(seconds: 30),
   }) async {
     try {
       final request = await _client
@@ -268,7 +290,7 @@ class BackendApi {
       headers.forEach(request.headers.set);
       if (body != null) request.write(jsonEncode(body));
       return _decodeResponse(
-        await request.close().timeout(const Duration(seconds: 30)),
+        await request.close().timeout(responseTimeout),
       );
     } on ApiException {
       rethrow;

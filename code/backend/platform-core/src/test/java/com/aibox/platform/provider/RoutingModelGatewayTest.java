@@ -73,6 +73,47 @@ class RoutingModelGatewayTest {
     }
 
     @Test
+    void recordsPromptOptimizationWithoutATaskRun() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        AtomicReference<ProviderInvocationEntity> invocation = new AtomicReference<>();
+        when(repository.save(any())).thenAnswer(call -> {
+            ProviderInvocationEntity saved = call.getArgument(0);
+            invocation.compareAndSet(null, saved);
+            return saved;
+        });
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.TEXT_GENERATION,
+                "prompt.optimize.default",
+                null
+        )).thenReturn(List.of(target("prompt-model", ModelCapability.TEXT_GENERATION)));
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(new TestProvider()),
+                repository,
+                mock(AssetService.class),
+                routingService,
+                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        gateway.generatePromptOptimization(new TextGenerationRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "prompt.optimize.default",
+                null,
+                "system",
+                "user",
+                500,
+                0.4,
+                Map.of()
+        ));
+
+        assertThat(invocation.get().getInvocationScope())
+                .isEqualTo(ProviderInvocationScope.PROMPT_ASSIST);
+        assertThat(invocation.get().getRunId()).isNull();
+        verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
     void routesStreamingTextAndRecordsOneInvocationLifecycle() {
         ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
         when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
