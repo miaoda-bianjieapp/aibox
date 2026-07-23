@@ -1,17 +1,28 @@
 alter table provider_invocation
-    add column invocation_scope varchar(30) not null default 'TASK_RUN';
+    add column if not exists invocation_scope varchar(30) not null default 'TASK_RUN';
 
 alter table provider_invocation
     alter column run_id drop not null;
 
-alter table provider_invocation
-    add constraint ck_provider_invocation_scope
-    check (
-        (invocation_scope = 'TASK_RUN' and run_id is not null)
-        or (invocation_scope = 'PROMPT_ASSIST' and run_id is null)
-    );
+do $$
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conname = 'ck_provider_invocation_scope'
+          and conrelid = 'provider_invocation'::regclass
+    ) then
+        alter table provider_invocation
+            add constraint ck_provider_invocation_scope
+            check (
+                (invocation_scope = 'TASK_RUN' and run_id is not null)
+                or (invocation_scope = 'PROMPT_ASSIST' and run_id is null)
+            );
+    end if;
+end
+$$;
 
-create index idx_provider_invocation_scope_started
+create index if not exists idx_provider_invocation_scope_started
     on provider_invocation(tenant_id, invocation_scope, started_at desc);
 
 insert into model_route (
@@ -30,7 +41,10 @@ insert into model_route (
     10,
     true,
     now()
-);
+)
+on conflict (model_alias, capability, deployment_code) do update
+set priority = excluded.priority,
+    enabled = excluded.enabled;
 
 insert into feature_version (
     id,
@@ -61,7 +75,8 @@ from feature_definition feature
 join feature_version previous
   on previous.feature_id = feature.id
  and previous.version = 1
-where feature.code = 'image.generate';
+where feature.code = 'image.generate'
+on conflict do nothing;
 
 insert into feature_version (
     id, feature_id, version, input_schema_json, ui_schema_json,
@@ -86,7 +101,8 @@ from feature_definition feature
 join feature_version previous
   on previous.feature_id = feature.id
  and previous.version = 2
-where feature.code = 'image.local_edit';
+where feature.code = 'image.local_edit'
+on conflict do nothing;
 
 insert into feature_version (
     id, feature_id, version, input_schema_json, ui_schema_json,
@@ -111,7 +127,8 @@ from feature_definition feature
 join feature_version previous
   on previous.feature_id = feature.id
  and previous.version = 3
-where feature.code = 'image.background_edit';
+where feature.code = 'image.background_edit'
+on conflict do nothing;
 
 insert into feature_version (
     id, feature_id, version, input_schema_json, ui_schema_json,
@@ -136,7 +153,8 @@ from feature_definition feature
 join feature_version previous
   on previous.feature_id = feature.id
  and previous.version = 1
-where feature.code = 'writing.draft';
+where feature.code = 'writing.draft'
+on conflict do nothing;
 
 insert into feature_version (
     id, feature_id, version, input_schema_json, ui_schema_json,
@@ -161,7 +179,8 @@ from feature_definition feature
 join feature_version previous
   on previous.feature_id = feature.id
  and previous.version = 1
-where feature.code = 'writing.outline_ideas';
+where feature.code = 'writing.outline_ideas'
+on conflict do nothing;
 
 insert into feature_version (
     id, feature_id, version, input_schema_json, ui_schema_json,
@@ -187,7 +206,8 @@ from feature_definition feature
 join feature_version previous
   on previous.feature_id = feature.id
  and previous.version = 2
-where feature.code = 'writing.rewrite_polish';
+where feature.code = 'writing.rewrite_polish'
+on conflict do nothing;
 
 update feature_definition
 set current_version = case code
