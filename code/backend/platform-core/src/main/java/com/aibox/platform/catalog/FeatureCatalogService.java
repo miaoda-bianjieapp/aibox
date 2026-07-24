@@ -99,6 +99,11 @@ public class FeatureCatalogService {
         return feature;
     }
 
+    @Transactional(readOnly = true)
+    public boolean isEnabledWorkspace(String code) {
+        return workspaceRepository.findByCodeAndEnabledTrue(code).isPresent();
+    }
+
     private FeatureSummaryView toSummary(FeatureDefinitionEntity feature) {
         return new FeatureSummaryView(
                 feature.getCode(),
