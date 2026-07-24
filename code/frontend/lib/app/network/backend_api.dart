@@ -209,7 +209,7 @@ class BackendApi {
           await request.close().timeout(const Duration(seconds: 60));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         await response.drain<void>();
-        throw ApiException('图片下载失败 (${response.statusCode})');
+        throw ApiException('文件下载失败 (${response.statusCode})');
       }
       final bytes = BytesBuilder(copy: false);
       await for (final chunk in response) {
@@ -221,7 +221,44 @@ class BackendApi {
     } on SocketException {
       throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个 Wi-Fi');
     } on TimeoutException {
-      throw const ApiException('图片下载超时，请稍后重试');
+      throw const ApiException('文件下载超时，请稍后重试');
+    }
+  }
+
+  Future<File> downloadAssetToTemporaryFile(
+    String assetId, {
+    required String fileName,
+  }) async {
+    Directory? directory;
+    try {
+      directory = await Directory.systemTemp.createTemp('yuanzuo-preview-');
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}'
+        '${_temporaryFileName(fileName)}',
+      );
+      final request = await _client
+          .getUrl(Uri.parse(assetContentUrl(assetId)))
+          .timeout(const Duration(seconds: 10));
+      final response =
+          await request.close().timeout(const Duration(seconds: 60));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await response.drain<void>();
+        throw ApiException('文件下载失败 (${response.statusCode})');
+      }
+      await response.pipe(file.openWrite());
+      return file;
+    } on ApiException {
+      await _deleteTemporaryDirectory(directory);
+      rethrow;
+    } on SocketException {
+      await _deleteTemporaryDirectory(directory);
+      throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个 Wi-Fi');
+    } on TimeoutException {
+      await _deleteTemporaryDirectory(directory);
+      throw const ApiException('文件下载超时，请稍后重试');
+    } on FileSystemException {
+      await _deleteTemporaryDirectory(directory);
+      throw const ApiException('无法创建文件预览缓存');
     }
   }
 
@@ -420,6 +457,26 @@ class BackendApi {
 
   static String _quoted(String value) =>
       value.replaceAll('"', '').replaceAll('\r', '').replaceAll('\n', '');
+
+  static String _temporaryFileName(String value) {
+    final normalized = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll('\r', '')
+        .replaceAll('\n', '')
+        .trim();
+    return normalized.isEmpty ? 'preview-file' : normalized;
+  }
+
+  static Future<void> _deleteTemporaryDirectory(Directory? directory) async {
+    if (directory == null) return;
+    try {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    } on FileSystemException {
+      // Preview cleanup is best effort.
+    }
+  }
 
   static String _serverOrigin() {
     final uri = Uri.parse(ApiConfig.baseUrl);

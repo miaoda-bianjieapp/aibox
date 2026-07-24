@@ -1,8 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:pdfrx/pdfrx.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/feature_models.dart';
@@ -56,7 +57,11 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
                     message: snapshot.error.toString(),
                   );
                 }
-                return _PreviewBody(descriptor: snapshot.requireData);
+                return _PreviewBody(
+                  descriptor: snapshot.requireData,
+                  api: widget.api,
+                  asset: widget.asset,
+                );
               },
             )
           : const _PreviewMessage(
@@ -69,9 +74,15 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
 }
 
 class _PreviewBody extends StatelessWidget {
-  const _PreviewBody({required this.descriptor});
+  const _PreviewBody({
+    required this.descriptor,
+    required this.api,
+    required this.asset,
+  });
 
   final AssetPreviewDescriptor descriptor;
+  final BackendApi api;
+  final AssetView asset;
 
   @override
   Widget build(BuildContext context) {
@@ -80,7 +91,7 @@ class _PreviewBody extends StatelessWidget {
       'IMAGE' when url != null => _ImagePreview(url: url),
       'VIDEO' when url != null => _VideoPreview(url: url),
       'AUDIO' when url != null => _AudioPreview(url: url),
-      'PDF' when url != null => PdfViewer.uri(Uri.parse(url)),
+      'PDF' when url != null => _PdfPreview(api: api, asset: asset),
       'TEXT' => _TextPreview(
           text: descriptor.text ?? '',
           truncated: descriptor.truncated,
@@ -91,6 +102,97 @@ class _PreviewBody extends StatelessWidget {
           message: '文件内容暂时无法读取。',
         ),
     };
+  }
+}
+
+class _PdfPreview extends StatefulWidget {
+  const _PdfPreview({required this.api, required this.asset});
+
+  final BackendApi api;
+  final AssetView asset;
+
+  @override
+  State<_PdfPreview> createState() => _PdfPreviewState();
+}
+
+class _PdfPreviewState extends State<_PdfPreview> {
+  late final Future<File> _fileFuture;
+  File? _file;
+  String? _viewerError;
+
+  @override
+  void initState() {
+    super.initState();
+    _fileFuture = widget.api
+        .downloadAssetToTemporaryFile(
+      widget.asset.id,
+      fileName: widget.asset.name,
+    )
+        .then((file) {
+      _file = file;
+      if (!mounted) unawaited(_deletePreviewFile(file));
+      return file;
+    });
+  }
+
+  @override
+  void dispose() {
+    final file = _file;
+    if (file != null) unawaited(_deletePreviewFile(file));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<File>(
+      future: _fileFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return _PreviewMessage(
+            icon: Icons.picture_as_pdf_outlined,
+            title: 'PDF 加载失败',
+            message: snapshot.error.toString(),
+          );
+        }
+        if (_viewerError != null) {
+          return _PreviewMessage(
+            icon: Icons.picture_as_pdf_outlined,
+            title: 'PDF 无法打开',
+            message: _viewerError!,
+          );
+        }
+        return PDFView(
+          filePath: snapshot.requireData.path,
+          enableSwipe: true,
+          swipeHorizontal: false,
+          autoSpacing: true,
+          pageFling: true,
+          onError: (error) {
+            if (mounted) setState(() => _viewerError = '$error');
+          },
+          onPageError: (page, error) {
+            if (mounted) {
+              final pageLabel = page == null ? 'PDF 页面' : '第 ${page + 1} 页';
+              setState(() => _viewerError = '$pageLabel 加载失败：$error');
+            }
+          },
+        );
+      },
+    );
+  }
+}
+
+Future<void> _deletePreviewFile(File file) async {
+  try {
+    final directory = file.parent;
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+  } on FileSystemException {
+    // Preview cleanup is best effort.
   }
 }
 
@@ -291,8 +393,7 @@ class _AudioPreviewState extends State<_AudioPreview> {
                         builder: (context, stateSnapshot) {
                           final playing = stateSnapshot.data?.playing == true;
                           return IconButton(
-                            onPressed:
-                                playing ? _player.pause : _player.play,
+                            onPressed: playing ? _player.pause : _player.play,
                             tooltip: playing ? '暂停' : '播放',
                             iconSize: 38,
                             color: AppColors.accent,
