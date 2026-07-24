@@ -184,7 +184,7 @@ public class TaskApplicationService {
                 resolvedModels,
                 now
         );
-        runRepository.save(run);
+        runRepository.saveAndFlush(run);
         assetService.recordRunInputs(
                 run.getId(),
                 normalizedAssetIds,
