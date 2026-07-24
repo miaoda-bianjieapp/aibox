@@ -7,6 +7,7 @@ import com.aibox.platform.catalog.FeatureDefinitionEntity;
 import com.aibox.platform.common.ConflictException;
 import com.aibox.platform.common.JsonCodec;
 import com.aibox.platform.common.NotFoundException;
+import com.aibox.platform.common.PlatformException;
 import com.aibox.platform.execution.IdempotencyService;
 import com.aibox.platform.execution.JobEntity;
 import com.aibox.platform.execution.JobRepository;
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +35,7 @@ public class TaskApplicationService {
 
     private final TaskRepository taskRepository;
     private final TaskRunRepository runRepository;
+    private final TaskPromptSummaryService promptSummaryService;
     private final JobRepository jobRepository;
     private final FeatureCatalogService catalogService;
     private final ProjectService projectService;
@@ -48,6 +51,7 @@ public class TaskApplicationService {
     public TaskApplicationService(
             TaskRepository taskRepository,
             TaskRunRepository runRepository,
+            TaskPromptSummaryService promptSummaryService,
             JobRepository jobRepository,
             FeatureCatalogService catalogService,
             ProjectService projectService,
@@ -62,6 +66,7 @@ public class TaskApplicationService {
     ) {
         this.taskRepository = taskRepository;
         this.runRepository = runRepository;
+        this.promptSummaryService = promptSummaryService;
         this.jobRepository = jobRepository;
         this.catalogService = catalogService;
         this.projectService = projectService;
@@ -99,11 +104,63 @@ public class TaskApplicationService {
 
     @Transactional(readOnly = true)
     public List<TaskView> listTasks() {
+        return listTasks(null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TaskView> listTasks(String workspaceCode) {
+        return listTasks(workspaceCode, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TaskView> listTasks(String workspaceCode, String keyword) {
         ActorContext actor = actorContextProvider.current();
-        return taskRepository
-                .findByTenantIdAndUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(actor.tenantId(), actor.userId())
-                .stream()
-                .map(this::toTaskView)
+        String normalizedWorkspaceCode = workspaceCode == null ? "" : workspaceCode.trim();
+        String normalizedKeyword = keyword == null ? "" : keyword.trim();
+        if (normalizedWorkspaceCode.length() > 80
+                || (!normalizedWorkspaceCode.isEmpty()
+                && !catalogService.isEnabledWorkspace(normalizedWorkspaceCode))) {
+            throw new PlatformException(
+                    "INVALID_WORKSPACE_FILTER",
+                    "Workspace filter is invalid"
+            );
+        }
+        if (normalizedKeyword.length() > 240) {
+            throw new PlatformException(
+                    "INVALID_TASK_SEARCH",
+                    "Task search keyword is invalid"
+            );
+        }
+        List<TaskEntity> tasks;
+        if (normalizedWorkspaceCode.isEmpty() && normalizedKeyword.isEmpty()) {
+            tasks = taskRepository.findByTenantIdAndUserIdAndDeletedAtIsNullOrderByUpdatedAtDesc(
+                    actor.tenantId(), actor.userId()
+            );
+        } else if (normalizedWorkspaceCode.isEmpty()) {
+            tasks = taskRepository.findOwnedByTitleOrPromptKeyword(
+                    actor.tenantId(), actor.userId(), normalizedKeyword
+            );
+        } else if (normalizedKeyword.isEmpty()) {
+            tasks = taskRepository.findOwnedByWorkspace(
+                    actor.tenantId(), actor.userId(), normalizedWorkspaceCode
+            );
+        } else {
+            tasks = taskRepository.findOwnedByWorkspaceAndTitleOrPromptKeyword(
+                    actor.tenantId(),
+                    actor.userId(),
+                    normalizedWorkspaceCode,
+                    normalizedKeyword
+            );
+        }
+        Map<UUID, Map<String, Object>> firstRunParameters = firstRunParameters(tasks, actor);
+        return tasks.stream()
+                .map(task -> toTaskView(
+                        task,
+                        promptSummaryService.snippet(
+                                task.getFeatureCode(),
+                                firstRunParameters.get(task.getId())
+                        )
+                ))
                 .toList();
     }
 
@@ -111,12 +168,24 @@ public class TaskApplicationService {
     public TaskDetailView getTask(UUID taskId) {
         TaskEntity task = requireOwnedTask(taskId);
         ActorContext actor = actorContextProvider.current();
-        List<RunView> runs = runRepository
-                .findByTaskIdAndTenantIdAndUserIdOrderByRunNumberDesc(taskId, actor.tenantId(), actor.userId())
-                .stream()
+        List<TaskRunEntity> runEntities = runRepository
+                .findByTaskIdAndTenantIdAndUserIdOrderByRunNumberDesc(
+                        taskId, actor.tenantId(), actor.userId()
+                );
+        List<RunView> runs = runEntities.stream()
                 .map(this::toRunView)
                 .toList();
-        return new TaskDetailView(toTaskView(task), runs, artifactService.listByTask(taskId));
+        Map<String, Object> firstParameters = runEntities.isEmpty()
+                ? Map.of()
+                : runEntities.get(runEntities.size() - 1).getParameters();
+        return new TaskDetailView(
+                toTaskView(
+                        task,
+                        promptSummaryService.snippet(task.getFeatureCode(), firstParameters)
+                ),
+                runs,
+                artifactService.listByTask(taskId)
+        );
     }
 
     @Transactional
@@ -245,11 +314,16 @@ public class TaskApplicationService {
     }
 
     private TaskView toTaskView(TaskEntity task) {
+        return toTaskView(task, null);
+    }
+
+    private TaskView toTaskView(TaskEntity task, String promptSnippet) {
         return new TaskView(
                 task.getId(),
                 task.getProjectId(),
                 task.getFeatureCode(),
                 task.getTitle(),
+                promptSnippet,
                 task.getStatus(),
                 task.getCurrentArtifactId(),
                 task.getCreatedAt(),
@@ -284,6 +358,7 @@ public class TaskApplicationService {
             UUID projectId,
             String featureCode,
             String title,
+            String promptSnippet,
             TaskStatus status,
             UUID currentArtifactId,
             Instant createdAt,
@@ -344,5 +419,24 @@ public class TaskApplicationService {
             String idempotencyKey
     ) {
         return createRun(taskId, parameters, inputAssetIds, baseArtifactId, Map.of(), null, idempotencyKey);
+    }
+
+    private Map<UUID, Map<String, Object>> firstRunParameters(
+            List<TaskEntity> tasks,
+            ActorContext actor
+    ) {
+        if (tasks.isEmpty()) {
+            return Map.of();
+        }
+        List<TaskRunEntity> firstRuns = runRepository.findFirstRunsByTaskIds(
+                tasks.stream().map(TaskEntity::getId).toList(),
+                actor.tenantId(),
+                actor.userId()
+        );
+        Map<UUID, Map<String, Object>> parametersByTask = new HashMap<>();
+        for (TaskRunEntity run : firstRuns) {
+            parametersByTask.put(run.getTaskId(), run.getParameters());
+        }
+        return Map.copyOf(parametersByTask);
     }
 }
