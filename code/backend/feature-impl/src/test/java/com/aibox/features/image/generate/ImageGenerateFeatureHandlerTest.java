@@ -49,6 +49,39 @@ class ImageGenerateFeatureHandlerTest {
     }
 
     @Test
+    void acceptsReferenceImageUpToTwentyMegabytesAndRejectsLargerFiles() {
+        UUID assetId = UUID.randomUUID();
+        Map<String, Object> parameters = Map.of(
+                "prompt", "涓€鍙尗",
+                "aspectRatio", "1:1"
+        );
+
+        handler.validate(context(
+                parameters,
+                List.of(assetId),
+                List.of(new InputAssetReference(
+                        assetId,
+                        "reference.png",
+                        "image/png",
+                        20L * 1024L * 1024L
+                )),
+                null
+        ));
+
+        assertThrows(FeatureValidationException.class, () -> handler.validate(context(
+                parameters,
+                List.of(assetId),
+                List.of(new InputAssetReference(
+                        assetId,
+                        "reference.png",
+                        "image/png",
+                        20L * 1024L * 1024L + 1
+                )),
+                null
+        )));
+    }
+
+    @Test
     void sendsUserAndPreviousImagesAndReturnsOneAssetDraft() {
         UUID userAssetId = UUID.randomUUID();
         UUID previousAssetId = UUID.randomUUID();

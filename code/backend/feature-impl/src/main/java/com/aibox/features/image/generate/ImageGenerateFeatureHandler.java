@@ -30,7 +30,7 @@ public final class ImageGenerateFeatureHandler implements FeatureHandler {
     static final String MODEL_ALIAS = "image.generation.default";
     static final int MAX_PROMPT_LENGTH = 500;
     static final int MAX_REFERENCE_IMAGES = 3;
-    static final long MAX_REFERENCE_IMAGE_BYTES = 10L * 1024L * 1024L;
+    static final long MAX_REFERENCE_IMAGE_BYTES = 20L * 1024L * 1024L;
     static final long MAX_REFERENCE_IMAGES_TOTAL_BYTES = 30L * 1024L * 1024L;
 
     private static final Set<String> ASPECT_RATIOS = Set.of("1:1", "16:9", "9:16");
@@ -126,7 +126,7 @@ public final class ImageGenerateFeatureHandler implements FeatureHandler {
                 );
             }
             if (asset.sizeBytes() <= 0 || asset.sizeBytes() > MAX_REFERENCE_IMAGE_BYTES) {
-                throw new FeatureValidationException("referenceImages", "单张参考图片不能超过 10 MB");
+                throw new FeatureValidationException("referenceImages", "单张参考图片不能超过 20 MB");
             }
             totalBytes += asset.sizeBytes();
         }

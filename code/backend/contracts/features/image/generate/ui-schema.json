@@ -17,7 +17,7 @@
       "acceptedMimeTypes": ["image/png", "image/jpeg", "image/webp"],
       "allowedExtensions": [".png", ".jpg", ".jpeg", ".webp"],
       "maxItems": 3,
-      "maxFileSizeBytes": 10485760,
+      "maxFileSizeBytes": 20971520,
       "maxTotalSizeBytes": 31457280,
       "showPreview": true
     }
