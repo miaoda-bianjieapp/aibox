@@ -307,6 +307,7 @@ class TaskView {
     required this.projectId,
     required this.featureCode,
     required this.title,
+    this.promptSnippet,
     required this.status,
     required this.currentArtifactId,
     required this.createdAt,
@@ -318,6 +319,7 @@ class TaskView {
         projectId: json['projectId']?.toString(),
         featureCode: _string(json, 'featureCode'),
         title: _string(json, 'title'),
+        promptSnippet: json['promptSnippet']?.toString(),
         status: _string(json, 'status'),
         currentArtifactId: json['currentArtifactId']?.toString(),
         createdAt: _date(json['createdAt']),
@@ -328,6 +330,7 @@ class TaskView {
   final String? projectId;
   final String featureCode;
   final String title;
+  final String? promptSnippet;
   final String status;
   final String? currentArtifactId;
   final DateTime createdAt;

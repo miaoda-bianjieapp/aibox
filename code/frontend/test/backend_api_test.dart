@@ -18,4 +18,16 @@ void main() {
       '模型服务处理超时，请重试；如持续失败，请切换其他模型',
     );
   });
+
+  test('task list path omits an empty workspace filter', () {
+    expect(BackendApi.taskListPath(null, null), '/tasks');
+    expect(BackendApi.taskListPath('  ', '  '), '/tasks');
+  });
+
+  test('task list path encodes workspace and search filters', () {
+    expect(
+      BackendApi.taskListPath(' image design ', ' 扩图 '),
+      '/tasks?workspaceCode=image+design&keyword=%E6%89%A9%E5%9B%BE',
+    );
+  });
 }
