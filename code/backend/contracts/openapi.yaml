@@ -125,9 +125,30 @@ paths:
   /tasks:
     get:
       operationId: listTasks
+      parameters:
+        - name: workspaceCode
+          in: query
+          required: false
+          description: 按功能所属工作区筛选任务；不传时返回全部任务
+          schema:
+            type: string
+            maxLength: 80
+        - name: keyword
+          in: query
+          required: false
+          description: 同时按任务标题和首次执行中的自然语言输入进行不区分大小写的包含搜索
+          schema:
+            type: string
+            maxLength: 240
       responses:
         "200":
           description: 当前用户任务列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskView"
     post:
       operationId: createTask
       requestBody:
@@ -139,6 +160,10 @@ paths:
       responses:
         "201":
           description: 任务已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskView"
   /tasks/{taskId}:
     get:
       operationId: getTask
@@ -318,6 +343,23 @@ components:
               items:
                 $ref: "#/components/schemas/ModelPolicy"
               description: 按能力划分的全部模型选择策略
+    TaskView:
+      type: object
+      required: [id, featureCode, title, status, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        projectId: {type: [string, "null"], format: uuid}
+        featureCode: {type: string}
+        title: {type: string}
+        promptSnippet:
+          type: [string, "null"]
+          description: 首次执行中的自然语言输入摘要；无自然语言输入时为空
+        status:
+          type: string
+          enum: [ACTIVE, COMPLETED, ARCHIVED]
+        currentArtifactId: {type: [string, "null"], format: uuid}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
     ModelPolicy:
       type: object
       required: [capability, defaultModelCode, allowUserSelection, options]

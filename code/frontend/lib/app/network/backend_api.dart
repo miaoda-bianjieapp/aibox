@@ -62,10 +62,27 @@ class BackendApi {
     return _requiredString(result, 'optimizedText');
   }
 
-  Future<List<TaskView>> listTasks() async {
-    return _asMapList(await _request('GET', '/tasks'))
-        .map(TaskView.fromJson)
-        .toList();
+  Future<List<TaskView>> listTasks({
+    String? workspaceCode,
+    String? keyword,
+  }) async {
+    return _asMapList(
+      await _request('GET', taskListPath(workspaceCode, keyword)),
+    ).map(TaskView.fromJson).toList();
+  }
+
+  static String taskListPath(String? workspaceCode, String? keyword) {
+    final parameters = <String, String>{};
+    final normalizedWorkspace = workspaceCode?.trim() ?? '';
+    final normalizedKeyword = keyword?.trim() ?? '';
+    if (normalizedWorkspace.isNotEmpty) {
+      parameters['workspaceCode'] = normalizedWorkspace;
+    }
+    if (normalizedKeyword.isNotEmpty) {
+      parameters['keyword'] = normalizedKeyword;
+    }
+    if (parameters.isEmpty) return '/tasks';
+    return Uri(path: '/tasks', queryParameters: parameters).toString();
   }
 
   Future<TaskDetail> getTask(String taskId) async {
