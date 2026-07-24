@@ -170,11 +170,16 @@ class _ArtifactRow extends StatelessWidget {
   final ArtifactView artifact;
   final VoidCallback onTap;
   @override
-  Widget build(BuildContext context) => ListTile(
+  Widget build(BuildContext context) {
+    final deleted = artifact.assets.isNotEmpty &&
+        artifact.assets.every((asset) => !asset.available);
+    return ListTile(
         contentPadding: EdgeInsets.zero,
         onTap: onTap,
-        leading:
-            const Icon(Icons.description_outlined, color: AppColors.accent),
+        leading: Icon(
+          deleted ? Icons.delete_outline_rounded : Icons.description_outlined,
+          color: deleted ? AppColors.muted : AppColors.accent,
+        ),
         title:
             Text(artifact.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
@@ -182,6 +187,7 @@ class _ArtifactRow extends StatelessWidget {
         trailing:
             const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
       );
+  }
 }
 
 class _RunRow extends StatelessWidget {
@@ -193,6 +199,8 @@ class _RunRow extends StatelessWidget {
     final errorMessage = run.status == 'FAILED'
         ? BackendApi.runFailureMessage(run.errorCode, run.errorMessage)
         : null;
+    final deletedInputs =
+        run.inputAssets.where((asset) => !asset.available).length;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: const BoxDecoration(
@@ -209,6 +217,16 @@ class _RunRow extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ],
+            if (deletedInputs > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                '$deletedInputs 个原文件已删除，重试或继续修改时请重新上传',
+                style: const TextStyle(
+                  color: AppColors.danger,
+                  fontSize: 12,
+                ),
               ),
             ],
           ]),

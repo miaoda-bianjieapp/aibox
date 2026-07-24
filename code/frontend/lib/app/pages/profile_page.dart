@@ -105,7 +105,7 @@ class ProfilePage extends StatelessWidget {
                     const Icon(Icons.storage_outlined,
                         color: AppColors.muted, size: 20),
                     const SizedBox(width: 12),
-                    const Expanded(child: Text('本地附件占用')),
+                    const Expanded(child: Text('附件存储占用')),
                     Text(_formatBytes(account?.assetBytes ?? 0),
                         style: const TextStyle(color: AppColors.muted)),
                   ]),

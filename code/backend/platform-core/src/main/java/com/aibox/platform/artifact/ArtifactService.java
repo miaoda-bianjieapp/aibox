@@ -144,6 +144,12 @@ public class ArtifactService {
     }
 
     private ArtifactView toView(ArtifactEntity artifact) {
+        List<UUID> assetIds = jdbcTemplate.query("""
+                select asset_id
+                from artifact_asset
+                where artifact_id = ?
+                order by created_at, role
+                """, (resultSet, rowNumber) -> resultSet.getObject(1, UUID.class), artifact.getId());
         return new ArtifactView(
                 artifact.getId(),
                 artifact.getTaskId(),
@@ -155,6 +161,7 @@ public class ArtifactService {
                 artifact.getMimeType(),
                 artifact.getContent(),
                 artifact.getMetadata(),
+                assetService.describeIncludingDeleted(assetIds),
                 artifact.getCreatedAt()
         );
     }
@@ -194,6 +201,7 @@ public class ArtifactService {
             String mimeType,
             Map<String, Object> content,
             Map<String, Object> metadata,
+            List<AssetService.AssetView> assets,
             Instant createdAt
     ) {
     }

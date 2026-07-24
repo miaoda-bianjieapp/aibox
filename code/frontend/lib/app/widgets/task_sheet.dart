@@ -149,6 +149,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, Object?> _values = {};
   final Map<String, List<AssetView>> _assetsByField = {};
+  final Set<String> _temporaryDerivedAssetIds = {};
   final PromptOptimizationUndoStore _promptUndoStore =
       PromptOptimizationUndoStore();
   final Map<String, String> _promptAssistErrors = {};
@@ -159,6 +160,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   String? _optimizingPromptField;
   bool _submitting = false;
   bool _initialized = false;
+  bool _derivedAssetsHandedOff = false;
 
   @override
   void initState() {
@@ -171,6 +173,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
 
   @override
   void dispose() {
+    if (!_derivedAssetsHandedOff) {
+      for (final assetId in _temporaryDerivedAssetIds) {
+        unawaited(widget.data.api.deleteAsset(assetId).catchError((_) {}));
+      }
+    }
     _nameController.dispose();
     for (final controller in _controllers.values) {
       controller.dispose();
@@ -805,14 +812,20 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       });
       final previous =
           List<AssetView>.from(_assetsByField[field] ?? const <AssetView>[]);
-      final mask = await widget.data.api.uploadAsset(PickedLocalFile(
-        name: 'local-edit-mask-${DateTime.now().millisecondsSinceEpoch}.png',
-        mediaType: 'image/png',
-        bytes: bytes,
-      ));
+      final mask = await widget.data.api.uploadAsset(
+          PickedLocalFile(
+            name:
+                'local-edit-mask-${DateTime.now().millisecondsSinceEpoch}.png',
+            mediaType: 'image/png',
+            bytes: bytes,
+            sizeBytes: bytes.length,
+          ),
+          origin: 'APP_DERIVED');
+      _temporaryDerivedAssetIds.add(mask.id);
       for (final asset in previous) {
         try {
           await widget.data.api.deleteAsset(asset.id);
+          _temporaryDerivedAssetIds.remove(asset.id);
         } catch (_) {
           // Referenced historical masks remain in the asset library.
         }
@@ -864,11 +877,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           staleMasks.addAll(_clearDependentMaskFields(feature, field));
         });
         for (final stale in staleMasks) {
-          try {
-            await widget.data.api.deleteAsset(stale.id);
-          } catch (_) {
-            // A mask already referenced by history cannot be removed.
-          }
+          await _deleteTemporaryDerivedAsset(stale);
         }
       }
     } catch (exception) {
@@ -881,10 +890,12 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     String field,
     AssetView asset,
   ) {
+    final removed = <AssetView>[asset];
     setState(() {
       _assetsByField[field]?.remove(asset);
-      _clearDependentMaskFields(feature, field);
+      removed.addAll(_clearDependentMaskFields(feature, field));
     });
+    unawaited(_deleteTemporaryDerivedAssets(removed));
   }
 
   List<AssetView> _clearDependentMaskFields(
@@ -901,6 +912,24 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _assetsByField[field] = [];
     }
     return removed;
+  }
+
+  Future<void> _deleteTemporaryDerivedAssets(
+    Iterable<AssetView> assets,
+  ) async {
+    for (final asset in assets) {
+      await _deleteTemporaryDerivedAsset(asset);
+    }
+  }
+
+  Future<void> _deleteTemporaryDerivedAsset(AssetView asset) async {
+    if (!_temporaryDerivedAssetIds.contains(asset.id)) return;
+    try {
+      await widget.data.api.deleteAsset(asset.id);
+      _temporaryDerivedAssetIds.remove(asset.id);
+    } catch (_) {
+      // The backend also clears submitted and expired temporary assets.
+    }
   }
 
   Future<void> _optimizePrompt(FeatureDetail feature, String field) async {
@@ -1073,7 +1102,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         parameters: parameters,
         inputAssetIds: inputAssetIds,
         onStatus: executionController.updateStatus,
-        onRunCreated: executionController.attachRun,
+        onRunCreated: (runId) {
+          _derivedAssetsHandedOff = true;
+          _temporaryDerivedAssetIds.clear();
+          executionController.attachRun(runId);
+        },
         onOutput: executionController.updateOutput,
       );
       executionController.complete(result);
@@ -1089,6 +1122,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         if (exception.code == 'RUN_CANCELLED') {
           executionController.markCancelled();
           setState(() {
+            _clearHandedOffDerivedFields(feature);
             _submitting = false;
             _status = null;
             _error = null;
@@ -1097,6 +1131,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         }
         executionController.fail(exception.message);
         setState(() {
+          _clearHandedOffDerivedFields(feature);
           _submitting = false;
           _status = null;
           _error = exception.message;
@@ -1106,12 +1141,23 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       if (mounted) {
         executionController.fail('$exception');
         setState(() {
+          _clearHandedOffDerivedFields(feature);
           _submitting = false;
           _status = null;
           _error = '$exception';
         });
       }
     }
+  }
+
+  void _clearHandedOffDerivedFields(FeatureDetail feature) {
+    if (!_derivedAssetsHandedOff) return;
+    for (final field in feature.fieldOrder) {
+      if (feature.widgetFor(field) == 'image_mask') {
+        _assetsByField[field] = [];
+      }
+    }
+    _derivedAssetsHandedOff = false;
   }
 
   Widget _buildActions(FeatureDetail feature) {
@@ -1164,6 +1210,14 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   }
 
   void _resetParameters(FeatureDetail feature) {
+    final removedDerivedAssets = <AssetView>[];
+    for (final field in feature.fieldOrder) {
+      if (feature.widgetFor(field) == 'image_mask') {
+        removedDerivedAssets.addAll(
+          _assetsByField[field] ?? const <AssetView>[],
+        );
+      }
+    }
     setState(() {
       _assetsByField.clear();
       _promptUndoStore.clear();
@@ -1187,6 +1241,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _status = null;
       _error = null;
     });
+    unawaited(_deleteTemporaryDerivedAssets(removedDerivedAssets));
   }
 
   static bool _isAssetField(Map<String, dynamic> schema, String widgetType) {

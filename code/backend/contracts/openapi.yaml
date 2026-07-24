@@ -100,6 +100,52 @@ paths:
       responses:
         "200":
           description: 附件已保存
+  /assets/library:
+    get:
+      operationId: listAssetLibrary
+      parameters:
+        - name: libraryType
+          in: query
+          schema: {type: string, enum: [USER_FILE, MODEL_ASSET], default: USER_FILE}
+        - name: category
+          in: query
+          schema: {type: string, enum: [ALL, IMAGE, VIDEO, AUDIO, DOCUMENT, OTHER], default: ALL}
+        - name: query
+          in: query
+          schema: {type: string, maxLength: 100}
+        - name: cursor
+          in: query
+          schema: {type: string}
+        - name: pageSize
+          in: query
+          schema: {type: integer, minimum: 10, maximum: 50, default: 20}
+      responses:
+        "200":
+          description: Paginated user files or generated assets
+  /assets/delete-impact:
+    post:
+      operationId: getAssetDeleteImpact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetSelection"
+      responses:
+        "200":
+          description: File count, bytes and affected task history
+  /assets/batch-delete:
+    post:
+      operationId: batchDeleteAssets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetSelection"
+      responses:
+        "200":
+          description: Files are deleted while task and artifact metadata remain
   /assets/{assetId}/content:
     get:
       operationId: getAssetContent
@@ -111,6 +157,19 @@ paths:
       responses:
         "200":
           description: 附件二进制内容
+        "206":
+          description: 支持视频、音频拖动播放的分段二进制内容
+  /assets/{assetId}/preview:
+    get:
+      operationId: getAssetPreview
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: In-app preview descriptor or extracted document text
   /assets/{assetId}:
     delete:
       operationId: deleteAsset
@@ -274,6 +333,16 @@ components:
           schema:
             $ref: "#/components/schemas/ApiError"
   schemas:
+    AssetSelection:
+      type: object
+      required: [assetIds]
+      properties:
+        assetIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: {type: string, format: uuid}
     Workspace:
       type: object
       required: [code, displayName, description, iconKey, groups, searchTerms, features]

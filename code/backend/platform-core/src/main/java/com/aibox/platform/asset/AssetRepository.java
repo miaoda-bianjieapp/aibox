@@ -13,7 +13,11 @@ public interface AssetRepository extends JpaRepository<AssetEntity, UUID> {
 
     Optional<AssetEntity> findByIdAndTenantIdAndUserIdAndDeletedAtIsNull(UUID id, UUID tenantId, UUID userId);
 
+    Optional<AssetEntity> findByIdAndTenantIdAndUserId(UUID id, UUID tenantId, UUID userId);
+
     long countByTenantIdAndUserIdAndDeletedAtIsNull(UUID tenantId, UUID userId);
+
+    long countByBlobIdAndDeletedAtIsNull(UUID blobId);
 
     @Query("select coalesce(sum(asset.sizeBytes), 0) from AssetEntity asset "
             + "where asset.tenantId = :tenantId and asset.userId = :userId and asset.deletedAt is null")

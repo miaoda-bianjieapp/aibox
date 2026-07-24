@@ -8,6 +8,7 @@ import '../network/backend_api.dart';
 import '../network/native_file_picker.dart';
 import '../theme/app_theme.dart';
 import '../widgets/markdown_output_view.dart';
+import 'asset_preview_page.dart';
 
 class ArtifactResultPage extends StatelessWidget {
   const ArtifactResultPage({
@@ -28,7 +29,7 @@ class ArtifactResultPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('任务成果'),
         actions: [
-          if (_assetIds(artifact).isNotEmpty)
+          if (artifact.assets.any((asset) => asset.available && asset.isImage))
             IconButton(
               onPressed: () => _downloadImages(context),
               tooltip: '下载图片',
@@ -77,7 +78,10 @@ class ArtifactResultPage extends StatelessWidget {
   }
 
   Future<void> _downloadImages(BuildContext context) async {
-    final assetIds = _assetIds(artifact);
+    final assetIds = artifact.assets
+        .where((asset) => asset.available && asset.isImage)
+        .map((asset) => asset.id)
+        .toList();
     try {
       for (var index = 0; index < assetIds.length; index++) {
         final assetId = assetIds[index];
@@ -108,19 +112,6 @@ class ArtifactResultPage extends StatelessWidget {
   }
 }
 
-List<String> _assetIds(ArtifactView artifact) {
-  final single = artifact.content['assetId']?.toString();
-  if (single != null && single.isNotEmpty) return [single];
-  final multiple = artifact.content['assetIds'];
-  if (multiple is List) {
-    return multiple
-        .map((item) => item.toString())
-        .where((item) => item.isNotEmpty)
-        .toList();
-  }
-  return const [];
-}
-
 String _safeFileName(String value) => value
     .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
     .trim()
@@ -135,6 +126,10 @@ class _ArtifactBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = artifact.content['text']?.toString() ?? '';
     final format = artifact.content['format']?.toString();
+    if (artifact.assets.isNotEmpty &&
+        artifact.assets.every((asset) => !asset.available)) {
+      return const _DeletedAssetResult();
+    }
     if (artifact.mimeType == 'text/plain' || format == 'plain_text') {
       return SelectableText(
         text,
@@ -148,25 +143,28 @@ class _ArtifactBody extends StatelessWidget {
       return _TranscriptRenderer(content: artifact.content);
     }
     if (artifact.kind == 'image' || artifact.mimeType.startsWith('image/')) {
-      return _ImageRenderer(content: artifact.content);
+      return _ImageRenderer(content: artifact.content, assets: artifact.assets);
     }
     if (artifact.kind == 'audio' || artifact.mimeType.startsWith('audio/')) {
       return _MediaRenderer(
           icon: Icons.graphic_eq_rounded,
           label: '音频成果',
-          content: artifact.content);
+          content: artifact.content,
+          asset: artifact.assets.firstOrNull);
     }
     if (artifact.kind == 'video' || artifact.mimeType.startsWith('video/')) {
       return _MediaRenderer(
           icon: Icons.play_circle_outline_rounded,
           label: '视频成果',
-          content: artifact.content);
+          content: artifact.content,
+          asset: artifact.assets.firstOrNull);
     }
     if (artifact.kind == 'file' || artifact.content['assetId'] != null) {
       return _MediaRenderer(
           icon: Icons.insert_drive_file_outlined,
           label: '文件成果',
-          content: artifact.content);
+          content: artifact.content,
+          asset: artifact.assets.firstOrNull);
     }
     return SelectableText(
       const JsonEncoder.withIndent('  ').convert(artifact.content),
@@ -204,18 +202,28 @@ class _TranscriptRenderer extends StatelessWidget {
 }
 
 class _ImageRenderer extends StatelessWidget {
-  const _ImageRenderer({required this.content});
+  const _ImageRenderer({required this.content, required this.assets});
   final Map<String, dynamic> content;
+  final List<AssetView> assets;
   @override
   Widget build(BuildContext context) {
     final assetId = content['assetId']?.toString();
     final assetIds = content['assetIds'];
     final url = content['url']?.toString();
     final base64Data = content['base64']?.toString();
+    final availableIds = assets
+        .where((asset) => asset.available)
+        .map((asset) => asset.id)
+        .toSet();
     Widget image;
     if (assetIds is List && assetIds.isNotEmpty) {
+      final visibleIds = assetIds
+          .map((id) => id.toString())
+          .where((id) => assets.isEmpty || availableIds.contains(id))
+          .toList();
+      if (visibleIds.isEmpty) return const _DeletedAssetResult();
       return Column(
-        children: assetIds
+        children: visibleIds
             .map((id) => Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _PreviewableImage(
@@ -227,6 +235,9 @@ class _ImageRenderer extends StatelessWidget {
             .toList(),
       );
     } else if (assetId != null && assetId.isNotEmpty) {
+      if (assets.isNotEmpty && !availableIds.contains(assetId)) {
+        return const _DeletedAssetResult();
+      }
       image = _networkImage(BackendApi.instance.assetContentUrl(assetId));
     } else if (url != null && url.isNotEmpty) {
       image = _networkImage(url);
@@ -367,12 +378,19 @@ class _CheckerboardPainter extends CustomPainter {
 
 class _MediaRenderer extends StatelessWidget {
   const _MediaRenderer(
-      {required this.icon, required this.label, required this.content});
+      {required this.icon,
+      required this.label,
+      required this.content,
+      this.asset});
   final IconData icon;
   final String label;
   final Map<String, dynamic> content;
+  final AssetView? asset;
+
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) {
+    if (asset?.available == false) return const _DeletedAssetResult();
+    return Container(
         padding: const EdgeInsets.symmetric(vertical: 18),
         decoration: const BoxDecoration(
           border:
@@ -391,9 +409,57 @@ class _MediaRenderer extends StatelessWidget {
                     style:
                         const TextStyle(color: AppColors.muted, fontSize: 12)),
               ],
+              if (asset != null) ...[
+                const SizedBox(height: 8),
+                TextButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => AssetPreviewPage(
+                        api: BackendApi.instance,
+                        asset: asset!,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: const Text('打开预览'),
+                ),
+              ],
             ]),
           ),
         ]),
+      );
+  }
+}
+
+class _DeletedAssetResult extends StatelessWidget {
+  const _DeletedAssetResult();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 26),
+        decoration: const BoxDecoration(
+          border: Border.symmetric(
+            horizontal: BorderSide(color: AppColors.line),
+          ),
+        ),
+        child: const Column(
+          children: [
+            Icon(Icons.delete_outline_rounded,
+                color: AppColors.muted, size: 34),
+            SizedBox(height: 10),
+            Text(
+              '原成果已删除',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            SizedBox(height: 5),
+            Text(
+              '任务记录、提示词和文件信息仍然保留。继续修改时可以重新上传文件。',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.muted, fontSize: 12),
+            ),
+          ],
+        ),
       );
 }
 

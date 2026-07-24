@@ -185,6 +185,12 @@ public class TaskApplicationService {
                 now
         );
         runRepository.save(run);
+        assetService.recordRunInputs(
+                run.getId(),
+                normalizedAssetIds,
+                normalizedParameters,
+                now
+        );
         jobRepository.save(new JobEntity(UUID.randomUUID(), actor.tenantId(), run.getId(), now));
         task.touch(now);
         outboxService.append("TASK_RUN", run.getId(), "TASK_RUN_QUEUED", Map.of("taskId", taskId));
@@ -208,6 +214,8 @@ public class TaskApplicationService {
         }
         run.cancel(clock.instant());
         jobRepository.cancelQueuedByRunId(runId);
+        runRepository.saveAndFlush(run);
+        assetService.cleanupDerivedForRun(runId);
         outboxService.append("TASK_RUN", runId, "TASK_RUN_CANCELLED", Map.of());
         return toRunView(run);
     }
@@ -267,6 +275,7 @@ public class TaskApplicationService {
                 run.getStatus(),
                 run.getParameters(),
                 run.getInputAssetIds(),
+                assetService.listRunInputs(run.getId()),
                 run.getBaseArtifactId(),
                 run.getSelectedModelCode(),
                 run.getSelectedModels(),
@@ -300,6 +309,7 @@ public class TaskApplicationService {
             RunStatus status,
             Map<String, Object> parameters,
             List<UUID> inputAssetIds,
+            List<AssetService.AssetView> inputAssets,
             UUID baseArtifactId,
             String selectedModelCode,
             Map<String, String> selectedModels,

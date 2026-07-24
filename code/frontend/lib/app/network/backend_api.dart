@@ -92,33 +92,105 @@ class BackendApi {
         .toList();
   }
 
+  Future<AssetPage> listAssetLibrary({
+    required String libraryType,
+    required String category,
+    String query = '',
+    String? cursor,
+    int pageSize = 20,
+  }) async {
+    final uri = Uri(
+      path: '/assets/library',
+      queryParameters: {
+        'libraryType': libraryType,
+        'category': category,
+        'query': query,
+        'pageSize': '$pageSize',
+        if (cursor != null) 'cursor': cursor,
+      },
+    );
+    return AssetPage.fromJson(
+      _asMap(await _request('GET', uri.toString())),
+    );
+  }
+
+  Future<AssetView> getAsset(String assetId) async {
+    return AssetView.fromJson(
+      _asMap(await _request('GET', '/assets/$assetId')),
+    );
+  }
+
+  Future<AssetPreviewDescriptor> getAssetPreview(String assetId) async {
+    final preview = AssetPreviewDescriptor.fromJson(
+      _asMap(await _request('GET', '/assets/$assetId/preview')),
+    );
+    final contentUrl = preview.contentUrl;
+    return AssetPreviewDescriptor(
+      kind: preview.kind,
+      mediaType: preview.mediaType,
+      contentUrl: contentUrl == null
+          ? null
+          : contentUrl.startsWith('http')
+              ? contentUrl
+              : '${_serverOrigin()}$contentUrl',
+      text: preview.text,
+      truncated: preview.truncated,
+    );
+  }
+
+  Future<AssetDeleteImpact> getAssetDeleteImpact(
+      Iterable<String> assetIds) async {
+    return AssetDeleteImpact.fromJson(_asMap(await _request(
+      'POST',
+      '/assets/delete-impact',
+      body: {'assetIds': assetIds.toList()},
+    )));
+  }
+
+  Future<void> deleteAssets(Iterable<String> assetIds) async {
+    await _request(
+      'POST',
+      '/assets/batch-delete',
+      body: {'assetIds': assetIds.toList()},
+    );
+  }
+
   Future<AccountSummary> getAccountSummary() async {
     return AccountSummary.fromJson(
       _asMap(await _request('GET', '/account/summary')),
     );
   }
 
-  Future<AssetView> uploadAsset(PickedLocalFile file) async {
+  Future<AssetView> uploadAsset(
+    PickedLocalFile file, {
+    String origin = 'USER_UPLOAD',
+  }) async {
     final boundary =
         'yuanzuo-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';
-    final request = await _client
-        .postUrl(Uri.parse('${ApiConfig.baseUrl}/assets'))
-        .timeout(const Duration(seconds: 10));
-    request.headers.contentType = ContentType(
-      'multipart',
-      'form-data',
-      parameters: {'boundary': boundary},
-    );
-    request.add(utf8.encode('--$boundary\r\n'));
-    request.add(utf8.encode(
-      'Content-Disposition: form-data; name="file"; filename="${_quoted(file.name)}"\r\n',
-    ));
-    request.add(utf8.encode('Content-Type: ${file.mediaType}\r\n\r\n'));
-    request.add(file.bytes);
-    request.add(utf8.encode('\r\n--$boundary--\r\n'));
-    final response = await request.close().timeout(const Duration(seconds: 60));
-    final decoded = await _decodeResponse(response);
-    return AssetView.fromJson(_asMap(decoded));
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/assets')
+          .replace(queryParameters: {'origin': origin});
+      final request =
+          await _client.postUrl(uri).timeout(const Duration(seconds: 10));
+      request.headers.contentType = ContentType(
+        'multipart',
+        'form-data',
+        parameters: {'boundary': boundary},
+      );
+      request.add(utf8.encode('--$boundary\r\n'));
+      request.add(utf8.encode(
+        'Content-Disposition: form-data; name="file"; filename="${_quoted(file.name)}"\r\n',
+      ));
+      request.add(utf8.encode('Content-Type: ${file.mediaType}\r\n\r\n'));
+      await request.addStream(file.openRead());
+      request.add(utf8.encode('\r\n--$boundary--\r\n'));
+      final response =
+          await request.close().timeout(const Duration(minutes: 30));
+      final decoded = await _decodeResponse(response);
+      return AssetView.fromJson(_asMap(decoded));
+    } finally {
+      await file.cleanup();
+    }
   }
 
   Future<void> deleteAsset(String assetId) async {
@@ -348,6 +420,11 @@ class BackendApi {
 
   static String _quoted(String value) =>
       value.replaceAll('"', '').replaceAll('\r', '').replaceAll('\n', '');
+
+  static String _serverOrigin() {
+    final uri = Uri.parse(ApiConfig.baseUrl);
+    return uri.replace(path: '', query: null, fragment: null).toString();
+  }
 
   static String _statusLabel(String status) => switch (status) {
         'QUEUED' => '任务排队中',
