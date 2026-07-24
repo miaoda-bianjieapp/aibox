@@ -191,7 +191,16 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
 
     private static void validateReferenceImageLimit(ModelCallTarget target, int referenceImageCount) {
         Object configured = target.settings().get("maxReferenceImages");
-        if (configured == null) return;
+        if (configured == null) {
+            Object supported = target.settings().get("supportsReferenceImages");
+            if (supported instanceof Boolean flag && !flag) {
+                configured = 0;
+            } else if (supported != null && "false".equalsIgnoreCase(supported.toString())) {
+                configured = 0;
+            } else {
+                return;
+            }
+        }
         int maximum;
         try {
             maximum = configured instanceof Number number

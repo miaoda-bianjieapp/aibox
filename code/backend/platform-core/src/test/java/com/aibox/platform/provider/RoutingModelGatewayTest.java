@@ -271,7 +271,7 @@ class RoutingModelGatewayTest {
                 "test",
                 "provider-model",
                 ModelCapability.IMAGE_GENERATION,
-                Map.of("maxReferenceImages", 0)
+                Map.of("supportsReferenceImages", false)
         )));
         RoutingModelGateway gateway = new RoutingModelGateway(
                 List.of(new TestProvider()),

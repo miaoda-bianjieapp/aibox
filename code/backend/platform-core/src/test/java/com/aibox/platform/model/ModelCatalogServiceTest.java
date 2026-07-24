@@ -129,6 +129,18 @@ class ModelCatalogServiceTest {
         assertThat(policy.options().get(0).maxReferenceImages()).isEqualTo(4);
     }
 
+    @Test
+    void mapsTheLegacyUnsupportedReferenceImageFlagToZero() {
+        ModelDeploymentEntity deployment = availableDeployment("model-a");
+        when(deployment.getConfig()).thenReturn(Map.of(
+                "supportsReferenceImages", false
+        ));
+
+        ModelCatalogService.ModelPolicyView policy = service.getFeaturePolicy("writing.draft");
+
+        assertThat(policy.options().get(0).maxReferenceImages()).isZero();
+    }
+
     private FeatureModelOptionEntity option(String code) {
         FeatureModelOptionEntity option = mock(FeatureModelOptionEntity.class);
         when(option.getDeploymentCode()).thenReturn(code);
