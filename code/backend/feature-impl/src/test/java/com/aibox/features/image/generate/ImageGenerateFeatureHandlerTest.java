@@ -52,7 +52,7 @@ class ImageGenerateFeatureHandlerTest {
     void acceptsReferenceImageUpToTwentyMegabytesAndRejectsLargerFiles() {
         UUID assetId = UUID.randomUUID();
         Map<String, Object> parameters = Map.of(
-                "prompt", "涓€鍙尗",
+                "prompt", "一只猫",
                 "aspectRatio", "1:1"
         );
 
@@ -82,8 +82,12 @@ class ImageGenerateFeatureHandlerTest {
     }
 
     @Test
-    void sendsUserAndPreviousImagesAndReturnsOneAssetDraft() {
-        UUID userAssetId = UUID.randomUUID();
+    void sendsThreeUserImagesAndThePreviousResultWhenEnabled() {
+        List<UUID> userAssetIds = List.of(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                UUID.randomUUID()
+        );
         UUID previousAssetId = UUID.randomUUID();
         ArtifactReference base = new ArtifactReference(
                 UUID.randomUUID(),
@@ -94,9 +98,17 @@ class ImageGenerateFeatureHandlerTest {
                 Map.of()
         );
         FeatureExecutionContext context = context(
-                Map.of("prompt", "改成夜晚场景", "aspectRatio", "16:9"),
-                List.of(userAssetId),
-                List.of(new InputAssetReference(userAssetId, "reference.png", "image/png", 1024)),
+                Map.of(
+                        "prompt", "改成夜晚场景",
+                        "aspectRatio", "16:9",
+                        "generatedReferenceMode", "USE_BASE"
+                ),
+                userAssetIds,
+                List.of(
+                        new InputAssetReference(userAssetIds.get(0), "reference-1.png", "image/png", 1024),
+                        new InputAssetReference(userAssetIds.get(1), "reference-2.png", "image/png", 1024),
+                        new InputAssetReference(userAssetIds.get(2), "reference-3.png", "image/png", 1024)
+                ),
                 base
         );
         AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
@@ -105,7 +117,15 @@ class ImageGenerateFeatureHandlerTest {
         handler.validate(context);
         FeatureExecutionResult result = handler.execute(context, gateway);
 
-        assertEquals(List.of(userAssetId, previousAssetId), captured.get().inputAssetIds());
+        assertEquals(
+                List.of(
+                        userAssetIds.get(0),
+                        userAssetIds.get(1),
+                        userAssetIds.get(2),
+                        previousAssetId
+                ),
+                captured.get().inputAssetIds()
+        );
         assertEquals("16:9", captured.get().size());
         assertEquals(1, captured.get().count());
         assertEquals("image-deployment", captured.get().deploymentCode());
@@ -113,6 +133,79 @@ class ImageGenerateFeatureHandlerTest {
         assertEquals("image", result.artifacts().get(0).kind());
         assertEquals(1, result.artifacts().get(0).outputAssets().size());
         assertEquals(base.id().toString(), result.artifacts().get(0).metadata().get("basedOnArtifactId"));
+    }
+
+    @Test
+    void keepsVersionLineageButDoesNotSendThePreviousResultWhenDisabled() {
+        UUID userAssetId = UUID.randomUUID();
+        UUID previousAssetId = UUID.randomUUID();
+        ArtifactReference base = new ArtifactReference(
+                UUID.randomUUID(),
+                2,
+                "image",
+                "image/png",
+                Map.of("assetId", previousAssetId.toString()),
+                Map.of()
+        );
+        FeatureExecutionContext context = context(
+                Map.of(
+                        "prompt", "重新生成",
+                        "aspectRatio", "1:1",
+                        "generatedReferenceMode", "NONE"
+                ),
+                List.of(userAssetId),
+                List.of(new InputAssetReference(userAssetId, "reference.png", "image/png", 1024)),
+                base
+        );
+        AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
+
+        handler.validate(context);
+        FeatureExecutionResult result = handler.execute(context, new CapturingImageGateway(captured));
+
+        assertEquals(List.of(userAssetId), captured.get().inputAssetIds());
+        assertEquals(base.id().toString(), result.artifacts().get(0).metadata().get("basedOnArtifactId"));
+        assertEquals(false, result.artifacts().get(0).metadata().get("usedBaseArtifactAsReference"));
+    }
+
+    @Test
+    void defaultsToUsingThePreviousResultForOlderRevisionClients() {
+        UUID previousAssetId = UUID.randomUUID();
+        ArtifactReference base = new ArtifactReference(
+                UUID.randomUUID(),
+                1,
+                "image",
+                "image/png",
+                Map.of("assetId", previousAssetId.toString()),
+                Map.of()
+        );
+        FeatureExecutionContext context = context(
+                Map.of("prompt", "继续修改", "aspectRatio", "1:1"),
+                List.of(),
+                List.of(),
+                base
+        );
+        AtomicReference<ImageGenerationRequest> captured = new AtomicReference<>();
+
+        handler.validate(context);
+        handler.execute(context, new CapturingImageGateway(captured));
+
+        assertEquals(List.of(previousAssetId), captured.get().inputAssetIds());
+    }
+
+    @Test
+    void rejectsUsingThePreviousResultWithoutABaseArtifact() {
+        FeatureExecutionContext context = context(
+                Map.of(
+                        "prompt", "继续修改",
+                        "aspectRatio", "1:1",
+                        "generatedReferenceMode", "USE_BASE"
+                ),
+                List.of(),
+                List.of(),
+                null
+        );
+
+        assertThrows(FeatureValidationException.class, () -> handler.validate(context));
     }
 
     private static FeatureExecutionContext context(

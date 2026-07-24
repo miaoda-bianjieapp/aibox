@@ -111,6 +111,7 @@ void main() {
       baseArtifactId: 'artifact-1',
       baseArtifactText: '上一版成果',
       baseArtifactAssetIds: ['asset-1'],
+      baseArtifactAssets: [],
     );
 
     expect(request.isRevision, isTrue);
@@ -136,6 +137,32 @@ void main() {
     });
 
     expect(policy.shouldShowSelector, isTrue);
+  });
+
+  test('model option exposes its reference image limit', () {
+    final option = ModelOption.fromJson({
+      'code': 'gpt-image-2',
+      'displayName': 'GPT Image 2',
+      'description': '支持参考图',
+      'isDefault': true,
+      'sourceType': 'RELAY',
+      'sourceName': 'Codex2API Relay',
+      'maxReferenceImages': 4,
+    });
+
+    expect(option.maxReferenceImages, 4);
+    expect(option.supportsReferenceImages, isTrue);
+
+    final unsupported = ModelOption.fromJson({
+      'code': 'text-to-image-only',
+      'displayName': '仅文生图',
+      'description': '不支持参考图',
+      'isDefault': false,
+      'sourceType': 'OFFICIAL',
+      'sourceName': 'Official',
+      'maxReferenceImages': 0,
+    });
+    expect(unsupported.supportsReferenceImages, isFalse);
   });
 
   test('feature visibility supports combined all conditions', () {

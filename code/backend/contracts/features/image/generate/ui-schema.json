@@ -1,8 +1,9 @@
 {
-  "order": ["prompt", "referenceImages", "aspectRatio"],
+  "order": ["prompt", "referenceImages", "generatedReferenceMode", "aspectRatio"],
   "widgets": {
     "prompt": "textarea",
     "referenceImages": "image",
+    "generatedReferenceMode": "hidden",
     "aspectRatio": "segmented"
   },
   "enumLabels": {
@@ -19,8 +20,17 @@
       "maxItems": 3,
       "maxFileSizeBytes": 20971520,
       "maxTotalSizeBytes": 31457280,
-      "showPreview": true
+      "showPreview": true,
+      "requiresReferenceImageSupport": true
     }
+  },
+  "revisionArtifactReference": {
+    "modeField": "generatedReferenceMode",
+    "enabledValue": "USE_BASE",
+    "disabledValue": "NONE",
+    "defaultEnabled": true,
+    "title": "上一版成果",
+    "description": "默认作为额外参考图，可点击叉号仅在本次生成中移除。"
   },
   "promptAssist": {
     "fields": {

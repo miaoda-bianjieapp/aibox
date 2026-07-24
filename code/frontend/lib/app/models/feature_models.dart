@@ -169,6 +169,9 @@ class FeatureDetail extends FeatureEntry {
 
   Set<String> get revisionResetFields =>
       _stringList(config['revisionResetFields']).toSet();
+
+  Map<String, dynamic> get revisionArtifactReference =>
+      _map(uiSchema['revisionArtifactReference']);
 }
 
 class ModelPolicy {
@@ -202,6 +205,7 @@ class ModelOption {
     required this.isDefault,
     required this.sourceType,
     required this.sourceName,
+    required this.maxReferenceImages,
   });
 
   factory ModelOption.fromJson(Map<String, dynamic> json) => ModelOption(
@@ -211,6 +215,9 @@ class ModelOption {
         isDefault: json['isDefault'] == true,
         sourceType: _string(json, 'sourceType'),
         sourceName: _string(json, 'sourceName'),
+        maxReferenceImages: json['maxReferenceImages'] == null
+            ? null
+            : _integer(json, 'maxReferenceImages'),
       );
 
   final String code;
@@ -219,8 +226,11 @@ class ModelOption {
   final bool isDefault;
   final String sourceType;
   final String sourceName;
+  final int? maxReferenceImages;
 
   String get sourceLabel => sourceType == 'RELAY' ? '中转' : '官方';
+  bool get supportsReferenceImages =>
+      maxReferenceImages == null || maxReferenceImages! > 0;
 }
 
 class WorkspaceDefinition {
@@ -583,6 +593,7 @@ class TaskLaunchRequest {
     this.initialModels = const {},
     this.baseArtifactText,
     this.baseArtifactAssetIds = const [],
+    this.baseArtifactAssets = const [],
   });
 
   final WorkspaceDefinition workspace;
@@ -598,6 +609,7 @@ class TaskLaunchRequest {
   final Map<String, String> initialModels;
   final String? baseArtifactText;
   final List<String> baseArtifactAssetIds;
+  final List<AssetView> baseArtifactAssets;
 
   bool get isRevision => existingTaskId != null && baseArtifactId != null;
 }

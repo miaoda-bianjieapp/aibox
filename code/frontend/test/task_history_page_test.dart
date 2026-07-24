@@ -88,4 +88,47 @@ void main() {
       ['attachment-1'],
     );
   });
+
+  test('AI image revisions keep user references separate from the result', () {
+    const feature = FeatureEntry(
+      id: 'image.generate',
+      title: 'AI 生图',
+      description: '',
+      version: 4,
+      resultType: 'image',
+      rendererKey: 'image',
+      executionMode: 'ASYNC',
+    );
+    final run = RunView(
+      id: 'run-1',
+      runNumber: 1,
+      status: 'SUCCEEDED',
+      parameters: const {},
+      inputAssetIds: const ['user-reference-1', 'user-reference-2'],
+      baseArtifactId: null,
+      selectedModelCode: null,
+      selectedModels: const {},
+      errorCode: null,
+      errorMessage: null,
+      createdAt: DateTime(2026, 7, 24),
+    );
+    final artifact = ArtifactView(
+      id: 'artifact-1',
+      taskId: 'task-1',
+      runId: 'run-1',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'image',
+      title: 'AI 生图',
+      mimeType: 'image/png',
+      content: const {'assetId': 'generated-result'},
+      metadata: const {},
+      createdAt: DateTime(2026, 7, 24),
+    );
+
+    expect(
+      revisionInputAssetIds(feature: feature, run: run, artifact: artifact),
+      ['user-reference-1', 'user-reference-2'],
+    );
+  });
 }

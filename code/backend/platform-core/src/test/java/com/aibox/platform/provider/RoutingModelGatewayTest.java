@@ -31,6 +31,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -256,6 +257,45 @@ class RoutingModelGatewayTest {
 
         assertThat(capturedAssets.get()).containsExactly(persisted, inline);
         verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
+    void rejectsReferenceImagesBeforeCallingADeploymentThatDoesNotSupportThem() {
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.IMAGE_GENERATION,
+                "image.generation.default",
+                "text-to-image-only"
+        )).thenReturn(List.of(new ModelCallTarget(
+                "text-to-image-only",
+                "test",
+                "provider-model",
+                ModelCapability.IMAGE_GENERATION,
+                Map.of("maxReferenceImages", 0)
+        )));
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(new TestProvider()),
+                mock(ProviderInvocationRepository.class),
+                mock(AssetService.class),
+                routingService,
+                Clock.fixed(Instant.parse("2026-07-24T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        assertThatThrownBy(() -> gateway.generateImage(new ImageGenerationRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "image.generation.default",
+                "text-to-image-only",
+                "generate",
+                List.of(UUID.randomUUID()),
+                "1:1",
+                1,
+                Map.of()
+        )))
+                .isInstanceOf(com.aibox.feature.spi.ModelProviderException.class)
+                .extracting(exception ->
+                        ((com.aibox.feature.spi.ModelProviderException) exception).code())
+                .isEqualTo("MODEL_REFERENCE_IMAGES_NOT_SUPPORTED");
     }
 
     @Test

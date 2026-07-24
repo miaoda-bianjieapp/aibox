@@ -26,6 +26,12 @@ class BackendApi {
     if (code == 'PROVIDER_HTTP_524') {
       return '模型服务处理超时，请重试；如持续失败，请切换其他模型';
     }
+    if (code == 'MODEL_REFERENCE_IMAGES_NOT_SUPPORTED') {
+      return '当前模型不支持参考图，请移除参考图或切换其他模型';
+    }
+    if (code == 'MODEL_REFERENCE_IMAGE_LIMIT_EXCEEDED') {
+      return '参考图数量超过当前模型支持的上限';
+    }
     return taskFailureMessage(code: code, message: serverMessage);
   }
 

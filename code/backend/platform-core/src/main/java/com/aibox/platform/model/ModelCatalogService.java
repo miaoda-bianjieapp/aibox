@@ -128,8 +128,24 @@ public class ModelCatalogService {
                 option.getDescription(),
                 option.getDeploymentCode().equals(policy.getDefaultDeploymentCode()),
                 provider.getProviderKind().name(),
-                provider.getDisplayName()
+                provider.getDisplayName(),
+                publicMaxReferenceImages(deployment)
         );
+    }
+
+    private static Integer publicMaxReferenceImages(ModelDeploymentEntity deployment) {
+        Map<String, Object> config = deployment.getConfig();
+        if (config == null) return null;
+        Object value = config.get("maxReferenceImages");
+        if (value instanceof Number number) {
+            return Math.max(0, number.intValue());
+        }
+        if (value == null) return null;
+        try {
+            return Math.max(0, Integer.parseInt(value.toString()));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private String resolvePolicy(FeatureModelPolicyEntity policy, String requestedDeploymentCode) {
@@ -186,7 +202,8 @@ public class ModelCatalogService {
             String description,
             boolean isDefault,
             String sourceType,
-            String sourceName
+            String sourceName,
+            Integer maxReferenceImages
     ) {
     }
 

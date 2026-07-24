@@ -410,6 +410,10 @@ components:
           type: string
           enum: [OFFICIAL, RELAY]
         sourceName: {type: string}
+        maxReferenceImages:
+          type: [integer, "null"]
+          minimum: 0
+          description: 该 Deployment 可接收的参考图片数量；0 表示仅支持文生图
     PromptOptimizationRequest:
       type: object
       required: [field, currentText, parameters]
