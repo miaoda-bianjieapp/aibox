@@ -123,16 +123,46 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
                   ),
                   child: SizedBox(
                     height: 48,
-                    child: FilledButton.icon(
-                      onPressed: _deleteSelected,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.danger,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _selectAll,
+                            style: _selectionActionStyle(),
+                            icon:
+                                const Icon(Icons.select_all_rounded, size: 19),
+                            label: const Text('全选'),
+                          ),
                         ),
-                      ),
-                      icon: const Icon(Icons.delete_outline_rounded),
-                      label: Text('删除（${_selectedIds.length}）'),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _invertSelection,
+                            style: _selectionActionStyle(),
+                            icon: const Icon(Icons.compare_arrows_rounded,
+                                size: 19),
+                            label: const Text('反选'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 2,
+                          child: FilledButton.icon(
+                            onPressed: _deleteSelected,
+                            style: FilledButton.styleFrom(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 6),
+                              backgroundColor: AppColors.danger,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            icon: const Icon(Icons.delete_outline_rounded,
+                                size: 19),
+                            label: Text('删除（${_selectedIds.length}）'),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -277,9 +307,12 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
       onRefresh: _load,
       child: ListView.separated(
         controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+        padding: const EdgeInsets.only(bottom: 28),
         itemCount: _items.length + (_loadingMore ? 1 : 0),
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (_, __) => const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 20),
+          child: Divider(height: 1),
+        ),
         itemBuilder: (context, index) {
           if (index == _items.length) {
             return const Padding(
@@ -369,6 +402,36 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
         if (_selectedIds.length < 100) _selectedIds.add(assetId);
       }
     });
+  }
+
+  void _selectAll() {
+    setState(() {
+      _selectedIds
+        ..clear()
+        ..addAll(_items.take(100).map((asset) => asset.id));
+    });
+  }
+
+  void _invertSelection() {
+    setState(() {
+      final inverted = _items
+          .where((asset) => !_selectedIds.contains(asset.id))
+          .take(100)
+          .map((asset) => asset.id)
+          .toSet();
+      _selectedIds
+        ..clear()
+        ..addAll(inverted);
+    });
+  }
+
+  static ButtonStyle _selectionActionStyle() {
+    return OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
   }
 
   Future<void> _upload() async {
@@ -469,7 +532,7 @@ class _AssetRow extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
           child: Row(
             children: [
               if (selectionMode) ...[
