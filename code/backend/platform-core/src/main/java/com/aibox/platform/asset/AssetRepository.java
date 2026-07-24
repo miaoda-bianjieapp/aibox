@@ -15,6 +15,17 @@ public interface AssetRepository extends JpaRepository<AssetEntity, UUID> {
 
     Optional<AssetEntity> findByIdAndTenantIdAndUserId(UUID id, UUID tenantId, UUID userId);
 
+    Optional<AssetEntity>
+    findFirstByTenantIdAndUserIdAndOriginAndOriginalNameAndMediaTypeAndSha256AndSizeBytesAndDeletedAtIsNullOrderByCreatedAtDesc(
+            UUID tenantId,
+            UUID userId,
+            AssetOrigin origin,
+            String originalName,
+            String mediaType,
+            String sha256,
+            long sizeBytes
+    );
+
     long countByTenantIdAndUserIdAndDeletedAtIsNull(UUID tenantId, UUID userId);
 
     long countByBlobIdAndDeletedAtIsNull(UUID blobId);

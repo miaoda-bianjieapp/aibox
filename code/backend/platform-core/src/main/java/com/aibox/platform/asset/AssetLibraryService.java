@@ -19,6 +19,8 @@ import java.util.UUID;
 @Service
 public class AssetLibraryService {
 
+    private static final int MAX_SELECTION_SIZE = 1_000;
+
     private final JdbcTemplate jdbcTemplate;
     private final ActorContextProvider actorContextProvider;
     private final AssetService assetService;
@@ -220,8 +222,11 @@ public class AssetLibraryService {
         if (ids.isEmpty()) {
             throw new PlatformException("ASSET_SELECTION_EMPTY", "Select at least one file");
         }
-        if (ids.size() > 100) {
-            throw new PlatformException("ASSET_SELECTION_TOO_LARGE", "At most 100 files can be deleted at once");
+        if (ids.size() > MAX_SELECTION_SIZE) {
+            throw new PlatformException(
+                    "ASSET_SELECTION_TOO_LARGE",
+                    "At most 1000 files can be deleted at once"
+            );
         }
         return ids;
     }

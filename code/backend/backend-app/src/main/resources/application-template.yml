@@ -53,6 +53,9 @@ yuanzuo:
     max-document-size-bytes: 104857600
     max-audio-size-bytes: 209715200
     max-video-size-bytes: 1073741824
+    orphan-cleanup-enabled: true
+    orphan-cleanup-initial-delay-ms: 120000
+    orphan-cleanup-interval-ms: 86400000
   worker:
     enabled: true
     poll-delay-ms: 500

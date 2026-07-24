@@ -63,6 +63,7 @@ public class AssetService {
 
     private final AssetRepository repository;
     private final AssetBlobRepository blobRepository;
+    private final AssetContentLock contentLock;
     private final ActorContextProvider actorContextProvider;
     private final JdbcTemplate jdbcTemplate;
     private final Clock clock;
@@ -75,6 +76,7 @@ public class AssetService {
     public AssetService(
             AssetRepository repository,
             AssetBlobRepository blobRepository,
+            AssetContentLock contentLock,
             ActorContextProvider actorContextProvider,
             JdbcTemplate jdbcTemplate,
             Clock clock,
@@ -86,6 +88,7 @@ public class AssetService {
     ) {
         this.repository = repository;
         this.blobRepository = blobRepository;
+        this.contentLock = contentLock;
         this.actorContextProvider = actorContextProvider;
         this.jdbcTemplate = jdbcTemplate;
         this.clock = clock;
@@ -184,10 +187,47 @@ public class AssetService {
             throw new PlatformException("ASSET_SIZE_MISMATCH", "Uploaded file size does not match its metadata");
         }
 
+        try {
+            return contentLock.execute(
+                    tenantId,
+                    userId,
+                    sha256,
+                    actualSize,
+                    () -> storeLocked(
+                            tenantId,
+                            userId,
+                            id,
+                            name,
+                            mediaType,
+                            category,
+                            origin,
+                            sha256,
+                            actualSize,
+                            temporary
+                    )
+            );
+        } catch (RuntimeException exception) {
+            tryDelete(temporary);
+            throw exception;
+        }
+    }
+
+    private AssetView storeLocked(
+            UUID tenantId,
+            UUID userId,
+            UUID id,
+            String name,
+            String mediaType,
+            AssetMediaCategory category,
+            AssetOrigin origin,
+            String sha256,
+            long actualSize,
+            Path temporary
+    ) {
         Instant now = clock.instant();
         AssetBlobEntity blob = blobRepository
-                .findByTenantIdAndUserIdAndSha256AndSizeBytesAndStatus(
-                        tenantId, userId, sha256, actualSize, "READY"
+                .findByTenantIdAndUserIdAndSha256AndSizeBytes(
+                        tenantId, userId, sha256, actualSize
                 )
                 .orElse(null);
         if (blob == null) {
@@ -210,7 +250,43 @@ public class AssetService {
             ));
             deleteFileAfterRollback(target);
         } else {
-            tryDelete(temporary);
+            Path target = resolveStorageKey(blob.getStorageKey());
+            if ("DELETED".equals(blob.getStatus()) || !Files.isRegularFile(target)) {
+                try {
+                    Files.createDirectories(target.getParent());
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException exception) {
+                    tryDelete(temporary);
+                    throw new PlatformException(
+                            "ASSET_STORAGE_FAILED",
+                            "Uploaded file could not be restored"
+                    );
+                }
+                deleteFileAfterRollback(target);
+            } else {
+                tryDelete(temporary);
+            }
+            if ("DELETED".equals(blob.getStatus())) {
+                blob.restore();
+                blobRepository.save(blob);
+            }
+        }
+
+        if (origin == AssetOrigin.USER_UPLOAD) {
+            AssetEntity existing = repository
+                    .findFirstByTenantIdAndUserIdAndOriginAndOriginalNameAndMediaTypeAndSha256AndSizeBytesAndDeletedAtIsNullOrderByCreatedAtDesc(
+                            tenantId,
+                            userId,
+                            origin,
+                            name,
+                            mediaType,
+                            sha256,
+                            actualSize
+                    )
+                    .orElse(null);
+            if (existing != null) {
+                return toView(existing);
+            }
         }
 
         AssetEntity asset = new AssetEntity(
@@ -629,7 +705,25 @@ public class AssetService {
     private void softDelete(AssetEntity asset) {
         asset.delete(clock.instant());
         repository.saveAndFlush(asset);
+        releaseStorageKeyIfUnused(asset);
         releaseBlobIfUnused(asset.getBlobId());
+    }
+
+    private void releaseStorageKeyIfUnused(AssetEntity asset) {
+        Long activeReferences = jdbcTemplate.queryForObject("""
+                select count(*)
+                from asset
+                where storage_key = ?
+                  and deleted_at is null
+                """, Long.class, asset.getStorageKey());
+        if (activeReferences != null && activeReferences > 0) return;
+        AssetBlobEntity blob = blobRepository.findById(asset.getBlobId()).orElse(null);
+        if (blob != null
+                && asset.getStorageKey().equals(blob.getStorageKey())
+                && repository.countByBlobIdAndDeletedAtIsNull(asset.getBlobId()) > 0) {
+            return;
+        }
+        deleteFileAfterCommit(resolveStorageKey(asset.getStorageKey()));
     }
 
     private static void tryDelete(Path path) {

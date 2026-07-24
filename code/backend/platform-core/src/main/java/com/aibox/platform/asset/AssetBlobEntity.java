@@ -70,6 +70,11 @@ public class AssetBlobEntity {
         this.deletedAt = now;
     }
 
+    public void restore() {
+        this.status = "READY";
+        this.deletedAt = null;
+    }
+
     public UUID getId() { return id; }
     public UUID getTenantId() { return tenantId; }
     public UUID getUserId() { return userId; }

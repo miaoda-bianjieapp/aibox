@@ -19,6 +19,7 @@ class AssetLibraryPage extends StatefulWidget {
 }
 
 class _AssetLibraryPageState extends State<AssetLibraryPage> {
+  static const int _maxSelectionSize = 1000;
   static const _categories = <(String, String)>[
     ('ALL', '全部'),
     ('IMAGE', '图片'),
@@ -41,6 +42,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   bool _loadingMore = false;
   bool _uploading = false;
   bool _searchVisible = false;
+  bool _selectionLoading = false;
 
   bool get _selectionMode => _selectedIds.isNotEmpty;
 
@@ -127,7 +129,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
                       children: [
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: _selectAll,
+                            onPressed: _selectionLoading ? null : _selectAll,
                             style: _selectionActionStyle(),
                             icon:
                                 const Icon(Icons.select_all_rounded, size: 19),
@@ -137,7 +139,8 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: _invertSelection,
+                            onPressed:
+                                _selectionLoading ? null : _invertSelection,
                             style: _selectionActionStyle(),
                             icon: const Icon(Icons.compare_arrows_rounded,
                                 size: 19),
@@ -148,7 +151,8 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
                         Expanded(
                           flex: 2,
                           child: FilledButton.icon(
-                            onPressed: _deleteSelected,
+                            onPressed:
+                                _selectionLoading ? null : _deleteSelected,
                             style: FilledButton.styleFrom(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 6),
@@ -399,31 +403,66 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   void _toggleSelection(String assetId) {
     setState(() {
       if (!_selectedIds.remove(assetId)) {
-        if (_selectedIds.length < 100) _selectedIds.add(assetId);
+        if (_selectedIds.length < _maxSelectionSize) {
+          _selectedIds.add(assetId);
+        }
       }
     });
   }
 
-  void _selectAll() {
-    setState(() {
-      _selectedIds
-        ..clear()
-        ..addAll(_items.take(100).map((asset) => asset.id));
-    });
+  Future<void> _selectAll() => _replaceSelectionFromFullFilter(invert: false);
+
+  Future<void> _invertSelection() =>
+      _replaceSelectionFromFullFilter(invert: true);
+
+  Future<void> _replaceSelectionFromFullFilter({
+    required bool invert,
+  }) async {
+    final libraryType = _libraryType;
+    final category = _category;
+    final query = _searchController.text.trim();
+    final scope = '$libraryType|$category|$query';
+    setState(() => _selectionLoading = true);
+    try {
+      final allIds = <String>{};
+      String? cursor;
+      do {
+        final page = await widget.data.api.listAssetLibrary(
+          libraryType: libraryType,
+          category: category,
+          query: query,
+          cursor: cursor,
+          pageSize: 50,
+        );
+        allIds.addAll(page.items.map((asset) => asset.id));
+        if (allIds.length > _maxSelectionSize) {
+          throw const ApiException(
+            '当前筛选结果超过 1000 个文件，请缩小分类或搜索范围后再全选',
+          );
+        }
+        cursor = page.nextCursor;
+      } while (cursor != null);
+      if (!mounted || scope != _selectionScope) return;
+      setState(() {
+        final replacement =
+            invert ? allIds.where((id) => !_selectedIds.contains(id)) : allIds;
+        _selectedIds
+          ..clear()
+          ..addAll(replacement);
+      });
+    } catch (exception) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$exception')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _selectionLoading = false);
+    }
   }
 
-  void _invertSelection() {
-    setState(() {
-      final inverted = _items
-          .where((asset) => !_selectedIds.contains(asset.id))
-          .take(100)
-          .map((asset) => asset.id)
-          .toSet();
-      _selectedIds
-        ..clear()
-        ..addAll(inverted);
-    });
-  }
+  String get _selectionScope =>
+      '$_libraryType|$_category|${_searchController.text.trim()}';
 
   static ButtonStyle _selectionActionStyle() {
     return OutlinedButton.styleFrom(
