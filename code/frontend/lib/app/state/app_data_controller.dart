@@ -73,26 +73,35 @@ class AppDataController extends ChangeNotifier {
       int? maxSizeBytes}) async {
     final file = await NativeFilePicker.pick(mimeTypes: mimeTypes);
     if (file == null) return null;
-    if (!_matchesMimeType(file.mediaType, mimeTypes)) {
-      throw const ApiException('文件类型不符合当前功能要求');
+    try {
+      if (!_matchesMimeType(file.mediaType, mimeTypes)) {
+        throw const ApiException('文件类型不符合当前功能要求');
+      }
+      final normalizedName = file.name.toLowerCase();
+      if (allowedExtensions.isNotEmpty &&
+          !allowedExtensions
+              .map((value) => value.toLowerCase())
+              .any(normalizedName.endsWith)) {
+        throw ApiException('仅支持 ${allowedExtensions.join('、')} 格式');
+      }
+      if (maxSizeBytes != null && file.sizeBytes > maxSizeBytes) {
+        throw ApiException('单个文件不能超过 ${_formatMegabytes(maxSizeBytes)} MB');
+      }
+      final asset = await api.uploadAsset(file);
+      await refresh();
+      return asset;
+    } finally {
+      await file.cleanup();
     }
-    final normalizedName = file.name.toLowerCase();
-    if (allowedExtensions.isNotEmpty &&
-        !allowedExtensions
-            .map((value) => value.toLowerCase())
-            .any(normalizedName.endsWith)) {
-      throw ApiException('仅支持 ${allowedExtensions.join('、')} 格式');
-    }
-    if (maxSizeBytes != null && file.bytes.length > maxSizeBytes) {
-      throw ApiException('单个文件不能超过 ${_formatMegabytes(maxSizeBytes)} MB');
-    }
-    final asset = await api.uploadAsset(file);
-    await refresh();
-    return asset;
   }
 
   Future<void> deleteAsset(String assetId) async {
     await api.deleteAsset(assetId);
+    await refresh();
+  }
+
+  Future<void> deleteAssets(Iterable<String> assetIds) async {
+    await api.deleteAssets(assetIds);
     await refresh();
   }
 }

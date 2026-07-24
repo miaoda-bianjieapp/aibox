@@ -111,6 +111,7 @@ void main() {
       baseArtifactId: 'artifact-1',
       baseArtifactText: '上一版成果',
       baseArtifactAssetIds: ['asset-1'],
+      baseArtifactAssets: [],
     );
 
     expect(request.isRevision, isTrue);
@@ -136,6 +137,32 @@ void main() {
     });
 
     expect(policy.shouldShowSelector, isTrue);
+  });
+
+  test('model option exposes its reference image limit', () {
+    final option = ModelOption.fromJson({
+      'code': 'gpt-image-2',
+      'displayName': 'GPT Image 2',
+      'description': '支持参考图',
+      'isDefault': true,
+      'sourceType': 'RELAY',
+      'sourceName': 'Codex2API Relay',
+      'maxReferenceImages': 4,
+    });
+
+    expect(option.maxReferenceImages, 4);
+    expect(option.supportsReferenceImages, isTrue);
+
+    final unsupported = ModelOption.fromJson({
+      'code': 'text-to-image-only',
+      'displayName': '仅文生图',
+      'description': '不支持参考图',
+      'isDefault': false,
+      'sourceType': 'OFFICIAL',
+      'sourceName': 'Official',
+      'maxReferenceImages': 0,
+    });
+    expect(unsupported.supportsReferenceImages, isFalse);
   });
 
   test('feature visibility supports combined all conditions', () {
@@ -219,5 +246,50 @@ void main() {
       }),
       isEmpty,
     );
+  });
+
+  test('deleted input and output assets remain readable in history models', () {
+    final deletedAsset = {
+      'id': 'asset-1',
+      'name': 'reference.png',
+      'mediaType': 'image/png',
+      'sizeBytes': 2048,
+      'createdAt': '2026-07-24T00:00:00Z',
+      'origin': 'USER_UPLOAD',
+      'category': 'IMAGE',
+      'status': 'DELETED',
+      'available': false,
+      'associatedTaskCount': 1,
+      'latestTaskTitle': '商品主图',
+    };
+    final run = RunView.fromJson({
+      'id': 'run-1',
+      'taskId': 'task-1',
+      'runNumber': 2,
+      'status': 'SUCCEEDED',
+      'parameters': {'prompt': '保留原提示词'},
+      'inputAssetIds': ['asset-1'],
+      'inputAssets': [deletedAsset],
+      'selectedModels': const <String, String>{},
+      'createdAt': '2026-07-24T00:00:00Z',
+    });
+    final artifact = ArtifactView.fromJson({
+      'id': 'artifact-1',
+      'taskId': 'task-1',
+      'runId': 'run-1',
+      'versionNumber': 1,
+      'kind': 'image',
+      'title': '生成结果',
+      'mimeType': 'image/png',
+      'content': {'assetId': 'asset-1'},
+      'metadata': const <String, Object?>{},
+      'assets': [deletedAsset],
+      'createdAt': '2026-07-24T00:00:00Z',
+    });
+
+    expect(run.inputAssets.single.available, isFalse);
+    expect(run.inputAssets.single.name, 'reference.png');
+    expect(artifact.assets.single.available, isFalse);
+    expect(artifact.assets.single.status, 'DELETED');
   });
 }

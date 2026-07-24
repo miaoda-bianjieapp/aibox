@@ -144,6 +144,10 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
         ProviderTarget selected = requireProvider(
                 ModelCapability.IMAGE_GENERATION, request.modelAlias(), request.deploymentCode()
         );
+        validateReferenceImageLimit(
+                selected.target(),
+                request.inputAssetIds().size() + request.inlineInputAssets().size()
+        );
         List<ModelAsset> sourceAssets = new ArrayList<>(
                 request.inputAssetIds().stream().map(assetService::readForModel).toList()
         );
@@ -182,6 +186,46 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
                 response,
                 sourceAssets.get(0),
                 maskAsset
+        );
+    }
+
+    private static void validateReferenceImageLimit(ModelCallTarget target, int referenceImageCount) {
+        Object configured = target.settings().get("maxReferenceImages");
+        if (configured == null) {
+            Object supported = target.settings().get("supportsReferenceImages");
+            if (supported instanceof Boolean flag && !flag) {
+                configured = 0;
+            } else if (supported != null && "false".equalsIgnoreCase(supported.toString())) {
+                configured = 0;
+            } else {
+                return;
+            }
+        }
+        int maximum;
+        try {
+            maximum = configured instanceof Number number
+                    ? number.intValue()
+                    : Integer.parseInt(configured.toString());
+        } catch (NumberFormatException exception) {
+            throw new ModelProviderException(
+                    "MODEL_CONFIGURATION_INVALID",
+                    "The selected image model has an invalid reference image limit",
+                    false,
+                    exception
+            );
+        }
+        if (referenceImageCount <= Math.max(0, maximum)) return;
+        if (maximum <= 0) {
+            throw new ModelProviderException(
+                    "MODEL_REFERENCE_IMAGES_NOT_SUPPORTED",
+                    "The selected image model does not support reference images",
+                    false
+            );
+        }
+        throw new ModelProviderException(
+                "MODEL_REFERENCE_IMAGE_LIMIT_EXCEEDED",
+                "The selected image model accepts at most " + maximum + " reference images",
+                false
         );
     }
 

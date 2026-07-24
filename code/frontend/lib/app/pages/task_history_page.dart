@@ -135,6 +135,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
         initialModels: run.selectedModels,
         baseArtifactText: artifact.content['text']?.toString(),
         baseArtifactAssetIds: _artifactAssetIds(artifact),
+        baseArtifactAssets: artifact.assets,
       ),
     );
     if (mounted) await _reload();
@@ -159,6 +160,7 @@ List<String> revisionInputAssetIds({
   required RunView run,
   required ArtifactView artifact,
 }) {
+  if (feature.id == 'image.generate') return run.inputAssetIds;
   if (feature.resultType != 'image') return run.inputAssetIds;
   final artifactAssetIds = _artifactAssetIds(artifact);
   if (artifactAssetIds.isNotEmpty) return artifactAssetIds;
@@ -170,18 +172,22 @@ class _ArtifactRow extends StatelessWidget {
   final ArtifactView artifact;
   final VoidCallback onTap;
   @override
-  Widget build(BuildContext context) => ListTile(
-        contentPadding: EdgeInsets.zero,
-        onTap: onTap,
-        leading:
-            const Icon(Icons.description_outlined, color: AppColors.accent),
-        title:
-            Text(artifact.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-            'v${artifact.versionNumber} · ${artifact.kind} · ${_shortDate(artifact.createdAt)}'),
-        trailing:
-            const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
-      );
+  Widget build(BuildContext context) {
+    final deleted = artifact.assets.isNotEmpty &&
+        artifact.assets.every((asset) => !asset.available);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      onTap: onTap,
+      leading: Icon(
+        deleted ? Icons.delete_outline_rounded : Icons.description_outlined,
+        color: deleted ? AppColors.muted : AppColors.accent,
+      ),
+      title: Text(artifact.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+          'v${artifact.versionNumber} · ${artifact.kind} · ${_shortDate(artifact.createdAt)}'),
+      trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.muted),
+    );
+  }
 }
 
 class _RunRow extends StatelessWidget {
@@ -193,6 +199,8 @@ class _RunRow extends StatelessWidget {
     final errorMessage = run.status == 'FAILED'
         ? BackendApi.runFailureMessage(run.errorCode, run.errorMessage)
         : null;
+    final deletedInputs =
+        run.inputAssets.where((asset) => !asset.available).length;
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: const BoxDecoration(
@@ -209,6 +217,16 @@ class _RunRow extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ],
+            if (deletedInputs > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                '$deletedInputs 个原文件已删除，重试或继续修改时请重新上传',
+                style: const TextStyle(
+                  color: AppColors.danger,
+                  fontSize: 12,
+                ),
               ),
             ],
           ]),

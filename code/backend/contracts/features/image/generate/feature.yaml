@@ -1,6 +1,6 @@
 featureCode: image.generate
 workspaceCode: image
-version: 2
+version: 4
 displayName: AI 生图
 description: 根据文字描述和可选参考图片生成一张新图片。
 status: INTERNAL
@@ -15,7 +15,9 @@ schemas:
   output: output-schema.json
 limits:
   maxReferenceImages: 3
-  maxReferenceImageBytes: 10485760
+  maxTotalReferenceImages: 4
+  maxReferenceImageBytes: 20971520
   maxReferenceImagesTotalBytes: 31457280
+  defaultRevisionReferenceMode: USE_BASE
   outputCount: 1
 modelAlias: image.generation.default

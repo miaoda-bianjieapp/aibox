@@ -26,6 +26,12 @@ class BackendApi {
     if (code == 'PROVIDER_HTTP_524') {
       return '模型服务处理超时，请重试；如持续失败，请切换其他模型';
     }
+    if (code == 'MODEL_REFERENCE_IMAGES_NOT_SUPPORTED') {
+      return '当前模型不支持参考图，请移除参考图或切换其他模型';
+    }
+    if (code == 'MODEL_REFERENCE_IMAGE_LIMIT_EXCEEDED') {
+      return '参考图数量超过当前模型支持的上限';
+    }
     return taskFailureMessage(code: code, message: serverMessage);
   }
 
@@ -109,33 +115,105 @@ class BackendApi {
         .toList();
   }
 
+  Future<AssetPage> listAssetLibrary({
+    required String libraryType,
+    required String category,
+    String query = '',
+    String? cursor,
+    int pageSize = 20,
+  }) async {
+    final uri = Uri(
+      path: '/assets/library',
+      queryParameters: {
+        'libraryType': libraryType,
+        'category': category,
+        'query': query,
+        'pageSize': '$pageSize',
+        if (cursor != null) 'cursor': cursor,
+      },
+    );
+    return AssetPage.fromJson(
+      _asMap(await _request('GET', uri.toString())),
+    );
+  }
+
+  Future<AssetView> getAsset(String assetId) async {
+    return AssetView.fromJson(
+      _asMap(await _request('GET', '/assets/$assetId')),
+    );
+  }
+
+  Future<AssetPreviewDescriptor> getAssetPreview(String assetId) async {
+    final preview = AssetPreviewDescriptor.fromJson(
+      _asMap(await _request('GET', '/assets/$assetId/preview')),
+    );
+    final contentUrl = preview.contentUrl;
+    return AssetPreviewDescriptor(
+      kind: preview.kind,
+      mediaType: preview.mediaType,
+      contentUrl: contentUrl == null
+          ? null
+          : contentUrl.startsWith('http')
+              ? contentUrl
+              : '${_serverOrigin()}$contentUrl',
+      text: preview.text,
+      truncated: preview.truncated,
+    );
+  }
+
+  Future<AssetDeleteImpact> getAssetDeleteImpact(
+      Iterable<String> assetIds) async {
+    return AssetDeleteImpact.fromJson(_asMap(await _request(
+      'POST',
+      '/assets/delete-impact',
+      body: {'assetIds': assetIds.toList()},
+    )));
+  }
+
+  Future<void> deleteAssets(Iterable<String> assetIds) async {
+    await _request(
+      'POST',
+      '/assets/batch-delete',
+      body: {'assetIds': assetIds.toList()},
+    );
+  }
+
   Future<AccountSummary> getAccountSummary() async {
     return AccountSummary.fromJson(
       _asMap(await _request('GET', '/account/summary')),
     );
   }
 
-  Future<AssetView> uploadAsset(PickedLocalFile file) async {
+  Future<AssetView> uploadAsset(
+    PickedLocalFile file, {
+    String origin = 'USER_UPLOAD',
+  }) async {
     final boundary =
         'yuanzuo-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 32)}';
-    final request = await _client
-        .postUrl(Uri.parse('${ApiConfig.baseUrl}/assets'))
-        .timeout(const Duration(seconds: 10));
-    request.headers.contentType = ContentType(
-      'multipart',
-      'form-data',
-      parameters: {'boundary': boundary},
-    );
-    request.add(utf8.encode('--$boundary\r\n'));
-    request.add(utf8.encode(
-      'Content-Disposition: form-data; name="file"; filename="${_quoted(file.name)}"\r\n',
-    ));
-    request.add(utf8.encode('Content-Type: ${file.mediaType}\r\n\r\n'));
-    request.add(file.bytes);
-    request.add(utf8.encode('\r\n--$boundary--\r\n'));
-    final response = await request.close().timeout(const Duration(seconds: 60));
-    final decoded = await _decodeResponse(response);
-    return AssetView.fromJson(_asMap(decoded));
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/assets')
+          .replace(queryParameters: {'origin': origin});
+      final request =
+          await _client.postUrl(uri).timeout(const Duration(seconds: 10));
+      request.headers.contentType = ContentType(
+        'multipart',
+        'form-data',
+        parameters: {'boundary': boundary},
+      );
+      request.add(utf8.encode('--$boundary\r\n'));
+      request.add(utf8.encode(
+        'Content-Disposition: form-data; name="file"; filename="${_quoted(file.name)}"\r\n',
+      ));
+      request.add(utf8.encode('Content-Type: ${file.mediaType}\r\n\r\n'));
+      await request.addStream(file.openRead());
+      request.add(utf8.encode('\r\n--$boundary--\r\n'));
+      final response =
+          await request.close().timeout(const Duration(minutes: 30));
+      final decoded = await _decodeResponse(response);
+      return AssetView.fromJson(_asMap(decoded));
+    } finally {
+      await file.cleanup();
+    }
   }
 
   Future<void> deleteAsset(String assetId) async {
@@ -154,7 +232,7 @@ class BackendApi {
           await request.close().timeout(const Duration(seconds: 60));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         await response.drain<void>();
-        throw ApiException('图片下载失败 (${response.statusCode})');
+        throw ApiException('文件下载失败 (${response.statusCode})');
       }
       final bytes = BytesBuilder(copy: false);
       await for (final chunk in response) {
@@ -166,7 +244,44 @@ class BackendApi {
     } on SocketException {
       throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个 Wi-Fi');
     } on TimeoutException {
-      throw const ApiException('图片下载超时，请稍后重试');
+      throw const ApiException('文件下载超时，请稍后重试');
+    }
+  }
+
+  Future<File> downloadAssetToTemporaryFile(
+    String assetId, {
+    required String fileName,
+  }) async {
+    Directory? directory;
+    try {
+      directory = await Directory.systemTemp.createTemp('yuanzuo-preview-');
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}'
+        '${_temporaryFileName(fileName)}',
+      );
+      final request = await _client
+          .getUrl(Uri.parse(assetContentUrl(assetId)))
+          .timeout(const Duration(seconds: 10));
+      final response =
+          await request.close().timeout(const Duration(seconds: 60));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        await response.drain<void>();
+        throw ApiException('文件下载失败 (${response.statusCode})');
+      }
+      await response.pipe(file.openWrite());
+      return file;
+    } on ApiException {
+      await _deleteTemporaryDirectory(directory);
+      rethrow;
+    } on SocketException {
+      await _deleteTemporaryDirectory(directory);
+      throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个 Wi-Fi');
+    } on TimeoutException {
+      await _deleteTemporaryDirectory(directory);
+      throw const ApiException('文件下载超时，请稍后重试');
+    } on FileSystemException {
+      await _deleteTemporaryDirectory(directory);
+      throw const ApiException('无法创建文件预览缓存');
     }
   }
 
@@ -365,6 +480,31 @@ class BackendApi {
 
   static String _quoted(String value) =>
       value.replaceAll('"', '').replaceAll('\r', '').replaceAll('\n', '');
+
+  static String _temporaryFileName(String value) {
+    final normalized = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll('\r', '')
+        .replaceAll('\n', '')
+        .trim();
+    return normalized.isEmpty ? 'preview-file' : normalized;
+  }
+
+  static Future<void> _deleteTemporaryDirectory(Directory? directory) async {
+    if (directory == null) return;
+    try {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    } on FileSystemException {
+      // Preview cleanup is best effort.
+    }
+  }
+
+  static String _serverOrigin() {
+    final uri = Uri.parse(ApiConfig.baseUrl);
+    return uri.replace(path: '', query: null, fragment: null).toString();
+  }
 
   static String _statusLabel(String status) => switch (status) {
         'QUEUED' => '任务排队中',

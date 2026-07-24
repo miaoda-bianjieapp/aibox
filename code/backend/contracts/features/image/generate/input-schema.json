@@ -17,8 +17,15 @@
         "type": "string",
         "format": "uuid"
       },
-      "title": "参考图片",
-      "description": "可选上传最多 3 张主体、构图或风格参考图。"
+      "title": "自行上传参考图",
+      "description": "可选上传最多 3 张主体、构图或风格参考图；与上一版生成成果分开管理。"
+    },
+    "generatedReferenceMode": {
+      "type": "string",
+      "enum": ["NONE", "USE_BASE"],
+      "default": "NONE",
+      "title": "上一版成果",
+      "description": "继续修改时决定是否将上一版生成成果作为额外参考图。"
     },
     "aspectRatio": {
       "type": "string",

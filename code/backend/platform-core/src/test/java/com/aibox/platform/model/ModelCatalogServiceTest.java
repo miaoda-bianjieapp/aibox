@@ -115,6 +115,32 @@ class ModelCatalogServiceTest {
         });
     }
 
+    @Test
+    void exposesOnlyThePublicReferenceImageLimit() {
+        ModelDeploymentEntity deployment = availableDeployment("model-a");
+        when(deployment.getConfig()).thenReturn(Map.of(
+                "maxReferenceImages", 4,
+                "imagePartName", "image[]",
+                "providerSecret", "must-not-leak"
+        ));
+
+        ModelCatalogService.ModelPolicyView policy = service.getFeaturePolicy("writing.draft");
+
+        assertThat(policy.options().get(0).maxReferenceImages()).isEqualTo(4);
+    }
+
+    @Test
+    void mapsTheLegacyUnsupportedReferenceImageFlagToZero() {
+        ModelDeploymentEntity deployment = availableDeployment("model-a");
+        when(deployment.getConfig()).thenReturn(Map.of(
+                "supportsReferenceImages", false
+        ));
+
+        ModelCatalogService.ModelPolicyView policy = service.getFeaturePolicy("writing.draft");
+
+        assertThat(policy.options().get(0).maxReferenceImages()).isZero();
+    }
+
     private FeatureModelOptionEntity option(String code) {
         FeatureModelOptionEntity option = mock(FeatureModelOptionEntity.class);
         when(option.getDeploymentCode()).thenReturn(code);
@@ -132,14 +158,15 @@ class ModelCatalogServiceTest {
         return policy;
     }
 
-    private void availableDeployment(String code) {
-        availableDeployment(code, "TEXT_GENERATION");
+    private ModelDeploymentEntity availableDeployment(String code) {
+        return availableDeployment(code, "TEXT_GENERATION");
     }
 
-    private void availableDeployment(String code, String capability) {
+    private ModelDeploymentEntity availableDeployment(String code, String capability) {
         ModelDeploymentEntity deployment = mock(ModelDeploymentEntity.class);
         when(deployment.getCapability()).thenReturn(capability);
         when(deployment.getProviderCode()).thenReturn("provider");
         when(deploymentRepository.findByCodeAndEnabledTrue(code)).thenReturn(Optional.of(deployment));
+        return deployment;
     }
 }

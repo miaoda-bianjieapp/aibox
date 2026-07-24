@@ -149,6 +149,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, Object?> _values = {};
   final Map<String, List<AssetView>> _assetsByField = {};
+  final Set<String> _temporaryDerivedAssetIds = {};
   final PromptOptimizationUndoStore _promptUndoStore =
       PromptOptimizationUndoStore();
   final Map<String, String> _promptAssistErrors = {};
@@ -159,6 +160,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   String? _optimizingPromptField;
   bool _submitting = false;
   bool _initialized = false;
+  bool _derivedAssetsHandedOff = false;
+  int _modelSelectorEpoch = 0;
 
   @override
   void initState() {
@@ -171,6 +174,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
 
   @override
   void dispose() {
+    if (!_derivedAssetsHandedOff) {
+      for (final assetId in _temporaryDerivedAssetIds) {
+        unawaited(widget.data.api.deleteAsset(assetId).catchError((_) {}));
+      }
+    }
     _nameController.dispose();
     for (final controller in _controllers.values) {
       controller.dispose();
@@ -339,6 +347,21 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             TextEditingController(text: initial?.toString() ?? '');
       }
     }
+    _initializeRevisionArtifactReference(feature);
+  }
+
+  void _initializeRevisionArtifactReference(FeatureDetail feature) {
+    if (!widget.request.isRevision) return;
+    final config = feature.revisionArtifactReference;
+    if (config.isEmpty) return;
+    final field = config['modeField']?.toString();
+    if (field == null || field.isEmpty) return;
+    final enabledValue = config['enabledValue']?.toString() ?? 'USE_BASE';
+    final disabledValue = config['disabledValue']?.toString() ?? 'NONE';
+    final enabledByDefault = config['defaultEnabled'] != false;
+    _values[field] = enabledByDefault && _baseArtifactAsset != null
+        ? enabledValue
+        : disabledValue;
   }
 
   void _initializeAssetFields(FeatureDetail feature) {
@@ -383,16 +406,76 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     return widget.data.assets.where((asset) => ids.contains(asset.id)).toList();
   }
 
+  AssetView? get _baseArtifactAsset {
+    final supplied = widget.request.baseArtifactAssets
+        .where((asset) => asset.available)
+        .firstOrNull;
+    if (supplied != null) return supplied;
+    return _assetsForIds(widget.request.baseArtifactAssetIds)
+        .where((asset) => asset.available)
+        .firstOrNull;
+  }
+
+  ModelOption? _selectedReferenceModel(FeatureDetail feature) {
+    final policy = feature.modelPolicies
+        .where((item) => item.capability == 'IMAGE_GENERATION')
+        .firstOrNull;
+    if (policy == null) return null;
+    final selectedCode = _selectedModels[policy.capability];
+    return policy.options
+        .where((option) => option.code == selectedCode)
+        .firstOrNull;
+  }
+
+  bool _referenceInputsDisabledByModel(FeatureDetail feature) =>
+      _selectedReferenceModel(feature)?.maxReferenceImages == 0;
+
+  bool _assetFieldRequiresReferenceSupport(
+    FeatureDetail feature,
+    String field,
+  ) =>
+      feature.fieldOptions(field)['requiresReferenceImageSupport'] == true;
+
+  bool _hasReferenceInputs(FeatureDetail feature) {
+    final hasUserReferences = feature.fieldOrder.any((field) =>
+        _assetFieldRequiresReferenceSupport(feature, field) &&
+        (_assetsByField[field]?.isNotEmpty ?? false));
+    if (hasUserReferences) return true;
+    final config = feature.revisionArtifactReference;
+    if (!widget.request.isRevision || config.isEmpty) return false;
+    final field = config['modeField']?.toString();
+    final enabledValue = config['enabledValue']?.toString() ?? 'USE_BASE';
+    return field != null &&
+        _values[field]?.toString() == enabledValue &&
+        _baseArtifactAsset != null;
+  }
+
+  int _activeBaseReferenceCount(FeatureDetail feature) {
+    if (_referenceInputsDisabledByModel(feature)) return 0;
+    final config = feature.revisionArtifactReference;
+    if (!widget.request.isRevision || config.isEmpty) return 0;
+    final field = config['modeField']?.toString();
+    final enabledValue = config['enabledValue']?.toString() ?? 'USE_BASE';
+    return field != null &&
+            _values[field]?.toString() == enabledValue &&
+            _baseArtifactAsset != null
+        ? 1
+        : 0;
+  }
+
   List<Widget> _buildModelSelectors(FeatureDetail feature) {
     final widgets = <Widget>[];
     for (final policy in feature.modelPolicies) {
       if (!policy.shouldShowSelector) continue;
-      widgets.addAll(_buildModelSelector(policy));
+      widgets.addAll(_buildModelSelector(feature, policy));
     }
     return widgets;
   }
 
-  List<Widget> _buildModelSelector(ModelPolicy policy) {
+  List<Widget> _buildModelSelector(
+    FeatureDetail feature,
+    ModelPolicy policy,
+  ) {
     final selectedCode = _selectedModels[policy.capability];
     final selected =
         policy.options.where((item) => item.code == selectedCode).firstOrNull;
@@ -400,6 +483,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       const SizedBox(height: 15),
       _FieldLabel(_modelCapabilityLabel(policy.capability)),
       DropdownButtonFormField<String>(
+        key: ValueKey(
+          '${policy.capability}:$selectedCode:$_modelSelectorEpoch',
+        ),
         value: selectedCode,
         isExpanded: true,
         items: policy.options
@@ -420,11 +506,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             .toList(),
         onChanged: _submitting
             ? null
-            : (value) => setState(() {
-                  if (value != null) {
-                    _selectedModels[policy.capability] = value;
-                  }
-                }),
+            : (value) {
+                if (value != null) {
+                  unawaited(_selectModel(feature, policy, value));
+                }
+              },
       ),
       if (selected != null) ...[
         const SizedBox(height: 6),
@@ -438,13 +524,61 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     ];
   }
 
+  Future<void> _selectModel(
+    FeatureDetail feature,
+    ModelPolicy policy,
+    String code,
+  ) async {
+    if (_selectedModels[policy.capability] == code) return;
+    final option =
+        policy.options.where((item) => item.code == code).firstOrNull;
+    if (option?.maxReferenceImages == 0 && _hasReferenceInputs(feature)) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('当前模型不支持参考图'),
+          content: const Text(
+            '切换后，本次将暂时不使用上一版成果及已选择的参考图。切换回支持参考图的模型后会恢复当前选择。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('继续切换'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) {
+        if (mounted) setState(() => _modelSelectorEpoch++);
+        return;
+      }
+      if (!mounted) return;
+    }
+    setState(() => _selectedModels[policy.capability] = code);
+  }
+
   List<Widget> _buildFields(FeatureDetail feature) {
     final fields = <Widget>[];
+    var revisionReferenceAdded = false;
     for (final field in feature.fieldOrder) {
       if (!feature.isFieldVisible(field, _values)) continue;
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
+      if (!revisionReferenceAdded &&
+          _assetFieldRequiresReferenceSupport(feature, field) &&
+          feature.revisionArtifactReference.isNotEmpty &&
+          widget.request.isRevision) {
+        fields
+          ..add(const SizedBox(height: 15))
+          ..add(_buildRevisionArtifactReference(feature));
+        revisionReferenceAdded = true;
+      }
+      if (widgetType == 'hidden') continue;
       fields
         ..add(const SizedBox(height: 15))
         ..add(_FieldLabel(schema['title']?.toString() ?? field,
@@ -495,6 +629,57 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       }
     }
     return fields;
+  }
+
+  Widget _buildRevisionArtifactReference(FeatureDetail feature) {
+    final config = feature.revisionArtifactReference;
+    final modeField =
+        config['modeField']?.toString() ?? 'generatedReferenceMode';
+    final enabledValue = config['enabledValue']?.toString() ?? 'USE_BASE';
+    final disabledValue = config['disabledValue']?.toString() ?? 'NONE';
+    final enabled = _values[modeField]?.toString() == enabledValue;
+    final disabledByModel = _referenceInputsDisabledByModel(feature);
+    final asset = _baseArtifactAsset;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _FieldLabel(config['title']?.toString() ?? '上一版成果'),
+      const SizedBox(height: 6),
+      Text(
+        config['description']?.toString() ?? '默认作为额外参考图，可点击叉号仅在本次生成中移除。',
+        style: const TextStyle(color: AppColors.muted, fontSize: 12),
+      ),
+      const SizedBox(height: 8),
+      if (asset == null)
+        const Text(
+          '上一版成果已删除，本次无法作为参考图使用。',
+          style: TextStyle(color: AppColors.danger, fontSize: 12),
+        )
+      else if (enabled)
+        Opacity(
+          opacity: disabledByModel ? 0.45 : 1,
+          child: _AssetPreview(
+            asset: asset,
+            contentUrl: widget.data.api.assetContentUrl(asset.id),
+            onRemove: _submitting || disabledByModel
+                ? null
+                : () => setState(() => _values[modeField] = disabledValue),
+          ),
+        )
+      else
+        OutlinedButton.icon(
+          onPressed: _submitting || disabledByModel
+              ? null
+              : () => setState(() => _values[modeField] = enabledValue),
+          icon: const Icon(Icons.restore_rounded),
+          label: const Text('重新使用上一版成果'),
+        ),
+      if (disabledByModel) ...[
+        const SizedBox(height: 7),
+        const Text(
+          '当前模型不支持参考图，以上选择已暂时禁用。',
+          style: TextStyle(color: AppColors.muted, fontSize: 11),
+        ),
+      ],
+    ]);
   }
 
   Widget _buildField(FeatureDetail feature, String field,
@@ -648,6 +833,15 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final options = feature.fieldOptions(field);
     final assets = _assetsByField[field] ?? const <AssetView>[];
     final maxItems = _integerOption(options, 'maxItems') ?? 1;
+    final requiresReferenceSupport =
+        _assetFieldRequiresReferenceSupport(feature, field);
+    final disabledByModel =
+        requiresReferenceSupport && _referenceInputsDisabledByModel(feature);
+    final selectedReferenceModel = _selectedReferenceModel(feature);
+    final totalReferenceLimit = selectedReferenceModel?.maxReferenceImages ??
+        _integerOption(feature.config, 'maxTotalReferenceImages');
+    final activeReferenceCount =
+        assets.length + _activeBaseReferenceCount(feature);
     final acceptedMimeTypes = _stringListOption(options, 'acceptedMimeTypes',
         fallback: _mimeTypesForWidget(widgetType));
     final allowedExtensions = _stringListOption(options, 'allowedExtensions');
@@ -666,7 +860,12 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       if (maxItems > 1)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: Text('已选择 ${assets.length}/$maxItems',
+          child: Text(
+              disabledByModel
+                  ? '已暂存 ${assets.length}/$maxItems · 当前模型不使用参考图'
+                  : requiresReferenceSupport && totalReferenceLimit != null
+                      ? '自行上传 ${assets.length}/$maxItems · 模型参考输入 $activeReferenceCount/$totalReferenceLimit'
+                      : '已选择 ${assets.length}/$maxItems',
               style: const TextStyle(color: AppColors.muted, fontSize: 11)),
         ),
       if (assets.isNotEmpty)
@@ -676,7 +875,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           children: assets
               .map((asset) => _AssetPreview(
                     asset: asset,
-                    onRemove: _submitting
+                    onRemove: _submitting || disabledByModel
                         ? null
                         : () => _removeAsset(feature, field, asset),
                     contentUrl: widget.data.api.assetContentUrl(asset.id),
@@ -693,7 +892,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ),
       const SizedBox(height: 8),
       OutlinedButton.icon(
-        onPressed: _submitting || assets.length >= maxItems
+        onPressed: _submitting || disabledByModel || assets.length >= maxItems
             ? null
             : () => _pickAsset(
                   feature,
@@ -707,7 +906,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         icon: const Icon(Icons.upload_file_outlined),
         label: Text(assets.length >= maxItems
             ? '已达到数量上限'
-            : options['uploadLabel']?.toString() ?? '选择并上传图片'),
+            : disabledByModel
+                ? '当前模型不支持参考图'
+                : options['uploadLabel']?.toString() ?? '选择并上传图片'),
       ),
     ]);
   }
@@ -805,14 +1006,20 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       });
       final previous =
           List<AssetView>.from(_assetsByField[field] ?? const <AssetView>[]);
-      final mask = await widget.data.api.uploadAsset(PickedLocalFile(
-        name: 'local-edit-mask-${DateTime.now().millisecondsSinceEpoch}.png',
-        mediaType: 'image/png',
-        bytes: bytes,
-      ));
+      final mask = await widget.data.api.uploadAsset(
+          PickedLocalFile(
+            name:
+                'local-edit-mask-${DateTime.now().millisecondsSinceEpoch}.png',
+            mediaType: 'image/png',
+            bytes: bytes,
+            sizeBytes: bytes.length,
+          ),
+          origin: 'APP_DERIVED');
+      _temporaryDerivedAssetIds.add(mask.id);
       for (final asset in previous) {
         try {
           await widget.data.api.deleteAsset(asset.id);
+          _temporaryDerivedAssetIds.remove(asset.id);
         } catch (_) {
           // Referenced historical masks remain in the asset library.
         }
@@ -864,11 +1071,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           staleMasks.addAll(_clearDependentMaskFields(feature, field));
         });
         for (final stale in staleMasks) {
-          try {
-            await widget.data.api.deleteAsset(stale.id);
-          } catch (_) {
-            // A mask already referenced by history cannot be removed.
-          }
+          await _deleteTemporaryDerivedAsset(stale);
         }
       }
     } catch (exception) {
@@ -881,10 +1084,12 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     String field,
     AssetView asset,
   ) {
+    final removed = <AssetView>[asset];
     setState(() {
       _assetsByField[field]?.remove(asset);
-      _clearDependentMaskFields(feature, field);
+      removed.addAll(_clearDependentMaskFields(feature, field));
     });
+    unawaited(_deleteTemporaryDerivedAssets(removed));
   }
 
   List<AssetView> _clearDependentMaskFields(
@@ -901,6 +1106,24 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _assetsByField[field] = [];
     }
     return removed;
+  }
+
+  Future<void> _deleteTemporaryDerivedAssets(
+    Iterable<AssetView> assets,
+  ) async {
+    for (final asset in assets) {
+      await _deleteTemporaryDerivedAsset(asset);
+    }
+  }
+
+  Future<void> _deleteTemporaryDerivedAsset(AssetView asset) async {
+    if (!_temporaryDerivedAssetIds.contains(asset.id)) return;
+    try {
+      await widget.data.api.deleteAsset(asset.id);
+      _temporaryDerivedAssetIds.remove(asset.id);
+    } catch (_) {
+      // The backend also clears submitted and expired temporary assets.
+    }
   }
 
   Future<void> _optimizePrompt(FeatureDetail feature, String field) async {
@@ -960,9 +1183,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
       if (_isAssetField(schema, widgetType)) continue;
-      final value = schema['type'] == 'boolean' || schema['enum'] is List
-          ? _values[field]
-          : _controllers[field]?.text.trim();
+      final value = _effectiveFieldValue(feature, field, schema);
       if (value != null && value.toString().isNotEmpty) {
         parameters[field] = value;
       }
@@ -974,6 +1195,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final assets = <String, List<String>>{};
     for (final field in feature.fieldOrder) {
       if (!feature.isFieldVisible(field, _values)) continue;
+      if (_assetFieldRequiresReferenceSupport(feature, field) &&
+          _referenceInputsDisabledByModel(feature)) {
+        continue;
+      }
       final ids = (_assetsByField[field] ?? const <AssetView>[])
           .map((asset) => asset.id)
           .toList();
@@ -995,6 +1220,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
       if (_isAssetField(schema, widgetType)) {
+        if (_assetFieldRequiresReferenceSupport(feature, field) &&
+            _referenceInputsDisabledByModel(feature)) {
+          continue;
+        }
         final assets = _assetsByField[field] ?? const <AssetView>[];
         if (feature.requiredFields.contains(field) && assets.isEmpty) {
           setState(() => _error = '请上传${schema['title'] ?? field}');
@@ -1007,17 +1236,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         }
         continue;
       }
-      Object? value;
-      if (schema['type'] == 'boolean' || schema['enum'] is List) {
-        value = _values[field];
-      } else {
-        final raw = _controllers[field]?.text.trim() ?? '';
-        value = switch (schema['type']) {
-          'integer' => int.tryParse(raw),
-          'number' => double.tryParse(raw),
-          _ => raw,
-        };
-      }
+      final value = _effectiveFieldValue(feature, field, schema);
       if (feature.requiredFields.contains(field) &&
           (value == null || value.toString().isEmpty)) {
         setState(() => _error = '请填写${schema['title'] ?? field}');
@@ -1036,6 +1255,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final inputAssetIds = <String>[];
     for (final field in feature.fieldOrder) {
       if (!feature.isFieldVisible(field, _values)) continue;
+      if (_assetFieldRequiresReferenceSupport(feature, field) &&
+          _referenceInputsDisabledByModel(feature)) {
+        continue;
+      }
       for (final asset in _assetsByField[field] ?? const <AssetView>[]) {
         if (!inputAssetIds.contains(asset.id)) inputAssetIds.add(asset.id);
       }
@@ -1073,7 +1296,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         parameters: parameters,
         inputAssetIds: inputAssetIds,
         onStatus: executionController.updateStatus,
-        onRunCreated: executionController.attachRun,
+        onRunCreated: (runId) {
+          _derivedAssetsHandedOff = true;
+          _temporaryDerivedAssetIds.clear();
+          executionController.attachRun(runId);
+        },
         onOutput: executionController.updateOutput,
       );
       executionController.complete(result);
@@ -1089,6 +1316,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         if (exception.code == 'RUN_CANCELLED') {
           executionController.markCancelled();
           setState(() {
+            _clearHandedOffDerivedFields(feature);
             _submitting = false;
             _status = null;
             _error = null;
@@ -1097,6 +1325,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         }
         executionController.fail(exception.message);
         setState(() {
+          _clearHandedOffDerivedFields(feature);
           _submitting = false;
           _status = null;
           _error = exception.message;
@@ -1106,12 +1335,44 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       if (mounted) {
         executionController.fail('$exception');
         setState(() {
+          _clearHandedOffDerivedFields(feature);
           _submitting = false;
           _status = null;
           _error = '$exception';
         });
       }
     }
+  }
+
+  Object? _effectiveFieldValue(
+    FeatureDetail feature,
+    String field,
+    Map<String, dynamic> schema,
+  ) {
+    final revisionReference = feature.revisionArtifactReference;
+    final modeField = revisionReference['modeField']?.toString();
+    if (field == modeField && _referenceInputsDisabledByModel(feature)) {
+      return revisionReference['disabledValue']?.toString() ?? 'NONE';
+    }
+    if (schema['type'] == 'boolean' || schema['enum'] is List) {
+      return _values[field];
+    }
+    final raw = _controllers[field]?.text.trim() ?? '';
+    return switch (schema['type']) {
+      'integer' => int.tryParse(raw),
+      'number' => double.tryParse(raw),
+      _ => raw,
+    };
+  }
+
+  void _clearHandedOffDerivedFields(FeatureDetail feature) {
+    if (!_derivedAssetsHandedOff) return;
+    for (final field in feature.fieldOrder) {
+      if (feature.widgetFor(field) == 'image_mask') {
+        _assetsByField[field] = [];
+      }
+    }
+    _derivedAssetsHandedOff = false;
   }
 
   Widget _buildActions(FeatureDetail feature) {
@@ -1164,6 +1425,14 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   }
 
   void _resetParameters(FeatureDetail feature) {
+    final removedDerivedAssets = <AssetView>[];
+    for (final field in feature.fieldOrder) {
+      if (feature.widgetFor(field) == 'image_mask') {
+        removedDerivedAssets.addAll(
+          _assetsByField[field] ?? const <AssetView>[],
+        );
+      }
+    }
     setState(() {
       _assetsByField.clear();
       _promptUndoStore.clear();
@@ -1187,6 +1456,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _status = null;
       _error = null;
     });
+    unawaited(_deleteTemporaryDerivedAssets(removedDerivedAssets));
   }
 
   static bool _isAssetField(Map<String, dynamic> schema, String widgetType) {

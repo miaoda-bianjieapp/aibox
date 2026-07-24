@@ -169,6 +169,9 @@ class FeatureDetail extends FeatureEntry {
 
   Set<String> get revisionResetFields =>
       _stringList(config['revisionResetFields']).toSet();
+
+  Map<String, dynamic> get revisionArtifactReference =>
+      _map(uiSchema['revisionArtifactReference']);
 }
 
 class ModelPolicy {
@@ -202,6 +205,7 @@ class ModelOption {
     required this.isDefault,
     required this.sourceType,
     required this.sourceName,
+    required this.maxReferenceImages,
   });
 
   factory ModelOption.fromJson(Map<String, dynamic> json) => ModelOption(
@@ -211,6 +215,9 @@ class ModelOption {
         isDefault: json['isDefault'] == true,
         sourceType: _string(json, 'sourceType'),
         sourceName: _string(json, 'sourceName'),
+        maxReferenceImages: json['maxReferenceImages'] == null
+            ? null
+            : _integer(json, 'maxReferenceImages'),
       );
 
   final String code;
@@ -219,8 +226,11 @@ class ModelOption {
   final bool isDefault;
   final String sourceType;
   final String sourceName;
+  final int? maxReferenceImages;
 
   String get sourceLabel => sourceType == 'RELAY' ? '中转' : '官方';
+  bool get supportsReferenceImages =>
+      maxReferenceImages == null || maxReferenceImages! > 0;
 }
 
 class WorkspaceDefinition {
@@ -334,6 +344,7 @@ class RunView {
     required this.status,
     required this.parameters,
     required this.inputAssetIds,
+    this.inputAssets = const [],
     required this.baseArtifactId,
     required this.selectedModelCode,
     required this.selectedModels,
@@ -348,6 +359,8 @@ class RunView {
         status: _string(json, 'status'),
         parameters: _map(json['parameters']),
         inputAssetIds: _stringList(json['inputAssetIds']),
+        inputAssets:
+            _mapList(json['inputAssets']).map(AssetView.fromJson).toList(),
         baseArtifactId: json['baseArtifactId']?.toString(),
         selectedModelCode: json['selectedModelCode']?.toString(),
         selectedModels: _stringMap(json['selectedModels']),
@@ -361,6 +374,7 @@ class RunView {
   final String status;
   final Map<String, dynamic> parameters;
   final List<String> inputAssetIds;
+  final List<AssetView> inputAssets;
   final String? baseArtifactId;
   final String? selectedModelCode;
   final Map<String, String> selectedModels;
@@ -381,6 +395,7 @@ class ArtifactView {
     required this.mimeType,
     required this.content,
     required this.metadata,
+    this.assets = const [],
     required this.createdAt,
   });
 
@@ -395,6 +410,7 @@ class ArtifactView {
         mimeType: _string(json, 'mimeType'),
         content: _map(json['content']),
         metadata: _map(json['metadata']),
+        assets: _mapList(json['assets']).map(AssetView.fromJson).toList(),
         createdAt: _date(json['createdAt']),
       );
 
@@ -408,6 +424,7 @@ class ArtifactView {
   final String mimeType;
   final Map<String, dynamic> content;
   final Map<String, dynamic> metadata;
+  final List<AssetView> assets;
   final DateTime createdAt;
 }
 
@@ -434,6 +451,12 @@ class AssetView {
     required this.mediaType,
     required this.sizeBytes,
     required this.createdAt,
+    this.origin = 'USER_UPLOAD',
+    this.category = 'OTHER',
+    this.status = 'READY',
+    this.available = true,
+    this.associatedTaskCount = 0,
+    this.latestTaskTitle,
   });
 
   factory AssetView.fromJson(Map<String, dynamic> json) => AssetView(
@@ -442,6 +465,12 @@ class AssetView {
         mediaType: _string(json, 'mediaType'),
         sizeBytes: _integer(json, 'sizeBytes'),
         createdAt: _date(json['createdAt']),
+        origin: json['origin']?.toString() ?? 'USER_UPLOAD',
+        category: json['category']?.toString() ?? 'OTHER',
+        status: json['status']?.toString() ?? 'READY',
+        available: json['available'] != false,
+        associatedTaskCount: _integer(json, 'associatedTaskCount'),
+        latestTaskTitle: json['latestTaskTitle']?.toString(),
       );
 
   final String id;
@@ -449,6 +478,74 @@ class AssetView {
   final String mediaType;
   final int sizeBytes;
   final DateTime createdAt;
+  final String origin;
+  final String category;
+  final String status;
+  final bool available;
+  final int associatedTaskCount;
+  final String? latestTaskTitle;
+
+  bool get isImage => category == 'IMAGE' || mediaType.startsWith('image/');
+  bool get isModelOutput => origin == 'MODEL_OUTPUT';
+}
+
+class AssetPage {
+  const AssetPage({required this.items, required this.nextCursor});
+
+  factory AssetPage.fromJson(Map<String, dynamic> json) => AssetPage(
+        items: _mapList(json['items']).map(AssetView.fromJson).toList(),
+        nextCursor: json['nextCursor']?.toString(),
+      );
+
+  final List<AssetView> items;
+  final String? nextCursor;
+}
+
+class AssetDeleteImpact {
+  const AssetDeleteImpact({
+    required this.assetCount,
+    required this.totalBytes,
+    required this.affectedTaskCount,
+    required this.affectedRunCount,
+  });
+
+  factory AssetDeleteImpact.fromJson(Map<String, dynamic> json) =>
+      AssetDeleteImpact(
+        assetCount: _integer(json, 'assetCount'),
+        totalBytes: _integer(json, 'totalBytes'),
+        affectedTaskCount: _integer(json, 'affectedTaskCount'),
+        affectedRunCount: _integer(json, 'affectedRunCount'),
+      );
+
+  final int assetCount;
+  final int totalBytes;
+  final int affectedTaskCount;
+  final int affectedRunCount;
+}
+
+class AssetPreviewDescriptor {
+  const AssetPreviewDescriptor({
+    required this.kind,
+    required this.mediaType,
+    required this.contentUrl,
+    required this.text,
+    required this.truncated,
+  });
+
+  factory AssetPreviewDescriptor.fromJson(Map<String, dynamic> json) =>
+      AssetPreviewDescriptor(
+        kind: _string(json, 'kind'),
+        mediaType: _string(json, 'mediaType'),
+        contentUrl: json['contentUrl']?.toString(),
+        text: json['text']?.toString(),
+        truncated: json['truncated'] == true,
+      );
+
+  final String kind;
+  final String mediaType;
+  final String? contentUrl;
+  final String? text;
+  final bool truncated;
 }
 
 class AccountSummary {
@@ -499,6 +596,7 @@ class TaskLaunchRequest {
     this.initialModels = const {},
     this.baseArtifactText,
     this.baseArtifactAssetIds = const [],
+    this.baseArtifactAssets = const [],
   });
 
   final WorkspaceDefinition workspace;
@@ -514,6 +612,7 @@ class TaskLaunchRequest {
   final Map<String, String> initialModels;
   final String? baseArtifactText;
   final List<String> baseArtifactAssetIds;
+  final List<AssetView> baseArtifactAssets;
 
   bool get isRevision => existingTaskId != null && baseArtifactId != null;
 }

@@ -77,36 +77,80 @@ class ProjectsPage extends StatelessWidget {
       );
 
   Future<void> _create(BuildContext context) async {
-    final name = TextEditingController();
-    final description = TextEditingController();
-    final created = await showDialog<bool>(
+    final draft = await showDialog<_ProjectDraft>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => const _CreateProjectDialog(),
+    );
+    if (draft == null) return;
+    await data.createProject(draft.name, draft.description);
+  }
+}
+
+class _ProjectDraft {
+  const _ProjectDraft(this.name, this.description);
+
+  final String name;
+  final String description;
+}
+
+class _CreateProjectDialog extends StatefulWidget {
+  const _CreateProjectDialog();
+
+  @override
+  State<_CreateProjectDialog> createState() => _CreateProjectDialogState();
+}
+
+class _CreateProjectDialogState extends State<_CreateProjectDialog> {
+  final TextEditingController _name = TextEditingController();
+  final TextEditingController _description = TextEditingController();
+  String? _nameError;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
         title: const Text('新建项目'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
-              controller: name,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '项目名称')),
+            controller: _name,
+            autofocus: true,
+            textInputAction: TextInputAction.next,
+            decoration:
+                InputDecoration(labelText: '项目名称', errorText: _nameError),
+            onChanged: (_) {
+              if (_nameError != null) setState(() => _nameError = null);
+            },
+          ),
           const SizedBox(height: 12),
           TextField(
-              controller: description,
-              decoration: const InputDecoration(labelText: '说明（可选）')),
+            controller: _description,
+            decoration: const InputDecoration(labelText: '说明（可选）'),
+            onSubmitted: (_) => _submit(),
+          ),
         ]),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('创建')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(onPressed: _submit, child: const Text('创建')),
         ],
-      ),
-    );
-    if (created == true && name.text.trim().isNotEmpty) {
-      await data.createProject(name.text.trim(), description.text.trim());
+      );
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _nameError = '请输入项目名称');
+      return;
     }
-    name.dispose();
-    description.dispose();
+    Navigator.pop(
+      context,
+      _ProjectDraft(name, _description.text.trim()),
+    );
   }
 }

@@ -88,6 +88,8 @@ public class RunExecutionStateService {
             }
             List<ArtifactEntity> artifacts = artifactService.saveRunArtifacts(run, drafts);
             run.markPartial(clock.instant());
+            runRepository.saveAndFlush(run);
+            assetService.cleanupDerivedForRun(runId);
             outboxService.append(
                     "TASK_RUN",
                     runId,
@@ -109,6 +111,8 @@ public class RunExecutionStateService {
         }
         List<ArtifactEntity> artifacts = artifactService.saveRunArtifacts(run, drafts);
         run.markSucceeded(clock.instant());
+        runRepository.saveAndFlush(run);
+        assetService.cleanupDerivedForRun(runId);
         outboxService.append(
                 "TASK_RUN",
                 runId,
@@ -133,6 +137,8 @@ public class RunExecutionStateService {
         }
         outputService.failRun(runId);
         run.markFailed(errorCode, abbreviate(errorMessage), clock.instant());
+        runRepository.saveAndFlush(run);
+        assetService.cleanupDerivedForRun(runId);
         outboxService.append(
                 "TASK_RUN",
                 runId,

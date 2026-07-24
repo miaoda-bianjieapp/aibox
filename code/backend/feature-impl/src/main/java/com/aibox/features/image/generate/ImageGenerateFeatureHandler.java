@@ -29,9 +29,12 @@ public final class ImageGenerateFeatureHandler implements FeatureHandler {
     public static final String FEATURE_CODE = "image.generate";
     static final String MODEL_ALIAS = "image.generation.default";
     static final int MAX_PROMPT_LENGTH = 500;
-    static final int MAX_REFERENCE_IMAGES = 3;
-    static final long MAX_REFERENCE_IMAGE_BYTES = 10L * 1024L * 1024L;
+    static final int MAX_USER_REFERENCE_IMAGES = 3;
+    static final int MAX_TOTAL_REFERENCE_IMAGES = 4;
+    static final long MAX_REFERENCE_IMAGE_BYTES = 20L * 1024L * 1024L;
     static final long MAX_REFERENCE_IMAGES_TOTAL_BYTES = 30L * 1024L * 1024L;
+    static final String REFERENCE_MODE_NONE = "NONE";
+    static final String REFERENCE_MODE_USE_BASE = "USE_BASE";
 
     private static final Set<String> ASPECT_RATIOS = Set.of("1:1", "16:9", "9:16");
     private static final Set<String> MEDIA_TYPES = Set.of("image/png", "image/jpeg", "image/webp");
@@ -56,18 +59,29 @@ public final class ImageGenerateFeatureHandler implements FeatureHandler {
         if (!ASPECT_RATIOS.contains(aspectRatio)) {
             throw new FeatureValidationException("aspectRatio", "请选择 1:1、16:9 或 9:16 图片比例");
         }
-        if (context.inputAssetIds().size() > MAX_REFERENCE_IMAGES) {
+        if (context.inputAssetIds().size() > MAX_USER_REFERENCE_IMAGES) {
             throw new FeatureValidationException("referenceImages", "最多上传 3 张参考图片");
         }
         validateInputAssets(context);
-        validateBaseArtifact(context.baseArtifact());
+        validateBaseArtifactKind(context.baseArtifact());
+        String referenceMode = referenceMode(context);
+        if (REFERENCE_MODE_USE_BASE.equals(referenceMode) && context.baseArtifact() == null) {
+            throw new FeatureValidationException(
+                    "generatedReferenceMode",
+                    "使用上一版成果时必须选择一个图片成果"
+            );
+        }
+        if (mergeReferenceAssets(context, referenceMode).size() > MAX_TOTAL_REFERENCE_IMAGES) {
+            throw new FeatureValidationException("referenceImages", "参考图片总数不能超过 4 张");
+        }
     }
 
     @Override
     public FeatureExecutionResult execute(FeatureExecutionContext context, ModelGateway modelGateway) {
         String prompt = stringParameter(context, "prompt");
         String aspectRatio = stringParameter(context, "aspectRatio");
-        List<UUID> referenceAssetIds = mergeReferenceAssets(context);
+        String referenceMode = referenceMode(context);
+        List<UUID> referenceAssetIds = mergeReferenceAssets(context, referenceMode);
 
         ImageGenerationResponse response = modelGateway.generateImage(new ImageGenerationRequest(
                 context.tenantId(),
@@ -97,6 +111,10 @@ public final class ImageGenerateFeatureHandler implements FeatureHandler {
         metadata.put("aspectRatio", aspectRatio);
         metadata.put("userReferenceImageCount", context.inputAssetIds().size());
         metadata.put("referenceImageCount", referenceAssetIds.size());
+        metadata.put(
+                "usedBaseArtifactAsReference",
+                REFERENCE_MODE_USE_BASE.equals(referenceMode)
+        );
         if (context.baseArtifact() != null) {
             metadata.put("basedOnArtifactId", context.baseArtifact().id().toString());
             metadata.put("basedOnVersion", context.baseArtifact().versionNumber());
@@ -126,7 +144,7 @@ public final class ImageGenerateFeatureHandler implements FeatureHandler {
                 );
             }
             if (asset.sizeBytes() <= 0 || asset.sizeBytes() > MAX_REFERENCE_IMAGE_BYTES) {
-                throw new FeatureValidationException("referenceImages", "单张参考图片不能超过 10 MB");
+                throw new FeatureValidationException("referenceImages", "单张参考图片不能超过 20 MB");
             }
             totalBytes += asset.sizeBytes();
         }
@@ -135,21 +153,38 @@ public final class ImageGenerateFeatureHandler implements FeatureHandler {
         }
     }
 
-    private static void validateBaseArtifact(ArtifactReference baseArtifact) {
+    private static void validateBaseArtifactKind(ArtifactReference baseArtifact) {
         if (baseArtifact == null) return;
         if (!"image".equals(baseArtifact.kind())
                 && (baseArtifact.mimeType() == null || !baseArtifact.mimeType().startsWith("image/"))) {
             throw new FeatureValidationException("baseArtifactId", "只能基于图片成果继续修改");
         }
-        baseAssetId(baseArtifact);
     }
 
-    private static List<UUID> mergeReferenceAssets(FeatureExecutionContext context) {
+    private static List<UUID> mergeReferenceAssets(
+            FeatureExecutionContext context,
+            String referenceMode
+    ) {
         LinkedHashSet<UUID> references = new LinkedHashSet<>(context.inputAssetIds());
-        if (context.baseArtifact() != null) {
+        if (REFERENCE_MODE_USE_BASE.equals(referenceMode)) {
             references.add(baseAssetId(context.baseArtifact()));
         }
         return List.copyOf(references);
+    }
+
+    private static String referenceMode(FeatureExecutionContext context) {
+        Object configured = context.parameters().get("generatedReferenceMode");
+        String value = configured == null ? "" : configured.toString().trim().toUpperCase(Locale.ROOT);
+        if (value.isEmpty()) {
+            return context.baseArtifact() == null ? REFERENCE_MODE_NONE : REFERENCE_MODE_USE_BASE;
+        }
+        if (!REFERENCE_MODE_NONE.equals(value) && !REFERENCE_MODE_USE_BASE.equals(value)) {
+            throw new FeatureValidationException(
+                    "generatedReferenceMode",
+                    "上一版成果引用方式无效"
+            );
+        }
+        return value;
     }
 
     private static UUID baseAssetId(ArtifactReference baseArtifact) {
