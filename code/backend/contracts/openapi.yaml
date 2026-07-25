@@ -233,6 +233,64 @@ paths:
           description: 任务、运行历史与成果
         "404":
           $ref: "#/components/responses/NotFound"
+  /tasks/{taskId}/assets:
+    get:
+      operationId: listTaskAssets
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 任务当前和历史附件关系
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskAsset"
+    post:
+      operationId: addTaskAssets
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assetIds]
+              properties:
+                assetIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  uniqueItems: true
+                  items: {type: string, format: uuid}
+                role:
+                  type: string
+                  enum: [DOCUMENT_SOURCE]
+                  default: DOCUMENT_SOURCE
+      responses:
+        "200":
+          description: 更新后的任务附件关系
+  /tasks/{taskId}/assets/{assetId}:
+    delete:
+      operationId: removeTaskAsset
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - name: assetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [DOCUMENT_SOURCE]
+            default: DOCUMENT_SOURCE
+      responses:
+        "200":
+          description: 更新后的任务附件关系
   /tasks/{taskId}/runs:
     post:
       operationId: createTaskRun
@@ -429,6 +487,20 @@ components:
         currentArtifactId: {type: [string, "null"], format: uuid}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
+    TaskAsset:
+      type: object
+      required: [role, status, ordinal, asset, addedAt]
+      properties:
+        role: {type: string}
+        status:
+          type: string
+          enum: [ACTIVE, REMOVED]
+        ordinal: {type: integer, minimum: 0}
+        asset:
+          type: object
+          additionalProperties: true
+        addedAt: {type: string, format: date-time}
+        removedAt: {type: [string, "null"], format: date-time}
     ModelPolicy:
       type: object
       required: [capability, defaultModelCode, allowUserSelection, options]

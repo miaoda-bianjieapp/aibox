@@ -95,6 +95,53 @@ class BackendApi {
     return TaskDetail.fromJson(_asMap(await _request('GET', '/tasks/$taskId')));
   }
 
+  Future<TaskView> createTask({
+    required String featureCode,
+    required String title,
+    String? projectId,
+  }) async {
+    return TaskView.fromJson(_asMap(await _request(
+      'POST',
+      '/tasks',
+      body: {
+        'featureCode': featureCode,
+        'title': title,
+        'projectId': projectId,
+      },
+    )));
+  }
+
+  Future<List<TaskAssetView>> addTaskAssets(
+    String taskId,
+    Iterable<String> assetIds, {
+    String role = 'DOCUMENT_SOURCE',
+  }) async {
+    return _asMapList(await _request(
+      'POST',
+      '/tasks/$taskId/assets',
+      body: {
+        'assetIds': assetIds.toList(),
+        'role': role,
+      },
+    ))
+        .map(TaskAssetView.fromJson)
+        .toList();
+  }
+
+  Future<List<TaskAssetView>> removeTaskAsset(
+    String taskId,
+    String assetId, {
+    String role = 'DOCUMENT_SOURCE',
+  }) async {
+    final path = Uri(
+      path: '/tasks/$taskId/assets/$assetId',
+      queryParameters: {'role': role},
+    ).toString();
+    return _asMapList(await _request('DELETE', path))
+        .map(TaskAssetView.fromJson)
+        .toList();
+  }
+
   Future<List<ProjectView>> listProjects() async {
     return _asMapList(await _request('GET', '/projects'))
         .map(ProjectView.fromJson)

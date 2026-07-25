@@ -15,10 +15,16 @@ class AssetPreviewPage extends StatefulWidget {
     super.key,
     required this.api,
     required this.asset,
+    this.initialPage,
+    this.initialLine,
+    this.endLine,
   });
 
   final BackendApi api;
   final AssetView asset;
+  final int? initialPage;
+  final int? initialLine;
+  final int? endLine;
 
   @override
   State<AssetPreviewPage> createState() => _AssetPreviewPageState();
@@ -61,6 +67,9 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
                   descriptor: snapshot.requireData,
                   api: widget.api,
                   asset: widget.asset,
+                  initialPage: widget.initialPage,
+                  initialLine: widget.initialLine,
+                  endLine: widget.endLine,
                 );
               },
             )
@@ -78,11 +87,17 @@ class _PreviewBody extends StatelessWidget {
     required this.descriptor,
     required this.api,
     required this.asset,
+    required this.initialPage,
+    required this.initialLine,
+    required this.endLine,
   });
 
   final AssetPreviewDescriptor descriptor;
   final BackendApi api;
   final AssetView asset;
+  final int? initialPage;
+  final int? initialLine;
+  final int? endLine;
 
   @override
   Widget build(BuildContext context) {
@@ -91,10 +106,16 @@ class _PreviewBody extends StatelessWidget {
       'IMAGE' when url != null => _ImagePreview(url: url),
       'VIDEO' when url != null => _VideoPreview(url: url),
       'AUDIO' when url != null => _AudioPreview(url: url),
-      'PDF' when url != null => _PdfPreview(api: api, asset: asset),
+      'PDF' when url != null => _PdfPreview(
+          api: api,
+          asset: asset,
+          initialPage: initialPage,
+        ),
       'TEXT' => _TextPreview(
           text: descriptor.text ?? '',
           truncated: descriptor.truncated,
+          initialLine: initialLine,
+          endLine: endLine,
         ),
       _ => const _PreviewMessage(
           icon: Icons.insert_drive_file_outlined,
@@ -106,10 +127,15 @@ class _PreviewBody extends StatelessWidget {
 }
 
 class _PdfPreview extends StatefulWidget {
-  const _PdfPreview({required this.api, required this.asset});
+  const _PdfPreview({
+    required this.api,
+    required this.asset,
+    required this.initialPage,
+  });
 
   final BackendApi api;
   final AssetView asset;
+  final int? initialPage;
 
   @override
   State<_PdfPreview> createState() => _PdfPreviewState();
@@ -166,6 +192,7 @@ class _PdfPreviewState extends State<_PdfPreview> {
         }
         return PDFView(
           filePath: snapshot.requireData.path,
+          defaultPage: (widget.initialPage ?? 1).clamp(1, 1 << 20) - 1,
           enableSwipe: true,
           swipeHorizontal: false,
           autoSpacing: true,
@@ -434,13 +461,23 @@ class _AudioPreviewState extends State<_AudioPreview> {
 }
 
 class _TextPreview extends StatelessWidget {
-  const _TextPreview({required this.text, required this.truncated});
+  const _TextPreview({
+    required this.text,
+    required this.truncated,
+    required this.initialLine,
+    required this.endLine,
+  });
 
   final String text;
   final bool truncated;
+  final int? initialLine;
+  final int? endLine;
 
   @override
   Widget build(BuildContext context) {
+    if (initialLine != null && text.isNotEmpty) {
+      return _buildFocusedLines();
+    }
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
       children: [
@@ -459,6 +496,50 @@ class _TextPreview extends StatelessWidget {
           style: const TextStyle(fontSize: 14, height: 1.6),
         ),
       ],
+    );
+  }
+
+  Widget _buildFocusedLines() {
+    final lines = text.split(RegExp(r'\r?\n'));
+    final citedStart = initialLine!.clamp(1, lines.length).toInt();
+    final citedEnd =
+        (endLine ?? citedStart).clamp(citedStart, lines.length).toInt();
+    final windowStart = (citedStart - 12).clamp(1, lines.length).toInt();
+    final windowEnd = (citedEnd + 12).clamp(windowStart, lines.length).toInt();
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
+      itemCount: windowEnd - windowStart + 1,
+      itemBuilder: (context, index) {
+        final lineNumber = windowStart + index;
+        final highlighted = lineNumber >= citedStart && lineNumber <= citedEnd;
+        return Container(
+          color: highlighted ? AppColors.accentSoft : null,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 46,
+                child: Text(
+                  '$lineNumber',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SelectableText(
+                  lines[lineNumber - 1],
+                  style: const TextStyle(fontSize: 14, height: 1.55),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

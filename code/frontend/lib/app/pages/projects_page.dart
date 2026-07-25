@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
-import 'task_history_page.dart';
+import '../widgets/feature_page_router.dart';
 
 class ProjectsPage extends StatelessWidget {
   const ProjectsPage({super.key, required this.data});
@@ -62,11 +62,11 @@ class ProjectsPage extends StatelessWidget {
                                       title: Text(task.title),
                                       trailing: const Icon(
                                           Icons.chevron_right_rounded),
-                                      onTap: () => Navigator.of(context)
-                                          .push(MaterialPageRoute<void>(
-                                        builder: (context) => TaskHistoryPage(
-                                            taskId: task.id, data: data),
-                                      )),
+                                      onTap: () => openTaskExperience(
+                                        context,
+                                        data: data,
+                                        task: task,
+                                      ),
                                     ))
                                 .toList(),
                       );

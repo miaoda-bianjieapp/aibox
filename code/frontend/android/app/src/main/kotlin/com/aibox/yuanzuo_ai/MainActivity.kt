@@ -52,7 +52,7 @@ class MainActivity : FlutterActivity() {
                 }
                 pendingResult = result
                 pendingMultiple = call.method == "pickFiles"
-                pendingMaxFiles = (call.argument<Int>("maxFiles") ?: 1).coerceIn(1, 5)
+                pendingMaxFiles = (call.argument<Int>("maxFiles") ?: 1).coerceIn(1, 10)
                 val mimeTypes = call.argument<List<String>>("mimeTypes")?.toTypedArray()
                     ?: arrayOf("*/*")
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {

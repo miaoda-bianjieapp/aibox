@@ -5,7 +5,7 @@ import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_icons.dart';
 import '../widgets/brand_header.dart';
-import '../widgets/task_sheet.dart';
+import '../widgets/feature_page_router.dart';
 
 class FeaturesPage extends StatefulWidget {
   const FeaturesPage({super.key, required this.data});
@@ -156,10 +156,11 @@ class _FeaturesPageState extends State<FeaturesPage> {
       setState(() => _selectedGroup = group);
 
   void _openFeature(WorkspaceDefinition workspace, FeatureEntry entry) {
-    showTaskSheet(
+    openFeatureExperience(
       context,
       data: widget.data,
-      request: TaskLaunchRequest(workspace: workspace, entry: entry),
+      workspace: workspace,
+      entry: entry,
     );
   }
 }

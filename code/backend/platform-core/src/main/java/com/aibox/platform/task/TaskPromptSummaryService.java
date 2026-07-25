@@ -17,6 +17,7 @@ public final class TaskPromptSummaryService {
                     "sourceText", "rewriteRequirements", "polishRequirements"
             ),
             "writing.translate", List.of("sourceText"),
+            "document.qa", List.of("question"),
             "image.generate", List.of("prompt"),
             "image.local_edit", List.of("instruction"),
             "image.background_edit", List.of("backgroundDescription")
