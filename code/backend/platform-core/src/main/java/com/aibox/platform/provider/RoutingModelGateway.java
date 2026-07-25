@@ -111,13 +111,22 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
         ProviderTarget selected = requireProvider(
                 ModelCapability.VISION, request.modelAlias(), request.deploymentCode()
         );
-        List<ModelAsset> assets = request.inputAssetIds().stream().map(assetService::readForModel).toList();
+        List<ModelAsset> assets = new ArrayList<>(
+                request.inputAssetIds().stream().map(assetService::readForModel).toList()
+        );
+        assets.addAll(request.inlineInputAssets());
+        List<ModelAsset> immutableAssets = List.copyOf(assets);
         return invoke(
                 request.tenantId(), request.runId(), ModelCapability.VISION, request.modelAlias(), selected,
                 fingerprint(request.modelAlias(), selected.target().deploymentCode(),
                         request.systemPrompt(), request.userPrompt(),
-                        request.inputAssetIds().toString()),
-                () -> selected.provider().generateMultimodalText(selected.target(), request, assets),
+                        request.inputAssetIds().toString(),
+                        inlineAssetFingerprint(request.inlineInputAssets())),
+                () -> selected.provider().generateMultimodalText(
+                        selected.target(),
+                        request,
+                        immutableAssets
+                ),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputTokens(), response.outputTokens())
         );

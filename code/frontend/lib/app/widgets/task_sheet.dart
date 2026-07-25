@@ -150,6 +150,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, Object?> _values = {};
   final Map<String, List<AssetView>> _assetsByField = {};
   final Set<String> _temporaryDerivedAssetIds = {};
+  final Map<String, String> _selectedModelGroups = {};
   final PromptOptimizationUndoStore _promptUndoStore =
       PromptOptimizationUndoStore();
   final Map<String, String> _promptAssistErrors = {};
@@ -321,6 +322,23 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
               ? requested!
               : policy.defaultModelCode;
     }
+    for (final group in feature.modelSelectionGroups) {
+      final options = _availableGroupOptions(feature, group);
+      final selected = options.where((option) {
+        if (!group.capabilities.every(option.deployments.containsKey)) {
+          return false;
+        }
+        return group.capabilities.every((capability) =>
+            _selectedModels[capability] == option.deployments[capability]);
+      }).firstOrNull;
+      final fallback = selected ?? options.firstOrNull;
+      if (fallback == null) continue;
+      _selectedModelGroups[group.key] = fallback.value;
+      for (final capability in group.capabilities) {
+        final deployment = fallback.deployments[capability];
+        if (deployment != null) _selectedModels[capability] = deployment;
+      }
+    }
     _initializeAssetFields(feature);
     for (final field in feature.fieldOrder) {
       final schema =
@@ -465,12 +483,108 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
 
   List<Widget> _buildModelSelectors(FeatureDetail feature) {
     final widgets = <Widget>[];
+    final groupedCapabilities = <String>{};
+    for (final group in feature.modelSelectionGroups) {
+      final options = _availableGroupOptions(feature, group);
+      if (options.isEmpty) continue;
+      groupedCapabilities.addAll(group.capabilities);
+      widgets.addAll(_buildModelSelectionGroup(feature, group, options));
+    }
     for (final policy in feature.modelPolicies) {
+      if (groupedCapabilities.contains(policy.capability)) continue;
       if (!policy.shouldShowSelector) continue;
       widgets.addAll(_buildModelSelector(feature, policy));
     }
     return widgets;
   }
+
+  List<Widget> _buildModelSelectionGroup(
+    FeatureDetail feature,
+    ModelSelectionGroup group,
+    List<ModelSelectionGroupOption> options,
+  ) {
+    final selectedValue = _selectedModelGroups[group.key];
+    final selected =
+        options.where((option) => option.value == selectedValue).firstOrNull;
+    final sourceOption = selected?.deployments.entries
+        .map((entry) => feature.modelOption(entry.key, entry.value))
+        .whereType<ModelOption>()
+        .firstOrNull;
+    return [
+      const SizedBox(height: 15),
+      _FieldLabel(group.label),
+      DropdownButtonFormField<String>(
+        value: selectedValue,
+        isExpanded: true,
+        items: options.map((option) {
+          final optionSource = option.deployments.entries
+              .map((entry) => feature.modelOption(entry.key, entry.value))
+              .whereType<ModelOption>()
+              .firstOrNull;
+          return DropdownMenuItem<String>(
+            value: option.value,
+            child: Row(children: [
+              Expanded(
+                child: Text(
+                  option.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (optionSource != null) ...[
+                const SizedBox(width: 8),
+                _ModelSourceBadge(optionSource.sourceLabel),
+              ],
+            ]),
+          );
+        }).toList(),
+        onChanged: _submitting
+            ? null
+            : (value) {
+                if (value == null) return;
+                final option =
+                    options.where((item) => item.value == value).firstOrNull;
+                if (option == null) return;
+                setState(() {
+                  _selectedModelGroups[group.key] = value;
+                  for (final capability in group.capabilities) {
+                    final deployment = option.deployments[capability];
+                    if (deployment != null) {
+                      _selectedModels[capability] = deployment;
+                    }
+                  }
+                });
+              },
+      ),
+      if (selected != null &&
+          (group.description.isNotEmpty ||
+              selected.description.isNotEmpty ||
+              sourceOption != null)) ...[
+        const SizedBox(height: 6),
+        Text(
+          [
+            sourceOption?.sourceName ?? '',
+            selected.description.isNotEmpty
+                ? selected.description
+                : group.description,
+          ].where((value) => value.isNotEmpty).join(' · '),
+          style: const TextStyle(color: AppColors.muted, fontSize: 11),
+        ),
+      ],
+    ];
+  }
+
+  List<ModelSelectionGroupOption> _availableGroupOptions(
+    FeatureDetail feature,
+    ModelSelectionGroup group,
+  ) =>
+      group.options.where((option) {
+        return group.capabilities.every((capability) {
+          final deployment = option.deployments[capability];
+          return deployment != null &&
+              feature.modelOption(capability, deployment) != null;
+        });
+      }).toList();
 
   List<Widget> _buildModelSelector(
     FeatureDetail feature,
@@ -908,7 +1022,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             ? '已达到数量上限'
             : disabledByModel
                 ? '当前模型不支持参考图'
-                : options['uploadLabel']?.toString() ?? '选择并上传图片'),
+                : options['uploadLabel']?.toString() ??
+                    _defaultUploadLabel(widgetType)),
       ),
     ]);
   }
@@ -1062,7 +1177,14 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                   asset.sizeBytes >
               maxTotalSizeBytes) {
         await widget.data.deleteAsset(asset.id);
-        throw ApiException('图片总大小不能超过 ${_formatBytes(maxTotalSizeBytes)}');
+        final title = feature.properties[field] is Map
+            ? Map<String, dynamic>.from(
+                    feature.properties[field] as Map)['title']
+                ?.toString()
+            : null;
+        throw ApiException(
+          '${title ?? '文件'}总大小不能超过 ${_formatBytes(maxTotalSizeBytes)}',
+        );
       }
       if (asset != null && mounted) {
         final staleMasks = <AssetView>[];
@@ -1518,7 +1640,9 @@ class _AssetPreview extends StatelessWidget {
   final VoidCallback? onRemove;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) {
+    if (asset.isImage) {
+      return SizedBox(
         width: 92,
         child: Stack(
           children: [
@@ -1538,25 +1662,104 @@ class _AssetPreview extends StatelessWidget {
                 ),
               ),
             ),
-            if (onRemove != null)
-              Positioned(
-                top: 3,
-                right: 3,
-                child: InkWell(
-                  onTap: onRemove,
-                  child: Container(
-                    decoration: const BoxDecoration(
-                        color: Colors.black54, shape: BoxShape.circle),
-                    padding: const EdgeInsets.all(2),
-                    child: const Icon(Icons.close_rounded,
-                        color: Colors.white, size: 16),
-                  ),
-                ),
-              ),
+            if (onRemove != null) _removeButton(),
           ],
         ),
       );
+    }
+    return SizedBox(
+      width: 272,
+      height: 72,
+      child: Stack(
+        children: [
+          Container(
+            width: double.infinity,
+            height: double.infinity,
+            padding: const EdgeInsets.fromLTRB(12, 10, 34, 10),
+            decoration: BoxDecoration(
+              color: AppColors.wash,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Row(children: [
+              Icon(_fileIcon(asset.name), size: 27, color: AppColors.accent),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      asset.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.25,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _formatBytes(asset.sizeBytes),
+                      style:
+                          const TextStyle(color: AppColors.muted, fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+          ),
+          if (onRemove != null) _removeButton(dark: false),
+        ],
+      ),
+    );
+  }
+
+  Widget _removeButton({bool dark = true}) => Positioned(
+        top: 4,
+        right: 4,
+        child: InkWell(
+          onTap: onRemove,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: dark ? Colors.black54 : Colors.white,
+              shape: BoxShape.circle,
+              border: dark ? null : Border.all(color: AppColors.line),
+            ),
+            padding: const EdgeInsets.all(2),
+            child: Icon(
+              Icons.close_rounded,
+              color: dark ? Colors.white : AppColors.muted,
+              size: 16,
+            ),
+          ),
+        ),
+      );
 }
+
+IconData _fileIcon(String name) {
+  final extension = name.contains('.')
+      ? name.substring(name.lastIndexOf('.')).toLowerCase()
+      : '';
+  return switch (extension) {
+    '.pdf' => Icons.picture_as_pdf_outlined,
+    '.xls' || '.xlsx' || '.csv' => Icons.table_chart_outlined,
+    '.ppt' || '.pptx' => Icons.slideshow_outlined,
+    '.json' => Icons.data_object_outlined,
+    '.md' || '.markdown' || '.txt' => Icons.subject_outlined,
+    '.doc' || '.docx' => Icons.description_outlined,
+    _ => Icons.insert_drive_file_outlined,
+  };
+}
+
+String _defaultUploadLabel(String widgetType) => switch (widgetType) {
+      'file' => '选择并上传文件',
+      'audio' => '选择并上传音频',
+      'video' => '选择并上传视频',
+      _ => '选择并上传图片',
+    };
 
 List<String> _mimeTypesForWidget(String widgetType) => switch (widgetType) {
       'image' => ['image/png', 'image/jpeg', 'image/webp'],

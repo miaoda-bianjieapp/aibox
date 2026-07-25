@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["document", "summaryDepth"],
+  "properties": {
+    "document": {
+      "type": "string",
+      "format": "uuid",
+      "title": "待总结文档",
+      "description": "每次处理 1 个 PDF、Word、Excel、PowerPoint、Markdown、TXT、JSON 或 CSV 文档。"
+    },
+    "summaryDepth": {
+      "type": "string",
+      "enum": ["concise", "standard", "detailed"],
+      "default": "standard",
+      "title": "总结深度",
+      "description": "控制摘要和章节要点的展开程度。"
+    },
+    "focus": {
+      "type": "string",
+      "maxLength": 500,
+      "title": "关注重点",
+      "description": "可选。说明需要重点关注的问题、数据或决策信息。"
+    }
+  },
+  "additionalProperties": false
+}

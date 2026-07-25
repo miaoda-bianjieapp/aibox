@@ -12,6 +12,7 @@ import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImageGenerationResponse;
 import com.aibox.feature.spi.ImagePreservationMode;
 import com.aibox.feature.spi.ModelAsset;
+import com.aibox.feature.spi.MultimodalTextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import com.aibox.feature.spi.TextToSpeechRequest;
@@ -252,6 +253,71 @@ class RoutingModelGatewayTest {
                 List.of(inline),
                 null,
                 1,
+                Map.of()
+        ));
+
+        assertThat(capturedAssets.get()).containsExactly(persisted, inline);
+        verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
+    void appendsInlineVisionImagesAfterPersistedInputAssets() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.VISION,
+                "vision.document-ocr",
+                "test-vision"
+        )).thenReturn(List.of(target("test-vision", ModelCapability.VISION)));
+        UUID persistedId = UUID.randomUUID();
+        ModelAsset persisted = new ModelAsset(
+                persistedId,
+                "cover.png",
+                "image/png",
+                new byte[]{1}
+        );
+        ModelAsset inline = new ModelAsset(
+                UUID.randomUUID(),
+                "page-0002.jpg",
+                "image/jpeg",
+                new byte[]{2}
+        );
+        AssetService assetService = mock(AssetService.class);
+        when(assetService.readForModel(persistedId)).thenReturn(persisted);
+        AtomicReference<List<ModelAsset>> capturedAssets = new AtomicReference<>();
+        ModelProviderClient provider = new TestProvider() {
+            @Override
+            public TextGenerationResponse generateMultimodalText(
+                    ModelCallTarget target,
+                    MultimodalTextGenerationRequest request,
+                    List<ModelAsset> assets
+            ) {
+                capturedAssets.set(assets);
+                return new TextGenerationResponse(
+                        "ocr", "test", "model", "vision-request", 1, 1
+                );
+            }
+        };
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(provider),
+                repository,
+                assetService,
+                routingService,
+                Clock.fixed(Instant.parse("2026-07-25T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        gateway.generateMultimodalText(new MultimodalTextGenerationRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "vision.document-ocr",
+                "test-vision",
+                "system",
+                "user",
+                List.of(persistedId),
+                List.of(inline),
+                100,
+                0.1,
                 Map.of()
         ));
 

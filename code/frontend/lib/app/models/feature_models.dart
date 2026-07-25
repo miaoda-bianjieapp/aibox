@@ -172,6 +172,73 @@ class FeatureDetail extends FeatureEntry {
 
   Map<String, dynamic> get revisionArtifactReference =>
       _map(uiSchema['revisionArtifactReference']);
+
+  List<ModelSelectionGroup> get modelSelectionGroups =>
+      _mapList(uiSchema['modelSelectionGroups'])
+          .map(ModelSelectionGroup.fromJson)
+          .where((group) =>
+              group.key.isNotEmpty &&
+              group.capabilities.isNotEmpty &&
+              group.options.isNotEmpty)
+          .toList();
+
+  ModelOption? modelOption(String capability, String deploymentCode) {
+    final policy = modelPolicies
+        .where((item) => item.capability == capability)
+        .firstOrNull;
+    return policy?.options
+        .where((option) => option.code == deploymentCode)
+        .firstOrNull;
+  }
+}
+
+class ModelSelectionGroup {
+  const ModelSelectionGroup({
+    required this.key,
+    required this.label,
+    required this.description,
+    required this.capabilities,
+    required this.options,
+  });
+
+  factory ModelSelectionGroup.fromJson(Map<String, dynamic> json) =>
+      ModelSelectionGroup(
+        key: json['key']?.toString() ?? '',
+        label: json['label']?.toString() ?? '模型',
+        description: json['description']?.toString() ?? '',
+        capabilities: _stringList(json['capabilities']),
+        options: _mapList(json['options'])
+            .map(ModelSelectionGroupOption.fromJson)
+            .toList(),
+      );
+
+  final String key;
+  final String label;
+  final String description;
+  final List<String> capabilities;
+  final List<ModelSelectionGroupOption> options;
+}
+
+class ModelSelectionGroupOption {
+  const ModelSelectionGroupOption({
+    required this.value,
+    required this.displayName,
+    required this.description,
+    required this.deployments,
+  });
+
+  factory ModelSelectionGroupOption.fromJson(Map<String, dynamic> json) =>
+      ModelSelectionGroupOption(
+        value: json['value']?.toString() ?? '',
+        displayName: json['displayName']?.toString() ?? '',
+        description: json['description']?.toString() ?? '',
+        deployments: _stringMap(json['deployments']),
+      );
+
+  final String value;
+  final String displayName;
+  final String description;
+  final Map<String, String> deployments;
 }
 
 class ModelPolicy {
@@ -486,6 +553,7 @@ class AssetView {
   final String? latestTaskTitle;
 
   bool get isImage => category == 'IMAGE' || mediaType.startsWith('image/');
+  bool get isDocument => category == 'DOCUMENT';
   bool get isModelOutput => origin == 'MODEL_OUTPUT';
 }
 
