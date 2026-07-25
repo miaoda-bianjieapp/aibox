@@ -215,6 +215,7 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
             DocumentQuestionRequest request,
             TextGenerationListener listener
     ) {
+        documentKnowledgeService.ensureNotCancelled(request.runId());
         DocumentKnowledgeService.PreparedSearch prepared =
                 documentKnowledgeService.prepareAndSearch(
                         request,
@@ -243,6 +244,7 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
                         )).text()
                 );
 
+        documentKnowledgeService.ensureNotCancelled(request.runId());
         List<DocumentKnowledgeService.ChunkCandidate> reranked =
                 rerankCandidates(request, prepared.candidates());
         List<DocumentKnowledgeService.ChunkCandidate> sources = reranked.stream()
@@ -252,6 +254,7 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
             return noEvidenceResponse(prepared.metadata());
         }
 
+        documentKnowledgeService.ensureNotCancelled(request.runId());
         String finalPrompt = answerPrompt(request, sources);
         TextGenerationResponse answer = generateTextStream(
                 new TextGenerationRequest(
@@ -275,10 +278,13 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
                 ),
                 listener
         );
+        documentKnowledgeService.ensureNotCancelled(request.runId());
         String finalAnswer = answer.text() == null ? "" : answer.text().trim();
         CitationValidation validation = validateCitations(finalAnswer, sources.size());
         if (!validation.valid()) {
+            documentKnowledgeService.ensureNotCancelled(request.runId());
             finalAnswer = repairAnswer(request, finalPrompt, finalAnswer, sources.size());
+            documentKnowledgeService.ensureNotCancelled(request.runId());
             validation = validateCitations(finalAnswer, sources.size());
             if (!validation.valid()) {
                 throw new ModelProviderException(

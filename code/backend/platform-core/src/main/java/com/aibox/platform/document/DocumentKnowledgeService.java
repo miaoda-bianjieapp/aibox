@@ -5,6 +5,7 @@ import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.common.JsonCodec;
+import com.aibox.platform.execution.RunCancelledException;
 import jakarta.annotation.PreDestroy;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.cn.smart.SmartChineseAnalyzer;
@@ -108,9 +109,14 @@ public class DocumentKnowledgeService {
 
     private static final int PARSER_VERSION = 1;
     private static final int MAX_CANDIDATES = 40;
+    private static final int MIN_CANDIDATES_FOR_RERANK = 12;
     private static final int MAX_VISUALS_PER_DOCUMENT = 40;
+    private static final int MAX_SUPPLEMENTAL_VISUALS_PER_DOCUMENT = 4;
     private static final int MAX_NON_EMPTY_ROWS = 200_000;
     private static final int MAX_CHART_POINTS_PER_SERIES = 200;
+    private static final int MIN_EXTRACTED_TEXT_FOR_OCR_SKIP = 40;
+    private static final int MAX_EXTRACTED_TEXT_FOR_VISUAL_SUPPLEMENT = 800;
+    private static final int MIN_VECTOR_OPERATORS_FOR_VISUAL_SUPPLEMENT = 20;
     private static final String NO_VISUAL_CONTENT = "NO_VISUAL_CONTENT";
     private static final Set<String> PDF_VISUAL_OPERATORS = Set.of(
             "m", "l", "c", "v", "y", "h", "re",
@@ -119,6 +125,11 @@ public class DocumentKnowledgeService {
     );
     private static final Pattern CELL_ROW_PATTERN =
             Pattern.compile("\\$?[A-Za-z]{1,3}\\$?(\\d+)");
+    private static final Set<String> VISUAL_QUESTION_TERMS = Set.of(
+            "图", "图表", "折线", "曲线", "饼图", "柱状", "趋势", "图例",
+            "chart", "graph", "plot", "diagram", "trend", "legend",
+            "line chart", "pie chart", "bar chart"
+    );
     private static final Set<String> TEXT_EXTENSIONS = Set.of(
             ".txt", ".md", ".csv", ".json"
     );
@@ -147,13 +158,16 @@ public class DocumentKnowledgeService {
             DocumentQuestionRequest request,
             VisionAnalyzer visionAnalyzer
     ) {
+        ensureNotCancelled(request.runId());
         List<IndexReference> indexes = new ArrayList<>();
         for (UUID assetId : request.inputAssetIds()) {
+            ensureNotCancelled(request.runId());
             ModelAsset asset = assetService.readForModel(assetId);
             indexes.add(ensureIndex(
                     request, asset, request.visionDeploymentCode(), visionAnalyzer
             ));
         }
+        ensureNotCancelled(request.runId());
         List<ChunkCandidate> candidates = search(indexes, retrievalQuery(request));
         Map<String, Object> metadata = Map.of(
                 "retrievalMode", "LUCENE_BM25",
@@ -266,6 +280,13 @@ public class DocumentKnowledgeService {
                 } catch (ModelProviderException exception) {
                     markFailed(indexId, exception.code(), exception.getMessage());
                     throw exception;
+                } catch (RunCancelledException exception) {
+                    markFailed(
+                            indexId,
+                            "DOCUMENT_INDEX_CANCELLED",
+                            "Document indexing was cancelled"
+                    );
+                    throw exception;
                 } catch (RuntimeException | IOException exception) {
                     markFailed(indexId, "DOCUMENT_PARSE_FAILED", "Document could not be parsed");
                     throw new ModelProviderException(
@@ -322,6 +343,7 @@ public class DocumentKnowledgeService {
     ) throws IOException {
         List<ParsedChunk> chunks = new ArrayList<>();
         int visualCalls = 0;
+        int supplementalVisualCalls = 0;
         try (PDDocument document = Loader.loadPDF(asset.content())) {
             if (document.isEncrypted()) {
                 throw new ModelProviderException(
@@ -333,6 +355,7 @@ public class DocumentKnowledgeService {
             PDFTextStripper stripper = new PDFTextStripper();
             PDFRenderer renderer = new PDFRenderer(document);
             for (int pageIndex = 0; pageIndex < document.getNumberOfPages(); pageIndex++) {
+                ensureNotCancelled(request.runId());
                 int pageNumber = pageIndex + 1;
                 stripper.setStartPage(pageNumber);
                 stripper.setEndPage(pageNumber);
@@ -345,8 +368,14 @@ public class DocumentKnowledgeService {
                     chunks.addAll(splitText(text, locator, Map.of("pageNumber", pageNumber)));
                 }
                 PDPage page = document.getPage(pageIndex);
-                boolean needsVision = text.length() < 40 || containsVisualContent(page);
-                if (needsVision && visualCalls < MAX_VISUALS_PER_DOCUMENT) {
+                boolean needsOcr = normalizeText(text).length()
+                        < MIN_EXTRACTED_TEXT_FOR_OCR_SKIP;
+                boolean needsSupplement = !needsOcr
+                        && supplementalVisualCalls < MAX_SUPPLEMENTAL_VISUALS_PER_DOCUMENT
+                        && requiresPdfVision(text, page, request.question());
+                if ((needsOcr || needsSupplement)
+                        && visualCalls < MAX_VISUALS_PER_DOCUMENT) {
+                    ensureNotCancelled(request.runId());
                     BufferedImage image = renderer.renderImageWithDPI(pageIndex, 160, ImageType.RGB);
                     String visualText = analyzeVisual(
                             request,
@@ -359,6 +388,8 @@ public class DocumentKnowledgeService {
                                     + NO_VISUAL_CONTENT + "。"
                     );
                     visualCalls++;
+                    if (needsSupplement) supplementalVisualCalls++;
+                    ensureNotCancelled(request.runId());
                     if (meaningfulVisualText(visualText)) {
                         Map<String, Object> metadata = Map.of(
                                 "pageNumber", pageNumber,
@@ -400,6 +431,7 @@ public class DocumentKnowledgeService {
                 for (XWPFRun run : paragraph.getRuns()) {
                     for (XWPFPicture picture : run.getEmbeddedPictures()) {
                         if (visualCalls >= MAX_VISUALS_PER_DOCUMENT) break;
+                        ensureNotCancelled(request.runId());
                         byte[] bytes = picture.getPictureData().getData();
                         if (!imageHashes.add(sha256(bytes))) continue;
                         String visual = analyzeVisual(
@@ -413,6 +445,7 @@ public class DocumentKnowledgeService {
                                         + NO_VISUAL_CONTENT + "。"
                         );
                         visualCalls++;
+                        ensureNotCancelled(request.runId());
                         if (meaningfulVisualText(visual)) {
                             Map<String, Object> locator = new LinkedHashMap<>();
                             locator.put("type", "WORD_PARAGRAPH");
@@ -826,6 +859,7 @@ public class DocumentKnowledgeService {
                     chunks.addAll(splitText(text.toString(), locator, Map.of()));
                 }
                 if (hasVisual && visualCalls < MAX_VISUALS_PER_DOCUMENT) {
+                    ensureNotCancelled(request.runId());
                     String visual = analyzeVisual(
                             request,
                             visionAnalyzer,
@@ -837,6 +871,7 @@ public class DocumentKnowledgeService {
                                     + NO_VISUAL_CONTENT + "。"
                     );
                     visualCalls++;
+                    ensureNotCancelled(request.runId());
                     if (meaningfulVisualText(visual)) {
                         chunks.add(new ParsedChunk(
                                 visual, locator, Map.of("source", "VISION")
@@ -876,6 +911,7 @@ public class DocumentKnowledgeService {
                     chunks.addAll(splitText(text.toString(), locator, Map.of()));
                 }
                 if (hasVisual && visualCalls < MAX_VISUALS_PER_DOCUMENT) {
+                    ensureNotCancelled(request.runId());
                     String visual = analyzeVisual(
                             request,
                             visionAnalyzer,
@@ -886,6 +922,7 @@ public class DocumentKnowledgeService {
                                     + NO_VISUAL_CONTENT + "。"
                     );
                     visualCalls++;
+                    ensureNotCancelled(request.runId());
                     if (meaningfulVisualText(visual)) {
                         chunks.add(new ParsedChunk(
                                 visual, locator, Map.of("source", "VISION")
@@ -952,7 +989,9 @@ public class DocumentKnowledgeService {
                     if (chunk == null) continue;
                     result.add(candidate(chunk, scoreDoc.score));
                 }
-                if (!result.isEmpty()) return List.copyOf(result);
+                if (!result.isEmpty()) {
+                    return backfillCandidates(result, orderedCandidates(chunksById));
+                }
             }
         } catch (Exception ignored) {
             // Deterministic fallback below still allows the selected GPT model to rerank.
@@ -964,6 +1003,29 @@ public class DocumentKnowledgeService {
                 }
             }
         }
+        return orderedCandidates(chunksById);
+    }
+
+    static List<ChunkCandidate> backfillCandidates(
+            List<ChunkCandidate> ranked,
+            List<ChunkCandidate> fallback
+    ) {
+        if (ranked.size() >= MIN_CANDIDATES_FOR_RERANK) {
+            return List.copyOf(ranked);
+        }
+        List<ChunkCandidate> result = new ArrayList<>(ranked);
+        Set<UUID> seen = new LinkedHashSet<>();
+        ranked.forEach(candidate -> seen.add(candidate.chunkId()));
+        for (ChunkCandidate candidate : fallback) {
+            if (result.size() >= MIN_CANDIDATES_FOR_RERANK) break;
+            if (seen.add(candidate.chunkId())) result.add(candidate);
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<ChunkCandidate> orderedCandidates(
+            Map<String, ChunkRow> chunksById
+    ) {
         return chunksById.values().stream()
                 .sorted(Comparator.comparing(ChunkRow::fileName).thenComparingInt(ChunkRow::ordinal))
                 .limit(MAX_CANDIDATES)
@@ -1118,21 +1180,33 @@ public class DocumentKnowledgeService {
         return output.toByteArray();
     }
 
-    private static boolean containsVisualContent(PDPage page) {
+    private static PdfVisualProfile inspectPdfVisuals(PDPage page) {
+        boolean hasImage = false;
         try {
-            for (var name : page.getResources().getXObjectNames()) {
-                PDXObject object = page.getResources().getXObject(name);
-                if (object instanceof PDImageXObject) return true;
+            if (page.getResources() != null) {
+                for (var name : page.getResources().getXObjectNames()) {
+                    PDXObject object = page.getResources().getXObject(name);
+                    if (object instanceof PDImageXObject) {
+                        hasImage = true;
+                        break;
+                    }
+                }
             }
         } catch (IOException ignored) {
         }
+        int vectorOperators = 0;
+        boolean hasShading = false;
         PDFStreamParser parser = null;
         try {
             parser = new PDFStreamParser(page);
             for (Object token : parser.parse()) {
-                if (token instanceof Operator operator
-                        && PDF_VISUAL_OPERATORS.contains(operator.getName())) {
-                    return true;
+                if (!(token instanceof Operator operator)) continue;
+                String name = operator.getName();
+                if (PDF_VISUAL_OPERATORS.contains(name)) {
+                    vectorOperators++;
+                }
+                if ("sh".equals(name)) {
+                    hasShading = true;
                 }
             }
         } catch (IOException ignored) {
@@ -1144,7 +1218,42 @@ public class DocumentKnowledgeService {
                 }
             }
         }
-        return false;
+        return new PdfVisualProfile(hasImage, hasShading, vectorOperators);
+    }
+
+    static boolean requiresPdfVision(
+            String text,
+            PDPage page,
+            String question
+    ) {
+        String normalized = normalizeText(text);
+        if (normalized.length() < MIN_EXTRACTED_TEXT_FOR_OCR_SKIP) return true;
+        if (!isVisualQuestion(question)
+                || normalized.length() > MAX_EXTRACTED_TEXT_FOR_VISUAL_SUPPLEMENT) {
+            return false;
+        }
+        PdfVisualProfile profile = inspectPdfVisuals(page);
+        return profile.hasImage()
+                || profile.hasShading()
+                || profile.vectorOperators()
+                >= MIN_VECTOR_OPERATORS_FOR_VISUAL_SUPPLEMENT;
+    }
+
+    private static boolean isVisualQuestion(String question) {
+        String normalized = normalizeText(question).toLowerCase(Locale.ROOT);
+        return VISUAL_QUESTION_TERMS.stream().anyMatch(normalized::contains);
+    }
+
+    public void ensureNotCancelled(UUID runId) {
+        if (runId == null) return;
+        List<Boolean> values = jdbcTemplate.query("""
+                select cancel_requested or status = 'CANCELLED'
+                from task_run
+                where id = ?
+                """, (resultSet, rowNumber) -> resultSet.getBoolean(1), runId);
+        if (values.isEmpty() || values.get(0)) {
+            throw new RunCancelledException(runId);
+        }
     }
 
     private static ParsedChunk workbookChunk(
@@ -1395,6 +1504,13 @@ public class DocumentKnowledgeService {
     }
 
     private record RangeRows(int start, int end) {
+    }
+
+    private record PdfVisualProfile(
+            boolean hasImage,
+            boolean hasShading,
+            int vectorOperators
+    ) {
     }
 
     private record ChunkRow(

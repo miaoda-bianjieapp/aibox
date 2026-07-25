@@ -1,5 +1,6 @@
 package com.aibox.api;
 
+import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.platform.common.ConflictException;
 import com.aibox.platform.common.NotFoundException;
 import com.aibox.platform.common.PlatformException;
@@ -62,6 +63,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiError> handleUploadTooLarge(MaxUploadSizeExceededException exception) {
         return response(HttpStatus.PAYLOAD_TOO_LARGE, "ASSET_TOO_LARGE", "Uploaded file is too large", List.of());
+    }
+
+    @ExceptionHandler(ModelProviderException.class)
+    public ResponseEntity<ApiError> handleModelProvider(ModelProviderException exception) {
+        HttpStatus status = exception.retryable()
+                ? HttpStatus.SERVICE_UNAVAILABLE
+                : HttpStatus.BAD_GATEWAY;
+        log.warn(
+                "Model provider API error, code={}, retryable={}",
+                exception.code(),
+                exception.retryable()
+        );
+        return response(status, exception.code(), exception.getMessage(), List.of());
     }
 
     @ExceptionHandler(Exception.class)

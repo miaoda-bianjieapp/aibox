@@ -1,6 +1,6 @@
 featureCode: document.qa
 workspaceCode: document
-version: 1
+version: 2
 displayName: 文档问答
 description: 基于当前会话中的文档进行带精确来源的多轮问答。
 status: INTERNAL

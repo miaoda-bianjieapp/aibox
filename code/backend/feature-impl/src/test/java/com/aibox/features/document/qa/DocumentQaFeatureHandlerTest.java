@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -41,6 +42,23 @@ class DocumentQaFeatureHandlerTest {
         );
 
         assertThrows(FeatureValidationException.class, () -> handler.validate(context));
+    }
+
+    @Test
+    void acceptsCsvUsingTheCommonCommaSeparatedValuesMediaType() {
+        UUID assetId = UUID.randomUUID();
+        FeatureExecutionContext context = context(
+                assetId,
+                new InputAssetReference(
+                        assetId,
+                        "employees.csv",
+                        "text/comma-separated-values",
+                        1024
+                ),
+                null
+        );
+
+        assertDoesNotThrow(() -> handler.validate(context));
     }
 
     @Test

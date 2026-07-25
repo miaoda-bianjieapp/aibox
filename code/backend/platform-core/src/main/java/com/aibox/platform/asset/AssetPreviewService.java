@@ -8,9 +8,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -71,18 +75,50 @@ public class AssetPreviewService {
     }
 
     private TextPreview readText(Path path) {
+        try {
+            for (Charset charset : preferredTextCharsets(path)) {
+                try {
+                    return readText(path, charset);
+                } catch (CharacterCodingException ignored) {
+                    // Try the next supported text encoding.
+                }
+            }
+        } catch (IOException exception) {
+            throw new PlatformException("ASSET_PREVIEW_FAILED", "The text file could not be decoded");
+        }
+        throw new PlatformException("ASSET_PREVIEW_FAILED", "The text file could not be decoded");
+    }
+
+    private TextPreview readText(Path path, Charset charset) throws IOException {
         StringBuilder result = new StringBuilder();
-        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = Files.newBufferedReader(path, charset)) {
             char[] buffer = new char[8192];
             int count;
             while (result.length() <= MAX_TEXT_PREVIEW_CHARACTERS
                     && (count = reader.read(buffer)) >= 0) {
                 result.append(buffer, 0, count);
             }
-        } catch (IOException exception) {
-            throw new PlatformException("ASSET_PREVIEW_FAILED", "The text file could not be decoded");
         }
-        return truncate(result.toString());
+        String value = result.toString();
+        if (!value.isEmpty() && value.charAt(0) == '\uFEFF') {
+            value = value.substring(1);
+        }
+        return truncate(value);
+    }
+
+    private static List<Charset> preferredTextCharsets(Path path) throws IOException {
+        byte[] prefix = new byte[3];
+        int count;
+        try (InputStream input = Files.newInputStream(path)) {
+            count = input.read(prefix);
+        }
+        Charset gb18030 = Charset.forName("GB18030");
+        if (count >= 2
+                && ((prefix[0] == (byte) 0xFF && prefix[1] == (byte) 0xFE)
+                || (prefix[0] == (byte) 0xFE && prefix[1] == (byte) 0xFF))) {
+            return List.of(StandardCharsets.UTF_16, StandardCharsets.UTF_8, gb18030);
+        }
+        return List.of(StandardCharsets.UTF_8, gb18030, StandardCharsets.UTF_16);
     }
 
     private static TextPreview truncate(String value) {

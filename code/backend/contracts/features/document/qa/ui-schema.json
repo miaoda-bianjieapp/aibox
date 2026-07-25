@@ -19,6 +19,7 @@
         "text/plain",
         "text/markdown",
         "text/csv",
+        "text/comma-separated-values",
         "application/json",
         "application/octet-stream"
       ],

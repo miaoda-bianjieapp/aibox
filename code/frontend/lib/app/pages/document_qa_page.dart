@@ -154,23 +154,12 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
-          if (_taskId != null) ...[
+          if (_taskId != null)
             IconButton(
               onPressed: _openTaskHistory,
               tooltip: '任务历史',
               icon: const Icon(Icons.history_rounded),
             ),
-            IconButton(
-              onPressed: _loading ||
-                      _uploading ||
-                      _sending ||
-                      _activeAssets.length >= _maxFiles
-                  ? null
-                  : _showAddDocuments,
-              tooltip: '添加文档',
-              icon: const Icon(Icons.add_rounded),
-            ),
-          ],
         ],
       ),
       body: SafeArea(
@@ -302,7 +291,6 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
           canSend: _activeAssets.any((asset) => asset.available),
           onSend: _sendQuestion,
           onCancel: _cancelQuestion,
-          onAdd: _showAddDocuments,
           maxLength: _maxQuestionLength,
         ),
       ],
@@ -892,7 +880,6 @@ class _Composer extends StatelessWidget {
     required this.canSend,
     required this.onSend,
     required this.onCancel,
-    required this.onAdd,
     required this.maxLength,
   });
 
@@ -901,12 +888,11 @@ class _Composer extends StatelessWidget {
   final bool canSend;
   final VoidCallback onSend;
   final VoidCallback onCancel;
-  final VoidCallback onAdd;
   final int maxLength;
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+        padding: const EdgeInsets.fromLTRB(16, 10, 10, 12),
         decoration: const BoxDecoration(
           color: AppColors.paper,
           border: Border(top: BorderSide(color: AppColors.line)),
@@ -914,11 +900,6 @@ class _Composer extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            IconButton(
-              onPressed: sending ? null : onAdd,
-              tooltip: '添加文档',
-              icon: const Icon(Icons.add_circle_outline_rounded),
-            ),
             Expanded(
               child: TextField(
                 controller: controller,
@@ -999,10 +980,18 @@ class _AssistantMessage extends StatelessWidget {
                 ),
                 const SizedBox(width: 9),
                 Expanded(
-                  child: MarkdownOutputView(
-                    markdown: markdown,
-                    streaming: streaming,
-                  ),
+                  child: streaming && markdown.isEmpty
+                      ? const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 2),
+                          child: Text(
+                            '正在解析文档并检索来源...',
+                            style: TextStyle(color: AppColors.muted),
+                          ),
+                        )
+                      : MarkdownOutputView(
+                          markdown: markdown,
+                          streaming: streaming,
+                        ),
                 ),
               ],
             ),

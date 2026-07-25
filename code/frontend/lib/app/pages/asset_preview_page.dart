@@ -460,7 +460,7 @@ class _AudioPreviewState extends State<_AudioPreview> {
   }
 }
 
-class _TextPreview extends StatelessWidget {
+class _TextPreview extends StatefulWidget {
   const _TextPreview({
     required this.text,
     required this.truncated,
@@ -474,74 +474,138 @@ class _TextPreview extends StatelessWidget {
   final int? endLine;
 
   @override
+  State<_TextPreview> createState() => _TextPreviewState();
+}
+
+class _TextPreviewState extends State<_TextPreview> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _citationKey = GlobalKey();
+  bool _citationRevealScheduled = false;
+
+  @override
+  void didUpdateWidget(covariant _TextPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text ||
+        oldWidget.initialLine != widget.initialLine ||
+        oldWidget.endLine != widget.endLine) {
+      _citationRevealScheduled = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (initialLine != null && text.isNotEmpty) {
-      return _buildFocusedLines();
+    if (widget.initialLine != null && widget.text.isNotEmpty) {
+      return _buildFullTextWithCitation();
     }
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
       children: [
-        if (truncated)
-          Container(
-            margin: const EdgeInsets.only(bottom: 14),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF8E8),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text('文件较大，当前显示前 200 万个字符。'),
-          ),
+        if (widget.truncated) _buildTruncatedNotice(),
         SelectableText(
-          text.isEmpty ? '文件没有可显示的文本内容。' : text,
-          style: const TextStyle(fontSize: 14, height: 1.6),
+          widget.text.isEmpty ? '文件没有可显示的文本内容。' : widget.text,
+          style: _textStyle,
         ),
       ],
     );
   }
 
-  Widget _buildFocusedLines() {
-    final lines = text.split(RegExp(r'\r?\n'));
-    final citedStart = initialLine!.clamp(1, lines.length).toInt();
+  Widget _buildFullTextWithCitation() {
+    final lines = widget.text.split(RegExp(r'\r?\n'));
+    final citedStart = widget.initialLine!.clamp(1, lines.length).toInt();
     final citedEnd =
-        (endLine ?? citedStart).clamp(citedStart, lines.length).toInt();
-    final windowStart = (citedStart - 12).clamp(1, lines.length).toInt();
-    final windowEnd = (citedEnd + 12).clamp(windowStart, lines.length).toInt();
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
-      itemCount: windowEnd - windowStart + 1,
-      itemBuilder: (context, index) {
-        final lineNumber = windowStart + index;
-        final highlighted = lineNumber >= citedStart && lineNumber <= citedEnd;
-        return Container(
-          color: highlighted ? AppColors.accentSoft : null,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 46,
-                child: Text(
-                  '$lineNumber',
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: AppColors.muted,
-                    fontSize: 11,
+        (widget.endLine ?? citedStart).clamp(citedStart, lines.length).toInt();
+    final before = lines.take(citedStart - 1).join('\n');
+    final cited = lines.sublist(citedStart - 1, citedEnd).join('\n');
+    final after = lines.skip(citedEnd).join('\n');
+    _scheduleCitationReveal();
+
+    return SingleChildScrollView(
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (widget.truncated) _buildTruncatedNotice(),
+          if (before.isNotEmpty)
+            SelectableText(
+              before,
+              style: _textStyle,
+            ),
+          Container(
+            key: _citationKey,
+            color: AppColors.accentSoft,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 58,
+                  child: Text(
+                    citedStart == citedEnd
+                        ? '$citedStart'
+                        : '$citedStart-$citedEnd',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 11,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: SelectableText(
-                  lines[lineNumber - 1],
-                  style: const TextStyle(fontSize: 14, height: 1.55),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: SelectableText(
+                    cited,
+                    style: _textStyle,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        );
-      },
+          if (after.isNotEmpty)
+            SelectableText(
+              after,
+              style: _textStyle,
+            ),
+        ],
+      ),
     );
   }
+
+  Widget _buildTruncatedNotice() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E8),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Text('文件较大，当前显示前 200 万个字符。'),
+    );
+  }
+
+  void _scheduleCitationReveal() {
+    if (_citationRevealScheduled) return;
+    _citationRevealScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final citationContext = _citationKey.currentContext;
+      if (citationContext == null) return;
+      Scrollable.ensureVisible(
+        citationContext,
+        alignment: 0.18,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  static const TextStyle _textStyle = TextStyle(fontSize: 14, height: 1.6);
 }
 
 class _PreviewMessage extends StatelessWidget {

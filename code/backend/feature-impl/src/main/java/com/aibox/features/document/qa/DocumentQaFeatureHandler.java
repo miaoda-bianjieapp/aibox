@@ -71,6 +71,7 @@ public final class DocumentQaFeatureHandler implements StreamingFeatureHandler {
             )),
             Map.entry(".csv", Set.of(
                     "text/csv",
+                    "text/comma-separated-values",
                     "application/csv",
                     "text/plain",
                     "application/vnd.ms-excel",
