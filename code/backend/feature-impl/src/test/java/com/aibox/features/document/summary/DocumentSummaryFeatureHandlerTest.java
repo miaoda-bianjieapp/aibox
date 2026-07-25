@@ -58,6 +58,8 @@ class DocumentSummaryFeatureHandlerTest {
         assertEquals("rich_text", result.artifacts().get(0).kind());
         assertEquals(response().text(), result.artifacts().get(0).content().get("text"));
         assertEquals(false, result.artifacts().get(0).metadata().get("ocrApplied"));
+        assertEquals(false, result.artifacts().get(0).metadata().get("visualAnalysisApplied"));
+        assertEquals(false, result.artifacts().get(0).metadata().get("presentationRendered"));
     }
 
     @Test
@@ -106,7 +108,64 @@ class DocumentSummaryFeatureHandlerTest {
         assertEquals(List.of(page), captured.get().inlineInputAssets());
         assertTrue(captured.get().userPrompt().contains("第 [1] 页"));
         assertEquals(true, result.artifacts().get(0).metadata().get("ocrApplied"));
-        assertEquals(1, result.artifacts().get(0).metadata().get("ocrPageCount"));
+        assertEquals(true, result.artifacts().get(0).metadata().get("visualAnalysisApplied"));
+        assertEquals(1, result.artifacts().get(0).metadata().get("visualPageCount"));
+        assertEquals(false, result.artifacts().get(0).metadata().get("presentationRendered"));
+    }
+
+    @Test
+    void summarizesImageBasedPresentationWithSelectedVisionDeployment() {
+        UUID assetId = UUID.randomUUID();
+        ModelAsset slide = new ModelAsset(
+                UUID.randomUUID(),
+                "slide-0001.jpg",
+                "image/jpeg",
+                new byte[]{4, 5, 6}
+        );
+        DocumentContentExtractor extractor = (id, maximum) -> new DocumentExtractionResult(
+                "",
+                "pptx",
+                1,
+                0,
+                List.of(slide),
+                List.of(1)
+        );
+        DocumentSummaryFeatureHandler handler = new DocumentSummaryFeatureHandler(extractor);
+        AtomicReference<MultimodalTextGenerationRequest> captured = new AtomicReference<>();
+        ModelGateway gateway = new ModelGateway() {
+            @Override
+            public TextGenerationResponse generateText(TextGenerationRequest request) {
+                throw new AssertionError("Image-based presentation must use the vision path");
+            }
+
+            @Override
+            public TextGenerationResponse generateMultimodalText(
+                    MultimodalTextGenerationRequest request
+            ) {
+                captured.set(request);
+                return response();
+            }
+        };
+        FeatureExecutionContext context = context(
+                assetId,
+                "slides.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        );
+
+        FeatureExecutionResult result = handler.execute(
+                context,
+                gateway,
+                new RecordingFeatureOutputEmitter()
+        );
+
+        assertEquals("codex2api-gpt-5-6-sol-vision", captured.get().deploymentCode());
+        assertEquals(List.of(slide), captured.get().inlineInputAssets());
+        assertTrue(captured.get().userPrompt().contains("PowerPoint"));
+        assertTrue(captured.get().userPrompt().contains("[1]"));
+        assertEquals(true, result.artifacts().get(0).metadata().get("visualAnalysisApplied"));
+        assertEquals(1, result.artifacts().get(0).metadata().get("visualPageCount"));
+        assertEquals(true, result.artifacts().get(0).metadata().get("presentationRendered"));
+        assertEquals(false, result.artifacts().get(0).metadata().get("ocrApplied"));
     }
 
     @Test
@@ -250,7 +309,7 @@ class DocumentSummaryFeatureHandlerTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 DocumentSummaryFeatureHandler.FEATURE_CODE,
-                2,
+                3,
                 Map.of(
                         "document", assetId.toString(),
                         "summaryDepth", "standard",

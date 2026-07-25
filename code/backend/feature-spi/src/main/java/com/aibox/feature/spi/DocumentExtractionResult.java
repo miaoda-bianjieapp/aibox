@@ -7,20 +7,22 @@ public record DocumentExtractionResult(
         String format,
         int pageCount,
         int sheetCount,
-        List<ModelAsset> ocrPageImages,
-        List<Integer> ocrPageNumbers
+        List<ModelAsset> visualPageImages,
+        List<Integer> visualPageNumbers
 ) {
     public DocumentExtractionResult {
         text = text == null ? "" : text;
         format = format == null ? "" : format;
-        ocrPageImages = ocrPageImages == null ? List.of() : List.copyOf(ocrPageImages);
-        ocrPageNumbers = ocrPageNumbers == null ? List.of() : List.copyOf(ocrPageNumbers);
-        if (ocrPageImages.size() != ocrPageNumbers.size()) {
-            throw new IllegalArgumentException("OCR page images and page numbers must have the same size");
+        visualPageImages = visualPageImages == null ? List.of() : List.copyOf(visualPageImages);
+        visualPageNumbers = visualPageNumbers == null ? List.of() : List.copyOf(visualPageNumbers);
+        if (visualPageImages.size() != visualPageNumbers.size()) {
+            throw new IllegalArgumentException(
+                    "Visual page images and page numbers must have the same size"
+            );
         }
     }
 
-    public boolean requiresOcr() {
-        return !ocrPageImages.isEmpty();
+    public boolean requiresVision() {
+        return !visualPageImages.isEmpty();
     }
 }

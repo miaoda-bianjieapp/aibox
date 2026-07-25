@@ -16,6 +16,13 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.extractor.ExtractorFactory;
 import org.apache.poi.extractor.POITextExtractor;
+import org.apache.poi.sl.usermodel.GroupShape;
+import org.apache.poi.sl.usermodel.Shape;
+import org.apache.poi.sl.usermodel.Slide;
+import org.apache.poi.sl.usermodel.SlideShow;
+import org.apache.poi.sl.usermodel.SlideShowFactory;
+import org.apache.poi.sl.usermodel.TableShape;
+import org.apache.poi.sl.usermodel.TextShape;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.ss.usermodel.Row;
@@ -30,6 +37,10 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageOutputStream;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -53,9 +64,10 @@ import java.util.UUID;
 public class AssetDocumentContentExtractor implements DocumentContentExtractor {
 
     private static final int OCR_PAGE_TEXT_THRESHOLD = 24;
+    private static final int MAX_VISUAL_PRESENTATION_SLIDES = 30;
     private static final float OCR_RENDER_DPI = 120f;
     private static final float OCR_JPEG_QUALITY = 0.82f;
-    private static final long MAX_RENDERED_OCR_BYTES = 100L * 1024 * 1024;
+    private static final long MAX_RENDERED_VISUAL_BYTES = 100L * 1024 * 1024;
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
     private final AssetService assetService;
@@ -81,7 +93,7 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
                     extractUtf8Text(stored.path(), extension, maxCharacters);
             case ".json" -> extractJson(stored.path(), maxCharacters);
             case ".ppt", ".pptx" ->
-                    extractPresentation(stored.path(), extension, maxCharacters);
+                    extractPresentation(assetId, stored.path(), extension, maxCharacters);
             default -> throw invalidDocument(
                     "不支持该文档格式，请上传 PDF、Office、Markdown、TXT、JSON 或 CSV"
             );
@@ -147,7 +159,7 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
                 image.flush();
             }
             totalBytes += content.length;
-            if (totalBytes > MAX_RENDERED_OCR_BYTES) {
+            if (totalBytes > MAX_RENDERED_VISUAL_BYTES) {
                 throw invalidDocument("扫描页过多或图像过大，请拆分 PDF 后重试");
             }
             UUID pageAssetId = UUID.nameUUIDFromBytes(
@@ -188,27 +200,172 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
     }
 
     private DocumentExtractionResult extractPresentation(
+            UUID assetId,
             Path path,
             String extension,
             int maxCharacters
     ) {
-        try (POITextExtractor extractor = ExtractorFactory.createExtractor(path.toFile())) {
-            String text = normalizeText(extractor.getText());
-            ensureNotEmpty(text);
+        try (SlideShow<?, ?> presentation = SlideShowFactory.create(path.toFile())) {
+            List<? extends Slide<?, ?>> visibleSlides = presentation.getSlides().stream()
+                    .filter(slide -> !slide.isHidden())
+                    .toList();
+            if (visibleSlides.isEmpty()) {
+                throw invalidDocument("PowerPoint 没有可读取的可见幻灯片");
+            }
+            String text = extractPresentationText(visibleSlides);
             ensureWithinLimit(text, maxCharacters);
+            int minimumExpectedText = Math.max(32, visibleSlides.size() * 10);
+            boolean requiresVision = visibleCharacterCount(text) < minimumExpectedText;
+            if (!requiresVision) {
+                return new DocumentExtractionResult(
+                        text,
+                        extension.substring(1),
+                        visibleSlides.size(),
+                        0,
+                        List.of(),
+                        List.of()
+                );
+            }
+            if (visibleSlides.size() > MAX_VISUAL_PRESENTATION_SLIDES) {
+                throw invalidDocument(
+                        "图片型 PPT/PPTX 最多支持 30 页，请拆分演示文稿后重试"
+                );
+            }
+            RenderedSlides rendered = renderPresentationSlides(
+                    assetId,
+                    presentation,
+                    visibleSlides
+            );
             return new DocumentExtractionResult(
                     text,
                     extension.substring(1),
+                    visibleSlides.size(),
                     0,
-                    0,
-                    List.of(),
-                    List.of()
+                    rendered.images(),
+                    rendered.slideNumbers()
             );
         } catch (FeatureValidationException exception) {
             throw exception;
         } catch (Exception exception) {
             throw invalidDocument("PowerPoint 文档已损坏、受密码保护或无法读取");
         }
+    }
+
+    private static String extractPresentationText(List<? extends Slide<?, ?>> slides) {
+        StringBuilder text = new StringBuilder();
+        for (Slide<?, ?> slide : slides) {
+            StringBuilder slideText = new StringBuilder();
+            for (Shape<?, ?> shape : slide.getShapes()) {
+                appendPresentationShapeText(shape, slideText);
+            }
+            String normalizedSlideText = normalizeText(slideText.toString());
+            if (normalizedSlideText.isBlank()) {
+                continue;
+            }
+            if (!text.isEmpty()) {
+                text.append("\n\n");
+            }
+            text.append(normalizedSlideText);
+        }
+        return text.toString();
+    }
+
+    private static void appendPresentationShapeText(
+            Shape<?, ?> shape,
+            StringBuilder text
+    ) {
+        if (shape instanceof TextShape<?, ?> textShape) {
+            appendPresentationText(text, textShape.getText());
+            return;
+        }
+        if (shape instanceof TableShape<?, ?> table) {
+            for (int row = 0; row < table.getNumberOfRows(); row++) {
+                for (int column = 0; column < table.getNumberOfColumns(); column++) {
+                    appendPresentationText(text, table.getCell(row, column).getText());
+                }
+            }
+            return;
+        }
+        if (shape instanceof GroupShape<?, ?> group) {
+            for (Shape<?, ?> child : group.getShapes()) {
+                appendPresentationShapeText(child, text);
+            }
+        }
+    }
+
+    private static void appendPresentationText(StringBuilder target, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        if (!target.isEmpty()) {
+            target.append('\n');
+        }
+        target.append(value);
+    }
+
+    private RenderedSlides renderPresentationSlides(
+            UUID assetId,
+            SlideShow<?, ?> presentation,
+            List<? extends Slide<?, ?>> slides
+    ) throws IOException {
+        Dimension pageSize = presentation.getPageSize();
+        if (pageSize.width <= 0 || pageSize.height <= 0) {
+            throw invalidDocument("PowerPoint 页面尺寸无效");
+        }
+        double scale = Math.min(2.0, 1600.0 / Math.max(pageSize.width, pageSize.height));
+        scale = Math.max(1.0, scale);
+        int width = Math.max(1, (int) Math.ceil(pageSize.width * scale));
+        int height = Math.max(1, (int) Math.ceil(pageSize.height * scale));
+        List<ModelAsset> images = new ArrayList<>();
+        List<Integer> slideNumbers = new ArrayList<>();
+        long totalBytes = 0;
+        for (Slide<?, ?> slide : slides) {
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            Graphics2D graphics = image.createGraphics();
+            try {
+                graphics.setColor(Color.WHITE);
+                graphics.fillRect(0, 0, width, height);
+                graphics.setRenderingHint(
+                        RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON
+                );
+                graphics.setRenderingHint(
+                        RenderingHints.KEY_TEXT_ANTIALIASING,
+                        RenderingHints.VALUE_TEXT_ANTIALIAS_ON
+                );
+                graphics.setRenderingHint(
+                        RenderingHints.KEY_INTERPOLATION,
+                        RenderingHints.VALUE_INTERPOLATION_BICUBIC
+                );
+                graphics.scale(scale, scale);
+                slide.draw(graphics);
+            } finally {
+                graphics.dispose();
+            }
+            byte[] content;
+            try {
+                content = encodeJpeg(image);
+            } finally {
+                image.flush();
+            }
+            totalBytes += content.length;
+            if (totalBytes > MAX_RENDERED_VISUAL_BYTES) {
+                throw invalidDocument("幻灯片渲染结果过大，请拆分演示文稿后重试");
+            }
+            int slideNumber = slide.getSlideNumber();
+            UUID slideAssetId = UUID.nameUUIDFromBytes(
+                    (assetId + ":presentation-slide:" + slideNumber)
+                            .getBytes(StandardCharsets.UTF_8)
+            );
+            images.add(new ModelAsset(
+                    slideAssetId,
+                    "slide-" + String.format(Locale.ROOT, "%04d", slideNumber) + ".jpg",
+                    "image/jpeg",
+                    content
+            ));
+            slideNumbers.add(slideNumber);
+        }
+        return new RenderedSlides(List.copyOf(images), List.copyOf(slideNumbers));
     }
 
     private DocumentExtractionResult extractWorkbook(
@@ -500,5 +657,8 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
         private String value() {
             return value.toString();
         }
+    }
+
+    private record RenderedSlides(List<ModelAsset> images, List<Integer> slideNumbers) {
     }
 }

@@ -62,7 +62,7 @@
   },
   "fieldHelp": {
     "document": {
-      "text": "正文抽取后最多 15 万字符；超出时请拆分文档。扫描 PDF 会使用所选模型识别页面文字。CSV、Markdown、TXT 和 JSON 仅支持 UTF-8 或 UTF-8 BOM。"
+      "text": "正文抽取后最多 15 万字符；超出时请拆分文档。扫描 PDF 和图片型 PPT/PPTX 会使用所选模型识别页面；图片型演示文稿最多 30 页。CSV、Markdown、TXT 和 JSON 仅支持 UTF-8 或 UTF-8 BOM。"
     }
   },
   "modelSelectionGroups": [
