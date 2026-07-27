@@ -2,6 +2,7 @@ package com.aibox.platform.asset;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -34,6 +35,7 @@ public class PowerPointPreviewConverter {
     private final ConcurrentHashMap<String, CompletableFuture<Optional<Path>>> conversions =
             new ConcurrentHashMap<>();
 
+    @Autowired
     public PowerPointPreviewConverter(
             @Value("${yuanzuo.asset.storage-path}") String storagePath,
             @Value("${yuanzuo.asset.powerpoint-preview.libreoffice-path:}") String libreOfficePath,

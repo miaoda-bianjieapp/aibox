@@ -2,10 +2,13 @@ package com.aibox.platform.asset;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,6 +21,28 @@ class PowerPointPreviewConverterTest {
 
     @TempDir
     Path tempDirectory;
+
+    @Test
+    void canBeCreatedBySpringWithConfiguredProperties() {
+        try (AnnotationConfigApplicationContext context =
+                     new AnnotationConfigApplicationContext()) {
+            context.getEnvironment().getPropertySources().addFirst(
+                    new MapPropertySource(
+                            "powerPointPreviewTest",
+                            Map.of(
+                                    "yuanzuo.asset.storage-path", tempDirectory.toString(),
+                                    "yuanzuo.asset.powerpoint-preview.libreoffice-path", "",
+                                    "yuanzuo.asset.powerpoint-preview.conversion-timeout-ms", "5000"
+                            )
+                    )
+            );
+            context.register(PowerPointPreviewConverter.class);
+
+            context.refresh();
+
+            assertThat(context.getBean(PowerPointPreviewConverter.class)).isNotNull();
+        }
+    }
 
     @Test
     void cachesConvertedPdfByAssetSha256() throws Exception {
