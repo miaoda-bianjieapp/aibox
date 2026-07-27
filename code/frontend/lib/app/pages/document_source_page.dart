@@ -102,7 +102,7 @@ class DocumentSourcePage extends StatelessWidget {
   }
 
   void _openOriginal(BuildContext context) {
-    final pageNumber = _integer(locator['pageNumber']);
+    final pageNumber = documentSourceInitialPage(locator);
     final startLine = _integer(locator['startLine']);
     final endLine = _integer(locator['endLine']);
     Navigator.of(context).push(
@@ -117,6 +117,13 @@ class DocumentSourcePage extends StatelessWidget {
       ),
     );
   }
+}
+
+int? documentSourceInitialPage(Map<String, dynamic> locator) {
+  if (locator['type']?.toString() == 'PPT_SLIDE') {
+    return _integer(locator['slideNumber']) ?? _integer(locator['pageNumber']);
+  }
+  return _integer(locator['pageNumber']);
 }
 
 class _SourceWarning extends StatelessWidget {

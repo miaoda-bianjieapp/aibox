@@ -999,30 +999,77 @@ class _AssistantMessage extends StatelessWidget {
               const SizedBox(height: 10),
               Padding(
                 padding: const EdgeInsets.only(left: 28),
-                child: Wrap(
-                  spacing: 7,
-                  runSpacing: 7,
-                  children: citations
-                      .map(
-                        (citation) => ActionChip(
-                          avatar: const Icon(
-                            Icons.description_outlined,
-                            size: 16,
+                child: DocumentSourcesDisclosure(
+                  sourceCount: citations.length,
+                  child: Wrap(
+                    spacing: 7,
+                    runSpacing: 7,
+                    children: citations
+                        .map(
+                          (citation) => ActionChip(
+                            avatar: const Icon(
+                              Icons.description_outlined,
+                              size: 16,
+                            ),
+                            label: Text(
+                              '[${citation.marker}] ${citation.fileName}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onPressed: () => onCitation(citation),
                           ),
-                          label: Text(
-                            '[${citation.marker}] ${citation.fileName}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          onPressed: () => onCitation(citation),
-                        ),
-                      )
-                      .toList(),
+                        )
+                        .toList(),
+                  ),
                 ),
               ),
             ],
           ],
         ),
+      );
+}
+
+class DocumentSourcesDisclosure extends StatefulWidget {
+  const DocumentSourcesDisclosure({
+    super.key,
+    required this.sourceCount,
+    required this.child,
+  });
+
+  final int sourceCount;
+  final Widget child;
+
+  @override
+  State<DocumentSourcesDisclosure> createState() =>
+      _DocumentSourcesDisclosureState();
+}
+
+class _DocumentSourcesDisclosureState extends State<DocumentSourcesDisclosure> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextButton.icon(
+            key: const ValueKey<String>('document-sources-toggle'),
+            onPressed: () => setState(() => _expanded = !_expanded),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              minimumSize: const Size(0, 36),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: Icon(
+              _expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              size: 20,
+            ),
+            label: Text('来源（${widget.sourceCount}）'),
+          ),
+          if (_expanded) ...[
+            const SizedBox(height: 6),
+            widget.child,
+          ],
+        ],
       );
 }
 
