@@ -92,6 +92,18 @@ public class AssetController {
         return previewService.preview(assetId);
     }
 
+    @GetMapping("/{assetId}/preview/content")
+    public ResponseEntity<?> previewContent(@PathVariable UUID assetId) {
+        AssetPreviewService.PreviewContent content = previewService.previewContent(assetId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(content.mediaType()));
+        headers.setContentLength(content.sizeBytes());
+        headers.setContentDisposition(ContentDisposition.inline()
+                .filename(content.fileName(), StandardCharsets.UTF_8)
+                .build());
+        return ResponseEntity.ok().headers(headers).body(content.resource());
+    }
+
     @PostMapping("/delete-impact")
     public AssetLibraryService.DeleteImpact deleteImpact(@RequestBody AssetSelection request) {
         return libraryService.impact(request.assetIds());

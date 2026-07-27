@@ -108,7 +108,8 @@ class _PreviewBody extends StatelessWidget {
       'AUDIO' when url != null => _AudioPreview(url: url),
       'PDF' when url != null => _PdfPreview(
           api: api,
-          asset: asset,
+          contentUrl: url,
+          fileName: _pdfFileName(asset.name),
           initialPage: initialPage,
         ),
       'TEXT' => _TextPreview(
@@ -129,12 +130,14 @@ class _PreviewBody extends StatelessWidget {
 class _PdfPreview extends StatefulWidget {
   const _PdfPreview({
     required this.api,
-    required this.asset,
+    required this.contentUrl,
+    required this.fileName,
     required this.initialPage,
   });
 
   final BackendApi api;
-  final AssetView asset;
+  final String contentUrl;
+  final String fileName;
   final int? initialPage;
 
   @override
@@ -150,9 +153,9 @@ class _PdfPreviewState extends State<_PdfPreview> {
   void initState() {
     super.initState();
     _fileFuture = widget.api
-        .downloadAssetToTemporaryFile(
-      widget.asset.id,
-      fileName: widget.asset.name,
+        .downloadUrlToTemporaryFile(
+      widget.contentUrl,
+      fileName: widget.fileName,
     )
         .then((file) {
       _file = file;
@@ -647,4 +650,12 @@ String _durationLabel(Duration duration) {
   final minutes = duration.inMinutes;
   final seconds = duration.inSeconds.remainder(60);
   return '$minutes:${seconds.toString().padLeft(2, '0')}';
+}
+
+String _pdfFileName(String originalName) {
+  final extensionIndex = originalName.lastIndexOf('.');
+  final baseName = extensionIndex <= 0
+      ? originalName
+      : originalName.substring(0, extensionIndex);
+  return '${baseName.isEmpty ? 'preview' : baseName}.pdf';
 }

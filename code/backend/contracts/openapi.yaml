@@ -170,6 +170,17 @@ paths:
       responses:
         "200":
           description: In-app preview descriptor or extracted document text
+  /assets/{assetId}/preview/content:
+    get:
+      operationId: getAssetPreviewContent
+      parameters:
+        - name: assetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Generated binary preview content, currently used for PowerPoint PDF previews
   /assets/{assetId}:
     delete:
       operationId: deleteAsset

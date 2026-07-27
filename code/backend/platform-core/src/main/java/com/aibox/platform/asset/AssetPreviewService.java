@@ -3,8 +3,9 @@ package com.aibox.platform.asset;
 import com.aibox.platform.common.PlatformException;
 import org.apache.poi.extractor.ExtractorFactory;
 import org.apache.poi.extractor.POITextExtractor;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -24,12 +25,16 @@ public class AssetPreviewService {
     private static final int MAX_TEXT_PREVIEW_CHARACTERS = 2_000_000;
 
     private final AssetService assetService;
+    private final PowerPointPreviewConverter powerPointConverter;
 
-    public AssetPreviewService(AssetService assetService) {
+    public AssetPreviewService(
+            AssetService assetService,
+            PowerPointPreviewConverter powerPointConverter
+    ) {
         this.assetService = assetService;
+        this.powerPointConverter = powerPointConverter;
     }
 
-    @Transactional(readOnly = true)
     public PreviewDescriptor preview(UUID assetId) {
         AssetService.AssetStoredFile stored = assetService.openForPreview(assetId);
         AssetService.AssetView asset = stored.asset();
@@ -46,6 +51,37 @@ public class AssetPreviewService {
         };
     }
 
+    public PreviewContent previewContent(UUID assetId) {
+        AssetService.AssetStoredFile stored = assetService.openForPreview(assetId);
+        AssetService.AssetView asset = stored.asset();
+        String extension = extension(asset.name());
+        if (!isPowerPoint(extension)) {
+            throw new PlatformException(
+                    "ASSET_PREVIEW_CONTENT_UNSUPPORTED",
+                    "This file does not have generated preview content"
+            );
+        }
+        Path converted = powerPointConverter
+                .convert(stored.path(), extension, asset.sha256())
+                .orElseThrow(() -> new PlatformException(
+                        "ASSET_PREVIEW_CONTENT_UNAVAILABLE",
+                        "The generated preview is unavailable"
+                ));
+        try {
+            return new PreviewContent(
+                    "application/pdf",
+                    pdfName(asset.name()),
+                    Files.size(converted),
+                    new FileSystemResource(converted)
+            );
+        } catch (IOException exception) {
+            throw new PlatformException(
+                    "ASSET_PREVIEW_CONTENT_UNAVAILABLE",
+                    "The generated preview is unavailable"
+            );
+        }
+    }
+
     private PreviewDescriptor documentPreview(
             AssetService.AssetView asset,
             Path path,
@@ -55,6 +91,9 @@ public class AssetPreviewService {
         if (".pdf".equals(extension) || "application/pdf".equalsIgnoreCase(asset.mediaType())) {
             return new PreviewDescriptor("PDF", "application/pdf", contentUrl, null, false);
         }
+        if (isPowerPoint(extension)) {
+            return powerPointPreview(asset, path, extension);
+        }
         if (isOffice(extension)) {
             TextPreview text = extractOffice(path);
             return new PreviewDescriptor("TEXT", "text/plain", null, text.content(), text.truncated());
@@ -63,7 +102,33 @@ public class AssetPreviewService {
         return new PreviewDescriptor("TEXT", asset.mediaType(), null, text.content(), text.truncated());
     }
 
+    private PreviewDescriptor powerPointPreview(
+            AssetService.AssetView asset,
+            Path path,
+            String extension
+    ) {
+        if (powerPointConverter.convert(path, extension, asset.sha256()).isPresent()) {
+            return new PreviewDescriptor(
+                    "PDF",
+                    "application/pdf",
+                    "/api/v1/assets/" + asset.id() + "/preview/content",
+                    null,
+                    false
+            );
+        }
+        TextPreview text = extractPowerPointText(path);
+        return new PreviewDescriptor("TEXT", "text/plain", null, text.content(), text.truncated());
+    }
+
     private TextPreview extractOffice(Path path) {
+        return extractPoiText(path);
+    }
+
+    private TextPreview extractPowerPointText(Path path) {
+        return extractPoiText(path);
+    }
+
+    private TextPreview extractPoiText(Path path) {
         try (POITextExtractor extractor = ExtractorFactory.createExtractor(path.toFile())) {
             return truncate(extractor.getText());
         } catch (Exception exception) {
@@ -131,14 +196,24 @@ public class AssetPreviewService {
 
     private static boolean isOffice(String extension) {
         return switch (extension) {
-            case ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx" -> true;
+            case ".doc", ".docx", ".xls", ".xlsx" -> true;
             default -> false;
         };
+    }
+
+    private static boolean isPowerPoint(String extension) {
+        return ".ppt".equals(extension) || ".pptx".equals(extension);
     }
 
     private static String extension(String name) {
         int index = name.lastIndexOf('.');
         return index < 0 ? "" : name.substring(index).toLowerCase(Locale.ROOT);
+    }
+
+    private static String pdfName(String name) {
+        int index = name.lastIndexOf('.');
+        String base = index <= 0 ? name : name.substring(0, index);
+        return (base == null || base.isBlank() ? "preview" : base) + ".pdf";
     }
 
     public record PreviewDescriptor(
@@ -147,6 +222,14 @@ public class AssetPreviewService {
             String contentUrl,
             String text,
             boolean truncated
+    ) {
+    }
+
+    public record PreviewContent(
+            String mediaType,
+            String fileName,
+            long sizeBytes,
+            Resource resource
     ) {
     }
 

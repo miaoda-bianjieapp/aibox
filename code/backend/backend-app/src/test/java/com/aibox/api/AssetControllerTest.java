@@ -10,6 +10,7 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.ResourceRegion;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -62,6 +63,36 @@ class AssetControllerTest {
                 () -> controller.content(assetId, "bytes=0-1,2-3")
         );
         assertThat(exception.code()).isEqualTo("ASSET_RANGE_INVALID");
+    }
+
+    @Test
+    void returnsGeneratedPreviewContentAsInlinePdf() throws Exception {
+        UUID assetId = UUID.randomUUID();
+        Path file = tempDir.resolve("slides.pdf");
+        Files.write(file, "%PDF-1.7\npreview".getBytes());
+        AssetPreviewService previewService = mock(AssetPreviewService.class);
+        when(previewService.previewContent(assetId)).thenReturn(
+                new AssetPreviewService.PreviewContent(
+                        "application/pdf",
+                        "slides.pdf",
+                        Files.size(file),
+                        new FileSystemResource(file)
+                )
+        );
+        AssetController controller = new AssetController(
+                mock(AssetService.class),
+                mock(AssetLibraryService.class),
+                previewService
+        );
+
+        ResponseEntity<?> response = controller.previewContent(assetId);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PDF);
+        assertThat(response.getHeaders().getContentDisposition().getType()).isEqualTo("inline");
+        assertThat(response.getHeaders().getContentDisposition().getFilename())
+                .isEqualTo("slides.pdf");
+        assertThat(response.getBody()).isInstanceOf(FileSystemResource.class);
     }
 
     private static AssetController controller(AssetService assetService) {

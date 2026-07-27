@@ -298,6 +298,16 @@ class BackendApi {
   Future<File> downloadAssetToTemporaryFile(
     String assetId, {
     required String fileName,
+  }) {
+    return downloadUrlToTemporaryFile(
+      assetContentUrl(assetId),
+      fileName: fileName,
+    );
+  }
+
+  Future<File> downloadUrlToTemporaryFile(
+    String contentUrl, {
+    required String fileName,
   }) async {
     Directory? directory;
     try {
@@ -307,7 +317,7 @@ class BackendApi {
         '${_temporaryFileName(fileName)}',
       );
       final request = await _client
-          .getUrl(Uri.parse(assetContentUrl(assetId)))
+          .getUrl(Uri.parse(contentUrl))
           .timeout(const Duration(seconds: 10));
       final response =
           await request.close().timeout(const Duration(seconds: 60));
