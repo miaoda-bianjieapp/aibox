@@ -1839,12 +1839,11 @@ class _AssetPreview extends StatelessWidget {
     }
     return SizedBox(
       width: 272,
-      height: 72,
       child: Stack(
         children: [
           Container(
             width: double.infinity,
-            height: double.infinity,
+            constraints: const BoxConstraints(minHeight: 72),
             padding: const EdgeInsets.fromLTRB(12, 10, 34, 10),
             decoration: BoxDecoration(
               color: AppColors.wash,

@@ -109,6 +109,41 @@ void main() {
     expect(find.text('返回修改'), findsOneWidget);
   });
 
+  testWidgets('does not show copy action for progress-only text',
+      (tester) async {
+    final controller = TaskExecutionController(
+      initialStatus: '正在执行',
+      onCancelRun: (_) async {},
+      loadRunOutput: (_) async => const [],
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: TaskExecutionPage(
+        title: '表格与信息提取',
+        controller: controller,
+        openResult: true,
+        resultRouteBuilder: (_) => MaterialPageRoute<void>(
+          builder: (context) => const Scaffold(),
+        ),
+      ),
+    ));
+
+    controller.updateOutput(RunOutputSnapshot(
+      runId: 'run-progress',
+      channel: 'main',
+      format: 'text',
+      content: '正在识别第 9-12 页（2/2）',
+      status: 'STREAMING',
+      lastSequence: 1,
+      updatedAt: DateTime(2026, 7, 27),
+    ));
+    await tester.pump();
+
+    expect(find.text('正在识别第 9-12 页（2/2）'), findsOneWidget);
+    expect(find.byTooltip('复制全文'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
       'follows streaming output until the user scrolls away and resumes at the bottom',
       (tester) async {
