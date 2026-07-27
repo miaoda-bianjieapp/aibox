@@ -1,0 +1,8 @@
+diff --git a/code/backend/backend-app/src/main/resources/db/migration/V20260725113615__document_summary.sql b/code/backend/backend-app/src/main/resources/db/migration/V20260725113615__document_summary.sql
+index cec96f1..5585f63 100644
+--- a/code/backend/backend-app/src/main/resources/db/migration/V20260725113615__document_summary.sql
++++ b/code/backend/backend-app/src/main/resources/db/migration/V20260725113615__document_summary.sql
+@@ -56 +56,2 @@ insert into model_deployment (
+-    );
++    )
++on conflict (code) do nothing;
