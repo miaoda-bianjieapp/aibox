@@ -165,6 +165,69 @@ void main() {
     expect(unsupported.supportsReferenceImages, isFalse);
   });
 
+  test('feature detail exposes schema-driven linked model selections', () {
+    final feature = FeatureDetail.fromJson({
+      'code': 'document.summary',
+      'displayName': '文档总结',
+      'description': '',
+      'version': 1,
+      'resultType': 'rich_text',
+      'rendererKey': 'rich_text_editor',
+      'executionMode': 'ASYNC',
+      'inputSchema': const <String, Object?>{},
+      'uiSchema': {
+        'modelSelectionGroups': [
+          {
+            'key': 'documentModel',
+            'label': '文档处理模型',
+            'capabilities': ['TEXT_GENERATION', 'VISION'],
+            'options': [
+              {
+                'value': 'gpt-5.6-sol',
+                'displayName': 'GPT-5.6 Sol',
+                'description': '长文档模型',
+                'deployments': {
+                  'TEXT_GENERATION': 'gpt-5.6-sol-text',
+                  'VISION': 'gpt-5.6-sol-vision',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      'outputSchema': const <String, Object?>{},
+      'config': const <String, Object?>{},
+      'modelPolicies': [
+        {
+          'capability': 'TEXT_GENERATION',
+          'defaultModelCode': 'gpt-5.6-sol-text',
+          'allowUserSelection': true,
+          'options': [
+            {
+              'code': 'gpt-5.6-sol-text',
+              'displayName': 'GPT-5.6 Sol',
+              'description': '',
+              'sourceType': 'RELAY',
+              'sourceName': 'Relay',
+            },
+          ],
+        },
+      ],
+    });
+
+    final group = feature.modelSelectionGroups.single;
+    expect(group.key, 'documentModel');
+    expect(group.capabilities, ['TEXT_GENERATION', 'VISION']);
+    expect(
+      group.options.single.deployments['VISION'],
+      'gpt-5.6-sol-vision',
+    );
+    expect(
+      feature.modelOption('TEXT_GENERATION', 'gpt-5.6-sol-text')?.sourceName,
+      'Relay',
+    );
+  });
+
   test('feature visibility supports combined all conditions', () {
     final feature = FeatureDetail.fromJson({
       'code': 'image.expand',

@@ -1,0 +1,27 @@
+featureCode: document.summary
+workspaceCode: document
+version: 3
+displayName: 文档总结
+description: 总结单个 PDF、Office、Markdown、TXT、JSON 或 CSV 文档，输出摘要、章节要点、结论和行动项。
+status: INTERNAL
+executionMode: ASYNC
+resultType: rich_text
+rendererKey: rich_text_editor
+requiredCapabilities:
+  - TEXT_GENERATION
+  - VISION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxInputFiles: 1
+  maxInputFileBytes: 52428800
+  maxExtractedCharacters: 150000
+  maxFocusCharacters: 500
+  maxVisualPresentationSlides: 30
+  csvEncoding: UTF-8
+  textEncoding: UTF-8
+modelAliases:
+  text: text.document-summary
+  vision: vision.document-ocr
