@@ -20,6 +20,7 @@ import com.aibox.feature.spi.TextToSpeechResponse;
 import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
 import com.aibox.platform.asset.AssetService;
+import com.aibox.platform.document.DocumentKnowledgeService;
 import com.aibox.platform.model.ModelRoutingService;
 import org.junit.jupiter.api.Test;
 
@@ -55,6 +56,7 @@ class RoutingModelGatewayTest {
                 List.of(provider),
                 repository,
                 mock(AssetService.class),
+                mock(DocumentKnowledgeService.class),
                 routingService,
                 Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
         );
@@ -93,6 +95,7 @@ class RoutingModelGatewayTest {
                 List.of(new TestProvider()),
                 repository,
                 mock(AssetService.class),
+                mock(DocumentKnowledgeService.class),
                 routingService,
                 Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC)
         );
@@ -142,6 +145,7 @@ class RoutingModelGatewayTest {
                 List.of(provider),
                 repository,
                 mock(AssetService.class),
+                mock(DocumentKnowledgeService.class),
                 routingService,
                 Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC)
         );
@@ -173,7 +177,8 @@ class RoutingModelGatewayTest {
         when(routingService.resolveCandidates(ModelCapability.VIDEO_GENERATION, "video.default", null))
                 .thenReturn(List.of(target("test-video", ModelCapability.VIDEO_GENERATION)));
         RoutingModelGateway gateway = new RoutingModelGateway(
-                List.of(new TestProvider()), repository, mock(AssetService.class), routingService,
+                List.of(new TestProvider()), repository, mock(AssetService.class),
+                mock(DocumentKnowledgeService.class), routingService,
                 Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
         );
 
@@ -239,6 +244,7 @@ class RoutingModelGatewayTest {
                 List.of(provider),
                 repository,
                 assetService,
+                mock(DocumentKnowledgeService.class),
                 routingService,
                 Clock.fixed(Instant.parse("2026-07-18T00:00:00Z"), ZoneOffset.UTC)
         );
@@ -303,6 +309,7 @@ class RoutingModelGatewayTest {
                 List.of(provider),
                 repository,
                 assetService,
+                mock(DocumentKnowledgeService.class),
                 routingService,
                 Clock.fixed(Instant.parse("2026-07-25T00:00:00Z"), ZoneOffset.UTC)
         );
@@ -343,6 +350,7 @@ class RoutingModelGatewayTest {
                 List.of(new TestProvider()),
                 mock(ProviderInvocationRepository.class),
                 mock(AssetService.class),
+                mock(DocumentKnowledgeService.class),
                 routingService,
                 Clock.fixed(Instant.parse("2026-07-24T00:00:00Z"), ZoneOffset.UTC)
         );
@@ -378,7 +386,8 @@ class RoutingModelGatewayTest {
                 new ModelAsset(assetId, "source.png", "image/png", new byte[]{1})
         );
         RoutingModelGateway gateway = new RoutingModelGateway(
-                List.of(new TestProvider()), repository, assetService, routingService,
+                List.of(new TestProvider()), repository, assetService,
+                mock(DocumentKnowledgeService.class), routingService,
                 Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
         );
 

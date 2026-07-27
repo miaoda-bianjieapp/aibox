@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "format",
+    "question",
+    "answerMarkdown",
+    "citations",
+    "contextTurns",
+    "warnings"
+  ],
+  "properties": {
+    "format": {
+      "const": "document_chat"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "answerMarkdown": {
+      "type": "string",
+      "minLength": 1
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "marker",
+          "assetId",
+          "fileName",
+          "excerpt",
+          "locator"
+        ],
+        "properties": {
+          "marker": {
+            "type": "string",
+            "pattern": "^S[1-9][0-9]*$"
+          },
+          "assetId": {"type": "string", "format": "uuid"},
+          "fileName": {"type": "string", "minLength": 1, "maxLength": 500},
+          "excerpt": {"type": "string", "minLength": 1, "maxLength": 600},
+          "locator": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["type", "pageNumber"],
+                "properties": {
+                  "type": {"const": "PDF_PAGE"},
+                  "pageNumber": {"type": "integer", "minimum": 1}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["type", "paragraphStart", "paragraphEnd"],
+                "properties": {
+                  "type": {"const": "WORD_PARAGRAPH"},
+                  "paragraphStart": {"type": "integer", "minimum": 1},
+                  "paragraphEnd": {"type": "integer", "minimum": 1},
+                  "heading": {"type": "string", "maxLength": 500},
+                  "visual": {"type": "boolean"}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["type", "sheetName", "startRow", "endRow"],
+                "properties": {
+                  "type": {"const": "EXCEL_ROWS"},
+                  "sheetName": {"type": "string", "minLength": 1, "maxLength": 255},
+                  "startRow": {"type": "integer", "minimum": 1},
+                  "endRow": {"type": "integer", "minimum": 1},
+                  "chartIndex": {"type": "integer", "minimum": 1}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["type", "slideNumber"],
+                "properties": {
+                  "type": {"const": "PPT_SLIDE"},
+                  "slideNumber": {"type": "integer", "minimum": 1}
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["type", "startLine", "endLine"],
+                "properties": {
+                  "type": {"const": "TEXT_LINES"},
+                  "startLine": {"type": "integer", "minimum": 1},
+                  "endLine": {"type": "integer", "minimum": 1}
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "contextTurns": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["question", "answer"],
+        "properties": {
+          "question": {"type": "string", "minLength": 1, "maxLength": 4000},
+          "answer": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "additionalProperties": false
+}

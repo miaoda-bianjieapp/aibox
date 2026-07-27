@@ -63,6 +63,20 @@ public class PostgresJobQueue {
     public List<UUID> recoverExpiredLeases() {
         Instant now = clock.instant();
         Timestamp nowTimestamp = Timestamp.from(now);
+        jdbcTemplate.update("""
+                update provider_invocation invocation
+                set status = 'FAILED',
+                    error_code = 'PROVIDER_INVOCATION_INTERRUPTED',
+                    finished_at = ?
+                where invocation.status = 'RUNNING'
+                  and exists (
+                      select 1
+                      from job
+                      where job.run_id = invocation.run_id
+                        and job.status = 'RUNNING'
+                        and job.locked_until < ?
+                  )
+                """, nowTimestamp, nowTimestamp);
         List<UUID> exhaustedRunIds = jdbcTemplate.query("""
                 update job
                 set status = 'FAILED', locked_by = null, locked_until = null,
@@ -87,6 +101,15 @@ public class PostgresJobQueue {
         jdbcTemplate.update("""
                 update job
                 set status = 'SUCCEEDED', locked_by = null, locked_until = null, updated_at = ?
+                where id = ?
+                """, Timestamp.from(clock.instant()), jobId);
+    }
+
+    public void markCancelled(UUID jobId) {
+        jdbcTemplate.update("""
+                update job
+                set status = 'CANCELLED', locked_by = null, locked_until = null,
+                    last_error = null, updated_at = ?
                 where id = ?
                 """, Timestamp.from(clock.instant()), jobId);
     }

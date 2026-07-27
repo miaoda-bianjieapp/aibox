@@ -1,5 +1,6 @@
 package com.aibox.api;
 
+import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.platform.common.ConflictException;
 import com.aibox.platform.common.NotFoundException;
 import com.aibox.platform.common.PlatformException;
@@ -13,6 +14,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.time.Instant;
@@ -62,6 +64,24 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiError> handleUploadTooLarge(MaxUploadSizeExceededException exception) {
         return response(HttpStatus.PAYLOAD_TOO_LARGE, "ASSET_TOO_LARGE", "Uploaded file is too large", List.of());
+    }
+
+    @ExceptionHandler(ModelProviderException.class)
+    public ResponseEntity<ApiError> handleModelProvider(ModelProviderException exception) {
+        HttpStatus status = exception.retryable()
+                ? HttpStatus.SERVICE_UNAVAILABLE
+                : HttpStatus.BAD_GATEWAY;
+        log.warn(
+                "Model provider API error, code={}, retryable={}",
+                exception.code(),
+                exception.retryable()
+        );
+        return response(status, exception.code(), exception.getMessage(), List.of());
+    }
+
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnect(AsyncRequestNotUsableException exception) {
+        log.debug("Client disconnected while response content was being written");
     }
 
     @ExceptionHandler(Exception.class)

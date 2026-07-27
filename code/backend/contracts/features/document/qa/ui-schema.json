@@ -1,0 +1,47 @@
+{
+  "pageKey": "document_qa",
+  "order": ["documents", "question", "strictGrounding"],
+  "widgets": {
+    "documents": "file",
+    "question": "textarea",
+    "strictGrounding": "hidden"
+  },
+  "fieldOptions": {
+    "documents": {
+      "acceptedMimeTypes": [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "text/comma-separated-values",
+        "application/json",
+        "application/octet-stream"
+      ],
+      "allowedExtensions": [
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".txt",
+        ".md",
+        ".csv",
+        ".json"
+      ],
+      "maxItems": 10,
+      "maxFileSizeBytes": 52428800,
+      "maxTotalSizeBytes": 209715200,
+      "uploadLabel": "上传文档"
+    }
+  },
+  "feeNotice": "文档解析、扫描页识别、图表理解、检索重排和回答可能产生模型费用。文档内容将发送给所选中转模型处理。",
+  "submitLabel": "开始问答"
+}

@@ -18,6 +18,13 @@ public interface ModelGateway {
         throw unsupported(ModelCapability.VISION);
     }
 
+    default DocumentQuestionResponse answerDocumentQuestion(
+            DocumentQuestionRequest request,
+            TextGenerationListener listener
+    ) {
+        throw unsupported(ModelCapability.TEXT_GENERATION);
+    }
+
     default AudioTranscriptionResponse transcribeAudio(AudioTranscriptionRequest request) {
         throw unsupported(ModelCapability.AUDIO_TRANSCRIPTION);
     }

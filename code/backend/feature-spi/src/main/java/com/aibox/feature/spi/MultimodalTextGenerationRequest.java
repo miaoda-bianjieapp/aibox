@@ -50,7 +50,7 @@ public record MultimodalTextGenerationRequest(
             Double temperature,
             Map<String, Object> metadata
     ) {
-        this(tenantId, runId, modelAlias, deploymentCode, systemPrompt, userPrompt, inputAssetIds,
-                List.of(), maxOutputTokens, temperature, metadata);
+        this(tenantId, runId, modelAlias, deploymentCode, systemPrompt, userPrompt,
+                inputAssetIds, List.of(), maxOutputTokens, temperature, metadata);
     }
 }

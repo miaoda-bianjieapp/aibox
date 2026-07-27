@@ -57,7 +57,7 @@ abstract final class NativeFilePicker {
       'pickFiles',
       {
         'mimeTypes': mimeTypes,
-        'maxFiles': maxFiles.clamp(1, 5),
+        'maxFiles': maxFiles.clamp(1, 10),
       },
     );
     if (result == null) return const [];

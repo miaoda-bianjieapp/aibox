@@ -43,8 +43,13 @@ public class RunExecutionCoordinator {
         FeatureExecutionResult result;
         if (handler instanceof StreamingFeatureHandler streamingHandler) {
             FeatureOutputEmitter emitter = outputService.emitter(runId);
-            result = streamingHandler.execute(context, modelGateway, emitter);
-            emitter.completeAll();
+            try {
+                result = streamingHandler.execute(context, modelGateway, emitter);
+                emitter.completeAll();
+            } catch (RunCancelledException exception) {
+                emitter.completeAll();
+                throw exception;
+            }
         } else {
             result = handler.execute(context, modelGateway);
         }

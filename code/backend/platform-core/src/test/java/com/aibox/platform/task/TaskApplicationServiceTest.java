@@ -204,6 +204,7 @@ class TaskApplicationServiceTest {
         TaskApplicationService service = new TaskApplicationService(
                 taskRepository,
                 runRepository,
+                mock(TaskAssetService.class),
                 new TaskPromptSummaryService(),
                 jobRepository,
                 catalogService,
@@ -252,6 +253,7 @@ class TaskApplicationServiceTest {
             service = new TaskApplicationService(
                     taskRepository,
                     taskRunRepository,
+                    mock(TaskAssetService.class),
                     new TaskPromptSummaryService(),
                     mock(JobRepository.class),
                     catalogService,

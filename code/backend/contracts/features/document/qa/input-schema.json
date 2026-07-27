@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["documents", "question"],
+  "properties": {
+    "documents": {
+      "type": "array",
+      "title": "问答文档",
+      "description": "当前问题使用的会话文档。",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "question": {
+      "type": "string",
+      "title": "输入问题",
+      "description": "回答只依据当前有效文档，不使用模型常识补充事实。",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "strictGrounding": {
+      "type": "boolean",
+      "const": true,
+      "default": true,
+      "title": "严格依据文档"
+    }
+  },
+  "additionalProperties": false
+}

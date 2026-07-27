@@ -74,6 +74,11 @@ public class AssetLibraryService {
                     from artifact_asset relation
                     join artifact on artifact.id = relation.artifact_id
                     join task on task.id = artifact.task_id
+                    union all
+                    select relation.asset_id, task.id as task_id, task.title as task_title
+                    from task_asset relation
+                    join task on task.id = relation.task_id
+                    where relation.status = 'ACTIVE'
                 ) reference on reference.asset_id = asset.id
                 where asset.tenant_id = ?
                   and asset.user_id = ?
@@ -149,6 +154,10 @@ public class AssetLibraryService {
                     select relation.asset_id, artifact.task_id, artifact.run_id
                     from artifact_asset relation
                     join artifact on artifact.id = relation.artifact_id
+                    union all
+                    select relation.asset_id, relation.task_id, null::uuid as run_id
+                    from task_asset relation
+                    where relation.status = 'ACTIVE'
                 )
                 select
                     (select count(*) from selected_asset) as asset_count,

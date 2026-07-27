@@ -75,6 +75,17 @@ class FeatureDetail extends FeatureEntry {
   final List<ModelPolicy> modelPolicies;
 
   ModelPolicy? get modelPolicy => modelPolicies.firstOrNull;
+  String? get pageKey {
+    final value = uiSchema['pageKey']?.toString().trim() ??
+        config['pageKey']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  List<ModelBundle> get modelBundles => _mapList(config['modelBundles'])
+      .map(ModelBundle.fromJson)
+      .where((bundle) =>
+          bundle.code.isNotEmpty && bundle.selectedModels.isNotEmpty)
+      .toList();
 
   Map<String, dynamic> get properties => _map(inputSchema['properties']);
   Set<String> get requiredFields =>
@@ -300,6 +311,27 @@ class ModelOption {
       maxReferenceImages == null || maxReferenceImages! > 0;
 }
 
+class ModelBundle {
+  const ModelBundle({
+    required this.code,
+    required this.displayName,
+    required this.description,
+    required this.selectedModels,
+  });
+
+  factory ModelBundle.fromJson(Map<String, dynamic> json) => ModelBundle(
+        code: _string(json, 'code'),
+        displayName: _string(json, 'displayName'),
+        description: _string(json, 'description'),
+        selectedModels: _stringMap(json['selectedModels']),
+      );
+
+  final String code;
+  final String displayName;
+  final String description;
+  final Map<String, String> selectedModels;
+}
+
 class WorkspaceDefinition {
   const WorkspaceDefinition({
     required this.id,
@@ -497,18 +529,53 @@ class ArtifactView {
 
 class TaskDetail {
   const TaskDetail(
-      {required this.task, required this.runs, required this.artifacts});
+      {required this.task,
+      required this.runs,
+      required this.artifacts,
+      required this.taskAssets});
 
   factory TaskDetail.fromJson(Map<String, dynamic> json) => TaskDetail(
         task: TaskView.fromJson(_map(json['task'])),
         runs: _mapList(json['runs']).map(RunView.fromJson).toList(),
         artifacts:
             _mapList(json['artifacts']).map(ArtifactView.fromJson).toList(),
+        taskAssets:
+            _mapList(json['taskAssets']).map(TaskAssetView.fromJson).toList(),
       );
 
   final TaskView task;
   final List<RunView> runs;
   final List<ArtifactView> artifacts;
+  final List<TaskAssetView> taskAssets;
+}
+
+class TaskAssetView {
+  const TaskAssetView({
+    required this.role,
+    required this.status,
+    required this.ordinal,
+    required this.asset,
+    required this.addedAt,
+    required this.removedAt,
+  });
+
+  factory TaskAssetView.fromJson(Map<String, dynamic> json) => TaskAssetView(
+        role: _string(json, 'role'),
+        status: _string(json, 'status'),
+        ordinal: _integer(json, 'ordinal'),
+        asset: AssetView.fromJson(_map(json['asset'])),
+        addedAt: _date(json['addedAt']),
+        removedAt: json['removedAt'] == null ? null : _date(json['removedAt']),
+      );
+
+  final String role;
+  final String status;
+  final int ordinal;
+  final AssetView asset;
+  final DateTime addedAt;
+  final DateTime? removedAt;
+
+  bool get active => status == 'ACTIVE';
 }
 
 class AssetView {
