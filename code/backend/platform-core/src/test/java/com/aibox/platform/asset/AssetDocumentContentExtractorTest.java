@@ -1,9 +1,13 @@
 package com.aibox.platform.asset;
 
 import com.aibox.feature.spi.DocumentExtractionResult;
+import com.aibox.feature.spi.DocumentExtractionOptions;
 import com.aibox.feature.spi.FeatureValidationException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -142,6 +146,59 @@ class AssetDocumentContentExtractorTest {
             assertThat(image.mediaType()).isEqualTo("image/jpeg");
             assertThat(image.content()).isNotEmpty();
         });
+    }
+
+    @Test
+    void rendersEveryPdfPageForLayoutAwareExtractionAndEnforcesPageLimit() throws IOException {
+        Path path = temporaryDirectory.resolve("layout.pdf");
+        try (PDDocument document = new PDDocument()) {
+            for (int index = 0; index < 2; index++) {
+                PDPage page = new PDPage();
+                document.addPage(page);
+                try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                    content.beginText();
+                    content.setFont(
+                            new PDType1Font(Standard14Fonts.FontName.HELVETICA),
+                            12
+                    );
+                    content.newLineAtOffset(50, 700);
+                    content.showText("Account Quantity Price Total Description " + index);
+                    content.endText();
+                }
+            }
+            document.save(path.toFile());
+        }
+        UUID assetId = UUID.randomUUID();
+        AssetDocumentContentExtractor extractor = extractor(
+                assetId,
+                path,
+                "layout.pdf",
+                "application/pdf"
+        );
+
+        DocumentExtractionResult defaultResult = extractor.extract(assetId, 10_000);
+        DocumentExtractionResult layoutResult = extractor.extract(
+                assetId,
+                new DocumentExtractionOptions(
+                        10_000,
+                        DocumentExtractionOptions.PdfVisualMode.ALL_PAGES,
+                        2
+                )
+        );
+
+        assertThat(defaultResult.requiresVision()).isFalse();
+        assertThat(layoutResult.visualPageNumbers()).containsExactly(1, 2);
+        assertThat(layoutResult.visualPageImages()).hasSize(2)
+                .allSatisfy(image -> assertThat(image.content()).isNotEmpty());
+        assertThatThrownBy(() -> extractor.extract(
+                assetId,
+                new DocumentExtractionOptions(
+                        10_000,
+                        DocumentExtractionOptions.PdfVisualMode.ALL_PAGES,
+                        1
+                )
+        )).isInstanceOf(FeatureValidationException.class)
+                .hasMessageContaining("1");
     }
 
     @Test

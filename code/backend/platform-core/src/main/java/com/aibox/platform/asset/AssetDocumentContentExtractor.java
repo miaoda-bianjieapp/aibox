@@ -1,6 +1,7 @@
 package com.aibox.platform.asset;
 
 import com.aibox.feature.spi.DocumentContentExtractor;
+import com.aibox.feature.spi.DocumentExtractionOptions;
 import com.aibox.feature.spi.DocumentExtractionResult;
 import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.ModelAsset;
@@ -66,6 +67,7 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
     private static final int OCR_PAGE_TEXT_THRESHOLD = 24;
     private static final int MAX_VISUAL_PRESENTATION_SLIDES = 30;
     private static final float OCR_RENDER_DPI = 120f;
+    private static final float LAYOUT_RENDER_DPI = 144f;
     private static final float OCR_JPEG_QUALITY = 0.82f;
     private static final long MAX_RENDERED_VISUAL_BYTES = 100L * 1024 * 1024;
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
@@ -79,35 +81,55 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
     @Override
     @Transactional(readOnly = true)
     public DocumentExtractionResult extract(UUID assetId, int maxCharacters) {
-        if (maxCharacters <= 0) {
-            throw new IllegalArgumentException("maxCharacters must be positive");
-        }
+        return extract(assetId, DocumentExtractionOptions.textAndOcr(maxCharacters));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DocumentExtractionResult extract(
+            UUID assetId,
+            DocumentExtractionOptions options
+    ) {
         AssetService.AssetStoredFile stored = assetService.openForPreview(assetId);
         String extension = extension(stored.asset().name());
         return switch (extension) {
-            case ".pdf" -> extractPdf(assetId, stored.path(), maxCharacters);
-            case ".doc", ".docx" -> extractWord(stored.path(), extension, maxCharacters);
-            case ".xls", ".xlsx" -> extractWorkbook(stored.path(), extension, maxCharacters);
-            case ".csv" -> extractCsv(stored.path(), maxCharacters);
+            case ".pdf" -> extractPdf(assetId, stored.path(), options);
+            case ".doc", ".docx" ->
+                    extractWord(stored.path(), extension, options.maxCharacters());
+            case ".xls", ".xlsx" ->
+                    extractWorkbook(stored.path(), extension, options.maxCharacters());
+            case ".csv" -> extractCsv(stored.path(), options.maxCharacters());
             case ".md", ".markdown", ".txt" ->
-                    extractUtf8Text(stored.path(), extension, maxCharacters);
-            case ".json" -> extractJson(stored.path(), maxCharacters);
+                    extractUtf8Text(stored.path(), extension, options.maxCharacters());
+            case ".json" -> extractJson(stored.path(), options.maxCharacters());
             case ".ppt", ".pptx" ->
-                    extractPresentation(assetId, stored.path(), extension, maxCharacters);
+                    extractPresentation(
+                            assetId,
+                            stored.path(),
+                            extension,
+                            options.maxCharacters()
+                    );
             default -> throw invalidDocument(
                     "不支持该文档格式，请上传 PDF、Office、Markdown、TXT、JSON 或 CSV"
             );
         };
     }
 
-    private DocumentExtractionResult extractPdf(UUID assetId, Path path, int maxCharacters) {
+    private DocumentExtractionResult extractPdf(
+            UUID assetId,
+            Path path,
+            DocumentExtractionOptions options
+    ) {
         try (PDDocument document = Loader.loadPDF(path.toFile())) {
             if (document.getNumberOfPages() <= 0) {
                 throw invalidDocument("PDF 没有可读取的页面");
             }
+            if (document.getNumberOfPages() > options.maxPdfPages()) {
+                throw invalidDocument("PDF 不能超过 " + options.maxPdfPages() + " 页");
+            }
             PDFTextStripper stripper = new PDFTextStripper();
             stripper.setSortByPosition(true);
-            LimitedTextBuilder extracted = new LimitedTextBuilder(maxCharacters);
+            LimitedTextBuilder extracted = new LimitedTextBuilder(options.maxCharacters());
             List<Integer> ocrPageNumbers = new ArrayList<>();
             for (int index = 0; index < document.getNumberOfPages(); index++) {
                 stripper.setStartPage(index + 1);
@@ -121,14 +143,31 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
                 }
             }
 
-            List<ModelAsset> ocrImages = renderOcrPages(assetId, document, ocrPageNumbers);
+            List<Integer> visualPageNumbers;
+            float renderDpi;
+            if (options.pdfVisualMode() == DocumentExtractionOptions.PdfVisualMode.ALL_PAGES) {
+                visualPageNumbers = new ArrayList<>(document.getNumberOfPages());
+                for (int pageNumber = 1; pageNumber <= document.getNumberOfPages(); pageNumber++) {
+                    visualPageNumbers.add(pageNumber);
+                }
+                renderDpi = LAYOUT_RENDER_DPI;
+            } else {
+                visualPageNumbers = ocrPageNumbers;
+                renderDpi = OCR_RENDER_DPI;
+            }
+            List<ModelAsset> visualImages = renderPdfPages(
+                    assetId,
+                    document,
+                    visualPageNumbers,
+                    renderDpi
+            );
             return new DocumentExtractionResult(
                     extracted.value(),
                     "pdf",
                     document.getNumberOfPages(),
                     0,
-                    ocrImages,
-                    ocrPageNumbers
+                    visualImages,
+                    visualPageNumbers
             );
         } catch (FeatureValidationException exception) {
             throw exception;
@@ -137,10 +176,11 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
         }
     }
 
-    private List<ModelAsset> renderOcrPages(
+    private List<ModelAsset> renderPdfPages(
             UUID assetId,
             PDDocument document,
-            List<Integer> pageNumbers
+            List<Integer> pageNumbers,
+            float renderDpi
     ) throws IOException {
         if (pageNumbers.isEmpty()) return List.of();
         PDFRenderer renderer = new PDFRenderer(document);
@@ -149,7 +189,7 @@ public class AssetDocumentContentExtractor implements DocumentContentExtractor {
         for (int pageNumber : pageNumbers) {
             BufferedImage image = renderer.renderImageWithDPI(
                     pageNumber - 1,
-                    OCR_RENDER_DPI,
+                    renderDpi,
                     ImageType.RGB
             );
             byte[] content;

@@ -1,0 +1,25 @@
+featureCode: document.table_extraction
+workspaceCode: document
+version: 1
+displayName: 表格与信息提取
+description: 从单个 PDF、扫描件或图片中提取表格和字段，并输出 Excel 或 JSON 文件。
+status: INTERNAL
+executionMode: ASYNC
+resultType: file
+rendererKey: file
+requiredCapabilities:
+  - TEXT_GENERATION
+  - VISION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxFiles: 1
+  maxFileSizeBytes: 52428800
+  maxPdfPages: 100
+  maxFieldCount: 50
+  maxInstructionsLength: 2000
+modelAliases:
+  text: text.document-table-extraction
+  vision: vision.document-table-extraction

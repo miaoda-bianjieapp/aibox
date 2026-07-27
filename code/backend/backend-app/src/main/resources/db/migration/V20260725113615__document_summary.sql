@@ -53,7 +53,8 @@ insert into model_deployment (
         '{"source":"relay","discovery":"v1/models","supportsImageInputs":true}'::jsonb,
         now(),
         now()
-    );
+    )
+on conflict (code) do nothing;
 
 insert into feature_definition (
     id,

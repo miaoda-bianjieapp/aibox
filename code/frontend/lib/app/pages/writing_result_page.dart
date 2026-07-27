@@ -25,6 +25,9 @@ class ArtifactResultPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copyText = artifact.content['text']?.toString();
+    final downloadableFiles = artifact.assets
+        .where((asset) => asset.available && !asset.isImage)
+        .toList();
     return Scaffold(
       appBar: AppBar(
         title: const Text('任务成果'),
@@ -33,6 +36,12 @@ class ArtifactResultPage extends StatelessWidget {
             IconButton(
               onPressed: () => _downloadImages(context),
               tooltip: '下载图片',
+              icon: const Icon(Icons.download_outlined),
+            ),
+          if (downloadableFiles.isNotEmpty)
+            IconButton(
+              onPressed: () => _downloadFiles(context, downloadableFiles),
+              tooltip: '下载文件',
               icon: const Icon(Icons.download_outlined),
             ),
           if (onContinue != null)
@@ -102,6 +111,32 @@ class ArtifactResultPage extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('图片已保存')));
+      }
+    } catch (exception) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$exception')));
+      }
+    }
+  }
+
+  Future<void> _downloadFiles(
+    BuildContext context,
+    List<AssetView> assets,
+  ) async {
+    try {
+      for (final asset in assets) {
+        final bytes = await BackendApi.instance.downloadAssetContent(asset.id);
+        final saved = await NativeFilePicker.save(
+          fileName: asset.name,
+          mediaType: asset.mediaType,
+          bytes: bytes,
+        );
+        if (!saved) return;
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('文件已保存')));
       }
     } catch (exception) {
       if (context.mounted) {
@@ -391,43 +426,66 @@ class _MediaRenderer extends StatelessWidget {
   Widget build(BuildContext context) {
     if (asset?.available == false) return const _DeletedAssetResult();
     return Container(
-        padding: const EdgeInsets.symmetric(vertical: 18),
-        decoration: const BoxDecoration(
-          border:
-              Border.symmetric(horizontal: BorderSide(color: AppColors.line)),
-        ),
-        child: Row(children: [
-          Icon(icon, color: AppColors.accent, size: 26),
-          const SizedBox(width: 12),
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-              if (content['name'] != null) ...[
-                const SizedBox(height: 4),
-                Text(content['name'].toString(),
-                    style:
-                        const TextStyle(color: AppColors.muted, fontSize: 12)),
-              ],
-              if (asset != null) ...[
-                const SizedBox(height: 8),
-                TextButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (context) => AssetPreviewPage(
-                        api: BackendApi.instance,
-                        asset: asset!,
-                      ),
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      decoration: const BoxDecoration(
+        border: Border.symmetric(horizontal: BorderSide(color: AppColors.line)),
+      ),
+      child: Row(children: [
+        Icon(icon, color: AppColors.accent, size: 26),
+        const SizedBox(width: 12),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+            if (content['name'] != null) ...[
+              const SizedBox(height: 4),
+              Text(content['name'].toString(),
+                  style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+            ],
+            if (asset != null) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => AssetPreviewPage(
+                      api: BackendApi.instance,
+                      asset: asset!,
                     ),
                   ),
-                  icon: const Icon(Icons.visibility_outlined, size: 18),
-                  label: const Text('打开预览'),
                 ),
-              ],
-            ]),
-          ),
-        ]),
-      );
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: const Text('打开预览'),
+              ),
+              TextButton.icon(
+                onPressed: () => _downloadAsset(context, asset!),
+                icon: const Icon(Icons.download_outlined, size: 18),
+                label: const Text('下载'),
+              ),
+            ],
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+Future<void> _downloadAsset(BuildContext context, AssetView asset) async {
+  try {
+    final bytes = await BackendApi.instance.downloadAssetContent(asset.id);
+    final saved = await NativeFilePicker.save(
+      fileName: asset.name,
+      mediaType: asset.mediaType,
+      bytes: bytes,
+    );
+    if (saved && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('文件已保存')));
+    }
+  } catch (exception) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$exception')));
+    }
   }
 }
 
