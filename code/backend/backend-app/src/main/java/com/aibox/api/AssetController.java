@@ -11,7 +11,8 @@ import org.springframework.http.HttpRange;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.core.io.support.ResourceRegion;
+import org.springframework.core.io.AbstractResource;
+import org.springframework.core.io.Resource;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,8 +25,10 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.nio.charset.StandardCharsets;
+import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -92,6 +95,18 @@ public class AssetController {
         return previewService.preview(assetId);
     }
 
+    @GetMapping("/{assetId}/preview/content")
+    public ResponseEntity<?> previewContent(@PathVariable UUID assetId) {
+        AssetPreviewService.PreviewContent content = previewService.previewContent(assetId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(content.mediaType()));
+        headers.setContentLength(content.sizeBytes());
+        headers.setContentDisposition(ContentDisposition.inline()
+                .filename(content.fileName(), StandardCharsets.UTF_8)
+                .build());
+        return ResponseEntity.ok().headers(headers).body(content.resource());
+    }
+
     @PostMapping("/delete-impact")
     public AssetLibraryService.DeleteImpact deleteImpact(@RequestBody AssetSelection request) {
         return libraryService.impact(request.assetIds());
@@ -129,11 +144,16 @@ public class AssetController {
             if (ranges.size() != 1) {
                 throw new IllegalArgumentException("Only one byte range is supported");
             }
-            ResourceRegion region = ranges.get(0).toResourceRegion(download.resource());
-            headers.setContentLength(region.getCount());
+            HttpRange range = ranges.get(0);
+            long totalLength = download.asset().sizeBytes();
+            long start = range.getRangeStart(totalLength);
+            long end = range.getRangeEnd(totalLength);
+            long count = end - start + 1;
+            headers.setContentLength(count);
+            headers.set(HttpHeaders.CONTENT_RANGE, "bytes " + start + "-" + end + "/" + totalLength);
             return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
                     .headers(headers)
-                    .body(region);
+                    .body(new ByteRangeResource(download.resource(), start, count));
         } catch (IllegalArgumentException exception) {
             throw new PlatformException("ASSET_RANGE_INVALID", "Requested file range is invalid");
         }
@@ -156,6 +176,73 @@ public class AssetController {
     public record AssetSelection(List<UUID> assetIds) {
         public AssetSelection {
             assetIds = assetIds == null ? List.of() : List.copyOf(assetIds);
+        }
+    }
+
+    private static final class ByteRangeResource extends AbstractResource {
+
+        private final Resource source;
+        private final long position;
+        private final long count;
+
+        private ByteRangeResource(Resource source, long position, long count) {
+            this.source = source;
+            this.position = position;
+            this.count = count;
+        }
+
+        @Override
+        public String getDescription() {
+            return source.getDescription() + " byte range " + position + "+" + count;
+        }
+
+        @Override
+        public String getFilename() {
+            return source.getFilename();
+        }
+
+        @Override
+        public long contentLength() {
+            return count;
+        }
+
+        @Override
+        public InputStream getInputStream() throws IOException {
+            InputStream input = source.getInputStream();
+            try {
+                input.skipNBytes(position);
+                return new LimitedInputStream(input, count);
+            } catch (IOException | RuntimeException exception) {
+                input.close();
+                throw exception;
+            }
+        }
+    }
+
+    private static final class LimitedInputStream extends FilterInputStream {
+
+        private long remaining;
+
+        private LimitedInputStream(InputStream input, long count) {
+            super(input);
+            this.remaining = count;
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (remaining <= 0) return -1;
+            int value = super.read();
+            if (value >= 0) remaining--;
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (remaining <= 0) return -1;
+            int allowed = (int) Math.min(length, remaining);
+            int read = super.read(buffer, offset, allowed);
+            if (read > 0) remaining -= read;
+            return read;
         }
     }
 }

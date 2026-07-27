@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/feature_models.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
-import 'task_history_page.dart';
+import '../widgets/feature_page_router.dart';
 
 typedef HistoryTaskLoader = Future<List<TaskView>> Function(
   String? workspaceCode,
@@ -254,12 +254,7 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Future<void> _openTask(TaskView task) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) =>
-            TaskHistoryPage(taskId: task.id, data: widget.data),
-      ),
-    );
+    await openTaskExperience(context, data: widget.data, task: task);
     if (mounted) await _loadTasks();
   }
 

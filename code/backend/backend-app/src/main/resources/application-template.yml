@@ -56,6 +56,10 @@ yuanzuo:
     orphan-cleanup-enabled: true
     orphan-cleanup-initial-delay-ms: 120000
     orphan-cleanup-interval-ms: 86400000
+    powerpoint-preview:
+      # 留空时自动查找 PATH 和 Windows 标准 LibreOffice 安装目录。
+      libreoffice-path: ""
+      conversion-timeout-ms: 120000
   worker:
     enabled: true
     poll-delay-ms: 500

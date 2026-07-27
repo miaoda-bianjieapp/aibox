@@ -60,6 +60,9 @@ public class TaskWorker {
         try {
             coordinator.execute(lease.runId());
             jobQueue.markSucceeded(lease.jobId());
+        } catch (RunCancelledException exception) {
+            log.info("Feature execution stopped for cancelled run {}", lease.runId());
+            jobQueue.markCancelled(lease.jobId());
         } catch (FeatureValidationException exception) {
             log.info("Feature validation failed for run {}: {}", lease.runId(), exception.getMessage());
             stateService.fail(lease.runId(), "FEATURE_VALIDATION_FAILED", exception.getMessage());

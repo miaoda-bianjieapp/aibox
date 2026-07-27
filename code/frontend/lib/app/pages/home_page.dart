@@ -7,7 +7,7 @@ import '../widgets/app_icons.dart';
 import '../widgets/brand_header.dart';
 import '../widgets/section_header.dart';
 import '../widgets/task_sheet.dart';
-import 'task_history_page.dart';
+import '../widgets/feature_page_router.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.data, required this.onOpenFeatures});
@@ -149,18 +149,16 @@ class _HomePageState extends State<HomePage> {
 
   void _openWorkspace(WorkspaceDefinition workspace) {
     if (workspace.entries.isEmpty) return;
-    showTaskSheet(
+    openFeatureExperience(
       context,
       data: widget.data,
-      request: TaskLaunchRequest(
-          workspace: workspace, entry: workspace.entries.first),
+      workspace: workspace,
+      entry: workspace.entries.first,
     );
   }
 
   void _openTask(TaskView task) {
-    Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (context) => TaskHistoryPage(taskId: task.id, data: widget.data),
-    ));
+    openTaskExperience(context, data: widget.data, task: task);
   }
 
   void _showMessage(String message) {

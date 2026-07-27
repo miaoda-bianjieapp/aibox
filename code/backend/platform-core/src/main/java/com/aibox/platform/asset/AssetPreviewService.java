@@ -3,14 +3,19 @@ package com.aibox.platform.asset;
 import com.aibox.platform.common.PlatformException;
 import org.apache.poi.extractor.ExtractorFactory;
 import org.apache.poi.extractor.POITextExtractor;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -20,12 +25,16 @@ public class AssetPreviewService {
     private static final int MAX_TEXT_PREVIEW_CHARACTERS = 2_000_000;
 
     private final AssetService assetService;
+    private final PowerPointPreviewConverter powerPointConverter;
 
-    public AssetPreviewService(AssetService assetService) {
+    public AssetPreviewService(
+            AssetService assetService,
+            PowerPointPreviewConverter powerPointConverter
+    ) {
         this.assetService = assetService;
+        this.powerPointConverter = powerPointConverter;
     }
 
-    @Transactional(readOnly = true)
     public PreviewDescriptor preview(UUID assetId) {
         AssetService.AssetStoredFile stored = assetService.openForPreview(assetId);
         AssetService.AssetView asset = stored.asset();
@@ -42,6 +51,37 @@ public class AssetPreviewService {
         };
     }
 
+    public PreviewContent previewContent(UUID assetId) {
+        AssetService.AssetStoredFile stored = assetService.openForPreview(assetId);
+        AssetService.AssetView asset = stored.asset();
+        String extension = extension(asset.name());
+        if (!isPowerPoint(extension)) {
+            throw new PlatformException(
+                    "ASSET_PREVIEW_CONTENT_UNSUPPORTED",
+                    "This file does not have generated preview content"
+            );
+        }
+        Path converted = powerPointConverter
+                .convert(stored.path(), extension, asset.sha256())
+                .orElseThrow(() -> new PlatformException(
+                        "ASSET_PREVIEW_CONTENT_UNAVAILABLE",
+                        "The generated preview is unavailable"
+                ));
+        try {
+            return new PreviewContent(
+                    "application/pdf",
+                    pdfName(asset.name()),
+                    Files.size(converted),
+                    new FileSystemResource(converted)
+            );
+        } catch (IOException exception) {
+            throw new PlatformException(
+                    "ASSET_PREVIEW_CONTENT_UNAVAILABLE",
+                    "The generated preview is unavailable"
+            );
+        }
+    }
+
     private PreviewDescriptor documentPreview(
             AssetService.AssetView asset,
             Path path,
@@ -51,6 +91,9 @@ public class AssetPreviewService {
         if (".pdf".equals(extension) || "application/pdf".equalsIgnoreCase(asset.mediaType())) {
             return new PreviewDescriptor("PDF", "application/pdf", contentUrl, null, false);
         }
+        if (isPowerPoint(extension)) {
+            return powerPointPreview(asset, path, extension);
+        }
         if (isOffice(extension)) {
             TextPreview text = extractOffice(path);
             return new PreviewDescriptor("TEXT", "text/plain", null, text.content(), text.truncated());
@@ -59,7 +102,33 @@ public class AssetPreviewService {
         return new PreviewDescriptor("TEXT", asset.mediaType(), null, text.content(), text.truncated());
     }
 
+    private PreviewDescriptor powerPointPreview(
+            AssetService.AssetView asset,
+            Path path,
+            String extension
+    ) {
+        if (powerPointConverter.convert(path, extension, asset.sha256()).isPresent()) {
+            return new PreviewDescriptor(
+                    "PDF",
+                    "application/pdf",
+                    "/api/v1/assets/" + asset.id() + "/preview/content",
+                    null,
+                    false
+            );
+        }
+        TextPreview text = extractPowerPointText(path);
+        return new PreviewDescriptor("TEXT", "text/plain", null, text.content(), text.truncated());
+    }
+
     private TextPreview extractOffice(Path path) {
+        return extractPoiText(path);
+    }
+
+    private TextPreview extractPowerPointText(Path path) {
+        return extractPoiText(path);
+    }
+
+    private TextPreview extractPoiText(Path path) {
         try (POITextExtractor extractor = ExtractorFactory.createExtractor(path.toFile())) {
             return truncate(extractor.getText());
         } catch (Exception exception) {
@@ -71,18 +140,50 @@ public class AssetPreviewService {
     }
 
     private TextPreview readText(Path path) {
+        try {
+            for (Charset charset : preferredTextCharsets(path)) {
+                try {
+                    return readText(path, charset);
+                } catch (CharacterCodingException ignored) {
+                    // Try the next supported text encoding.
+                }
+            }
+        } catch (IOException exception) {
+            throw new PlatformException("ASSET_PREVIEW_FAILED", "The text file could not be decoded");
+        }
+        throw new PlatformException("ASSET_PREVIEW_FAILED", "The text file could not be decoded");
+    }
+
+    private TextPreview readText(Path path, Charset charset) throws IOException {
         StringBuilder result = new StringBuilder();
-        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = Files.newBufferedReader(path, charset)) {
             char[] buffer = new char[8192];
             int count;
             while (result.length() <= MAX_TEXT_PREVIEW_CHARACTERS
                     && (count = reader.read(buffer)) >= 0) {
                 result.append(buffer, 0, count);
             }
-        } catch (IOException exception) {
-            throw new PlatformException("ASSET_PREVIEW_FAILED", "The text file could not be decoded");
         }
-        return truncate(result.toString());
+        String value = result.toString();
+        if (!value.isEmpty() && value.charAt(0) == '\uFEFF') {
+            value = value.substring(1);
+        }
+        return truncate(value);
+    }
+
+    private static List<Charset> preferredTextCharsets(Path path) throws IOException {
+        byte[] prefix = new byte[3];
+        int count;
+        try (InputStream input = Files.newInputStream(path)) {
+            count = input.read(prefix);
+        }
+        Charset gb18030 = Charset.forName("GB18030");
+        if (count >= 2
+                && ((prefix[0] == (byte) 0xFF && prefix[1] == (byte) 0xFE)
+                || (prefix[0] == (byte) 0xFE && prefix[1] == (byte) 0xFF))) {
+            return List.of(StandardCharsets.UTF_16, StandardCharsets.UTF_8, gb18030);
+        }
+        return List.of(StandardCharsets.UTF_8, gb18030, StandardCharsets.UTF_16);
     }
 
     private static TextPreview truncate(String value) {
@@ -95,14 +196,24 @@ public class AssetPreviewService {
 
     private static boolean isOffice(String extension) {
         return switch (extension) {
-            case ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx" -> true;
+            case ".doc", ".docx", ".xls", ".xlsx" -> true;
             default -> false;
         };
+    }
+
+    private static boolean isPowerPoint(String extension) {
+        return ".ppt".equals(extension) || ".pptx".equals(extension);
     }
 
     private static String extension(String name) {
         int index = name.lastIndexOf('.');
         return index < 0 ? "" : name.substring(index).toLowerCase(Locale.ROOT);
+    }
+
+    private static String pdfName(String name) {
+        int index = name.lastIndexOf('.');
+        String base = index <= 0 ? name : name.substring(0, index);
+        return (base == null || base.isBlank() ? "preview" : base) + ".pdf";
     }
 
     public record PreviewDescriptor(
@@ -111,6 +222,14 @@ public class AssetPreviewService {
             String contentUrl,
             String text,
             boolean truncated
+    ) {
+    }
+
+    public record PreviewContent(
+            String mediaType,
+            String fileName,
+            long sizeBytes,
+            Resource resource
     ) {
     }
 

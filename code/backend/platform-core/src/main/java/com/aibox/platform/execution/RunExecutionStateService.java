@@ -52,6 +52,9 @@ public class RunExecutionStateService {
     @Transactional
     public Optional<FeatureExecutionContext> start(UUID runId) {
         TaskRunEntity run = requireRun(runId);
+        if (run.getStatus() == RunStatus.CANCELLED) {
+            throw new RunCancelledException(runId);
+        }
         if (run.getStatus().isTerminal()) {
             return Optional.empty();
         }

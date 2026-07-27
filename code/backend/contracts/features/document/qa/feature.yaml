@@ -1,0 +1,25 @@
+featureCode: document.qa
+workspaceCode: document
+version: 2
+displayName: 文档问答
+description: 基于当前会话中的文档进行带精确来源的多轮问答。
+status: INTERNAL
+executionMode: ASYNC
+resultType: document_chat
+rendererKey: document_qa_chat
+requiredCapabilities:
+  - TEXT_GENERATION
+  - VISION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxFiles: 10
+  maxFileSizeBytes: 52428800
+  maxTotalSizeBytes: 209715200
+  maxQuestionLength: 4000
+  maxContextTurns: 20
+modelAliases:
+  text: document.qa.text
+  vision: document.qa.vision

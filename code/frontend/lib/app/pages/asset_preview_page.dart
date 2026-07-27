@@ -15,10 +15,16 @@ class AssetPreviewPage extends StatefulWidget {
     super.key,
     required this.api,
     required this.asset,
+    this.initialPage,
+    this.initialLine,
+    this.endLine,
   });
 
   final BackendApi api;
   final AssetView asset;
+  final int? initialPage;
+  final int? initialLine;
+  final int? endLine;
 
   @override
   State<AssetPreviewPage> createState() => _AssetPreviewPageState();
@@ -61,6 +67,9 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
                   descriptor: snapshot.requireData,
                   api: widget.api,
                   asset: widget.asset,
+                  initialPage: widget.initialPage,
+                  initialLine: widget.initialLine,
+                  endLine: widget.endLine,
                 );
               },
             )
@@ -78,11 +87,17 @@ class _PreviewBody extends StatelessWidget {
     required this.descriptor,
     required this.api,
     required this.asset,
+    required this.initialPage,
+    required this.initialLine,
+    required this.endLine,
   });
 
   final AssetPreviewDescriptor descriptor;
   final BackendApi api;
   final AssetView asset;
+  final int? initialPage;
+  final int? initialLine;
+  final int? endLine;
 
   @override
   Widget build(BuildContext context) {
@@ -91,10 +106,17 @@ class _PreviewBody extends StatelessWidget {
       'IMAGE' when url != null => _ImagePreview(url: url),
       'VIDEO' when url != null => _VideoPreview(url: url),
       'AUDIO' when url != null => _AudioPreview(url: url),
-      'PDF' when url != null => _PdfPreview(api: api, asset: asset),
+      'PDF' when url != null => _PdfPreview(
+          api: api,
+          contentUrl: url,
+          fileName: _pdfFileName(asset.name),
+          initialPage: initialPage,
+        ),
       'TEXT' => _TextPreview(
           text: descriptor.text ?? '',
           truncated: descriptor.truncated,
+          initialLine: initialLine,
+          endLine: endLine,
         ),
       _ => const _PreviewMessage(
           icon: Icons.insert_drive_file_outlined,
@@ -106,10 +128,17 @@ class _PreviewBody extends StatelessWidget {
 }
 
 class _PdfPreview extends StatefulWidget {
-  const _PdfPreview({required this.api, required this.asset});
+  const _PdfPreview({
+    required this.api,
+    required this.contentUrl,
+    required this.fileName,
+    required this.initialPage,
+  });
 
   final BackendApi api;
-  final AssetView asset;
+  final String contentUrl;
+  final String fileName;
+  final int? initialPage;
 
   @override
   State<_PdfPreview> createState() => _PdfPreviewState();
@@ -124,9 +153,9 @@ class _PdfPreviewState extends State<_PdfPreview> {
   void initState() {
     super.initState();
     _fileFuture = widget.api
-        .downloadAssetToTemporaryFile(
-      widget.asset.id,
-      fileName: widget.asset.name,
+        .downloadUrlToTemporaryFile(
+      widget.contentUrl,
+      fileName: widget.fileName,
     )
         .then((file) {
       _file = file;
@@ -166,6 +195,7 @@ class _PdfPreviewState extends State<_PdfPreview> {
         }
         return PDFView(
           filePath: snapshot.requireData.path,
+          defaultPage: (widget.initialPage ?? 1).clamp(1, 1 << 20) - 1,
           enableSwipe: true,
           swipeHorizontal: false,
           autoSpacing: true,
@@ -433,34 +463,152 @@ class _AudioPreviewState extends State<_AudioPreview> {
   }
 }
 
-class _TextPreview extends StatelessWidget {
-  const _TextPreview({required this.text, required this.truncated});
+class _TextPreview extends StatefulWidget {
+  const _TextPreview({
+    required this.text,
+    required this.truncated,
+    required this.initialLine,
+    required this.endLine,
+  });
 
   final String text;
   final bool truncated;
+  final int? initialLine;
+  final int? endLine;
+
+  @override
+  State<_TextPreview> createState() => _TextPreviewState();
+}
+
+class _TextPreviewState extends State<_TextPreview> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _citationKey = GlobalKey();
+  bool _citationRevealScheduled = false;
+
+  @override
+  void didUpdateWidget(covariant _TextPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text ||
+        oldWidget.initialLine != widget.initialLine ||
+        oldWidget.endLine != widget.endLine) {
+      _citationRevealScheduled = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.initialLine != null && widget.text.isNotEmpty) {
+      return _buildFullTextWithCitation();
+    }
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
       children: [
-        if (truncated)
-          Container(
-            margin: const EdgeInsets.only(bottom: 14),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF8E8),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text('文件较大，当前显示前 200 万个字符。'),
-          ),
+        if (widget.truncated) _buildTruncatedNotice(),
         SelectableText(
-          text.isEmpty ? '文件没有可显示的文本内容。' : text,
-          style: const TextStyle(fontSize: 14, height: 1.6),
+          widget.text.isEmpty ? '文件没有可显示的文本内容。' : widget.text,
+          style: _textStyle,
         ),
       ],
     );
   }
+
+  Widget _buildFullTextWithCitation() {
+    final lines = widget.text.split(RegExp(r'\r?\n'));
+    final citedStart = widget.initialLine!.clamp(1, lines.length).toInt();
+    final citedEnd =
+        (widget.endLine ?? citedStart).clamp(citedStart, lines.length).toInt();
+    final before = lines.take(citedStart - 1).join('\n');
+    final cited = lines.sublist(citedStart - 1, citedEnd).join('\n');
+    final after = lines.skip(citedEnd).join('\n');
+    _scheduleCitationReveal();
+
+    return SingleChildScrollView(
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (widget.truncated) _buildTruncatedNotice(),
+          if (before.isNotEmpty)
+            SelectableText(
+              before,
+              style: _textStyle,
+            ),
+          Container(
+            key: _citationKey,
+            color: AppColors.accentSoft,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 58,
+                  child: Text(
+                    citedStart == citedEnd
+                        ? '$citedStart'
+                        : '$citedStart-$citedEnd',
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: SelectableText(
+                    cited,
+                    style: _textStyle,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (after.isNotEmpty)
+            SelectableText(
+              after,
+              style: _textStyle,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTruncatedNotice() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E8),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Text('文件较大，当前显示前 200 万个字符。'),
+    );
+  }
+
+  void _scheduleCitationReveal() {
+    if (_citationRevealScheduled) return;
+    _citationRevealScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final citationContext = _citationKey.currentContext;
+      if (citationContext == null) return;
+      Scrollable.ensureVisible(
+        citationContext,
+        alignment: 0.18,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
+  static const TextStyle _textStyle = TextStyle(fontSize: 14, height: 1.6);
 }
 
 class _PreviewMessage extends StatelessWidget {
@@ -502,4 +650,12 @@ String _durationLabel(Duration duration) {
   final minutes = duration.inMinutes;
   final seconds = duration.inSeconds.remainder(60);
   return '$minutes:${seconds.toString().padLeft(2, '0')}';
+}
+
+String _pdfFileName(String originalName) {
+  final extensionIndex = originalName.lastIndexOf('.');
+  final baseName = extensionIndex <= 0
+      ? originalName
+      : originalName.substring(0, extensionIndex);
+  return '${baseName.isEmpty ? 'preview' : baseName}.pdf';
 }

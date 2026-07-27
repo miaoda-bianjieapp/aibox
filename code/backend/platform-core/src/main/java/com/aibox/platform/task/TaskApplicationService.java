@@ -35,6 +35,7 @@ public class TaskApplicationService {
 
     private final TaskRepository taskRepository;
     private final TaskRunRepository runRepository;
+    private final TaskAssetService taskAssetService;
     private final TaskPromptSummaryService promptSummaryService;
     private final JobRepository jobRepository;
     private final FeatureCatalogService catalogService;
@@ -51,6 +52,7 @@ public class TaskApplicationService {
     public TaskApplicationService(
             TaskRepository taskRepository,
             TaskRunRepository runRepository,
+            TaskAssetService taskAssetService,
             TaskPromptSummaryService promptSummaryService,
             JobRepository jobRepository,
             FeatureCatalogService catalogService,
@@ -66,6 +68,7 @@ public class TaskApplicationService {
     ) {
         this.taskRepository = taskRepository;
         this.runRepository = runRepository;
+        this.taskAssetService = taskAssetService;
         this.promptSummaryService = promptSummaryService;
         this.jobRepository = jobRepository;
         this.catalogService = catalogService;
@@ -184,7 +187,8 @@ public class TaskApplicationService {
                         promptSummaryService.snippet(task.getFeatureCode(), firstParameters)
                 ),
                 runs,
-                artifactService.listByTask(taskId)
+                artifactService.listByTask(taskId),
+                taskAssetService.list(taskId)
         );
     }
 
@@ -400,7 +404,8 @@ public class TaskApplicationService {
     public record TaskDetailView(
             TaskView task,
             List<RunView> runs,
-            List<ArtifactService.ArtifactView> artifacts
+            List<ArtifactService.ArtifactView> artifacts,
+            List<TaskAssetService.TaskAssetView> taskAssets
     ) {
     }
 
