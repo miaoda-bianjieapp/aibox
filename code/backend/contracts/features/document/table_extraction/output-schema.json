@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "assetId",
+    "format",
+    "name",
+    "extractionMode",
+    "tableCount",
+    "fieldCount",
+    "sourcePages",
+    "confidence",
+    "warnings",
+    "partial"
+  ],
+  "properties": {
+    "assetId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "format": {
+      "type": "string",
+      "enum": ["xlsx", "json"]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "extractionMode": {
+      "type": "string",
+      "enum": ["auto", "table", "fields"]
+    },
+    "tableCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fieldCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sourcePages": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      }
+    },
+    "partial": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

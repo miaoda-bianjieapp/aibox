@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["document", "extractionMode", "outputFormat"],
+  "properties": {
+    "document": {
+      "type": "string",
+      "format": "uuid",
+      "title": "待提取文件",
+      "description": "每次处理一个 PDF 或图片。"
+    },
+    "extractionMode": {
+      "type": "string",
+      "enum": ["auto", "table", "fields"],
+      "default": "auto",
+      "title": "提取模式",
+      "description": "自动识别适合混合内容；也可以只提取表格或指定字段。"
+    },
+    "fieldNames": {
+      "type": "string",
+      "maxLength": 3249,
+      "title": "目标字段",
+      "description": "每行填写一个字段名，最多 50 项。"
+    },
+    "outputFormat": {
+      "type": "string",
+      "enum": ["xlsx", "json"],
+      "default": "xlsx",
+      "title": "输出格式"
+    },
+    "instructions": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "补充或纠正要求",
+      "description": "可选。说明表头、字段含义或需要纠正的识别结果。"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "extractionMode": {"const": "fields"}
+        },
+        "required": ["extractionMode"]
+      },
+      "then": {
+        "required": ["fieldNames"],
+        "properties": {
+          "fieldNames": {"minLength": 1}
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

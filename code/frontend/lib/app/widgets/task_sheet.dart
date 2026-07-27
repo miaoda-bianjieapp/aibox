@@ -960,6 +960,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         fallback: _mimeTypesForWidget(widgetType));
     final allowedExtensions = _stringListOption(options, 'allowedExtensions');
     final maxTotalSizeBytes = _integerOption(options, 'maxTotalSizeBytes');
+    final allowAssetLibrarySelection =
+        options['allowAssetLibrarySelection'] == true;
     final currentBytes =
         assets.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1005,25 +1007,51 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           ),
         ),
       const SizedBox(height: 8),
-      OutlinedButton.icon(
-        onPressed: _submitting || disabledByModel || assets.length >= maxItems
-            ? null
-            : () => _pickAsset(
-                  feature,
-                  field,
-                  widgetType,
-                  acceptedMimeTypes: acceptedMimeTypes,
-                  allowedExtensions: allowedExtensions,
-                  maxSizeBytes: _integerOption(options, 'maxFileSizeBytes'),
-                  maxTotalSizeBytes: maxTotalSizeBytes,
-                ),
-        icon: const Icon(Icons.upload_file_outlined),
-        label: Text(assets.length >= maxItems
-            ? '已达到数量上限'
-            : disabledByModel
-                ? '当前模型不支持参考图'
-                : options['uploadLabel']?.toString() ??
-                    _defaultUploadLabel(widgetType)),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          OutlinedButton.icon(
+            onPressed: _submitting ||
+                    disabledByModel ||
+                    assets.length >= maxItems
+                ? null
+                : () => _pickAsset(
+                      feature,
+                      field,
+                      widgetType,
+                      acceptedMimeTypes: acceptedMimeTypes,
+                      allowedExtensions: allowedExtensions,
+                      maxSizeBytes: _integerOption(options, 'maxFileSizeBytes'),
+                      maxTotalSizeBytes: maxTotalSizeBytes,
+                    ),
+            icon: const Icon(Icons.upload_file_outlined),
+            label: Text(assets.length >= maxItems
+                ? '已达到数量上限'
+                : disabledByModel
+                    ? '当前模型不支持参考图'
+                    : options['uploadLabel']?.toString() ??
+                        _defaultUploadLabel(widgetType)),
+          ),
+          if (allowAssetLibrarySelection)
+            TextButton.icon(
+              onPressed:
+                  _submitting || disabledByModel || assets.length >= maxItems
+                      ? null
+                      : () => _chooseLibraryAssets(
+                            feature,
+                            field,
+                            acceptedMimeTypes: acceptedMimeTypes,
+                            allowedExtensions: allowedExtensions,
+                            maximum: maxItems - assets.length,
+                            maxSizeBytes:
+                                _integerOption(options, 'maxFileSizeBytes'),
+                            maxTotalSizeBytes: maxTotalSizeBytes,
+                          ),
+              icon: const Icon(Icons.folder_outlined),
+              label: const Text('我的文件'),
+            ),
+        ],
       ),
     ]);
   }
@@ -1199,6 +1227,67 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     } catch (exception) {
       if (mounted) setState(() => _error = '$exception');
     }
+  }
+
+  Future<void> _chooseLibraryAssets(
+    FeatureDetail feature,
+    String field, {
+    required List<String> acceptedMimeTypes,
+    required List<String> allowedExtensions,
+    required int maximum,
+    required int? maxSizeBytes,
+    required int? maxTotalSizeBytes,
+  }) async {
+    final selectedIds = (_assetsByField[field] ?? const <AssetView>[])
+        .map((asset) => asset.id)
+        .toSet();
+    final candidates = widget.data.assets
+        .where((asset) =>
+            asset.available &&
+            asset.origin == 'USER_UPLOAD' &&
+            !selectedIds.contains(asset.id) &&
+            _assetMatchesOptions(
+              asset,
+              acceptedMimeTypes,
+              allowedExtensions,
+            ))
+        .toList()
+      ..sort((left, right) => right.createdAt.compareTo(left.createdAt));
+    final selected = await showDialog<List<AssetView>>(
+      context: context,
+      builder: (context) => _AssetLibrarySelectionDialog(
+        assets: candidates,
+        maximum: maximum,
+      ),
+    );
+    if (selected == null || selected.isEmpty || !mounted) return;
+    final oversized = maxSizeBytes == null
+        ? null
+        : selected.where((asset) => asset.sizeBytes > maxSizeBytes).firstOrNull;
+    if (oversized != null) {
+      setState(() {
+        _error = '${oversized.name} 不能超过 ${_formatBytes(maxSizeBytes!)}';
+      });
+      return;
+    }
+    final currentBytes = (_assetsByField[field] ?? const <AssetView>[])
+        .fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
+    final selectedBytes =
+        selected.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
+    if (maxTotalSizeBytes != null &&
+        currentBytes + selectedBytes > maxTotalSizeBytes) {
+      setState(() {
+        _error = '所选文件总大小不能超过 ${_formatBytes(maxTotalSizeBytes)}';
+      });
+      return;
+    }
+    final staleMasks = <AssetView>[];
+    setState(() {
+      (_assetsByField[field] ??= []).addAll(selected);
+      staleMasks.addAll(_clearDependentMaskFields(feature, field));
+      _error = null;
+    });
+    await _deleteTemporaryDerivedAssets(staleMasks);
   }
 
   void _removeAsset(
@@ -1629,6 +1718,87 @@ class _FeeNotice extends StatelessWidget {
       );
 }
 
+class _AssetLibrarySelectionDialog extends StatefulWidget {
+  const _AssetLibrarySelectionDialog({
+    required this.assets,
+    required this.maximum,
+  });
+
+  final List<AssetView> assets;
+  final int maximum;
+
+  @override
+  State<_AssetLibrarySelectionDialog> createState() =>
+      _AssetLibrarySelectionDialogState();
+}
+
+class _AssetLibrarySelectionDialogState
+    extends State<_AssetLibrarySelectionDialog> {
+  final Set<String> _selected = {};
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('从我的文件选择'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: widget.assets.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Text(
+                    '没有符合当前功能要求的文件',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.muted),
+                  ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: widget.assets.length,
+                  itemBuilder: (context, index) {
+                    final asset = widget.assets[index];
+                    final selected = _selected.contains(asset.id);
+                    return CheckboxListTile(
+                      value: selected,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: Text(
+                        asset.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(_formatBytes(asset.sizeBytes)),
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == true &&
+                              _selected.length < widget.maximum) {
+                            _selected.add(asset.id);
+                          } else {
+                            _selected.remove(asset.id);
+                          }
+                        });
+                      },
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: _selected.isEmpty
+                ? null
+                : () => Navigator.pop(
+                      context,
+                      widget.assets
+                          .where((asset) => _selected.contains(asset.id))
+                          .toList(),
+                    ),
+            child: Text('添加 ${_selected.length} 个'),
+          ),
+        ],
+      );
+}
+
 class _AssetPreview extends StatelessWidget {
   const _AssetPreview({
     required this.asset,
@@ -1669,12 +1839,11 @@ class _AssetPreview extends StatelessWidget {
     }
     return SizedBox(
       width: 272,
-      height: 72,
       child: Stack(
         children: [
           Container(
             width: double.infinity,
-            height: double.infinity,
+            constraints: const BoxConstraints(minHeight: 72),
             padding: const EdgeInsets.fromLTRB(12, 10, 34, 10),
             decoration: BoxDecoration(
               color: AppColors.wash,
@@ -1767,6 +1936,28 @@ List<String> _mimeTypesForWidget(String widgetType) => switch (widgetType) {
       'video' => ['video/*'],
       _ => ['*/*'],
     };
+
+bool _assetMatchesOptions(
+  AssetView asset,
+  List<String> acceptedMimeTypes,
+  List<String> allowedExtensions,
+) {
+  final normalizedName = asset.name.toLowerCase();
+  final extensionMatches = allowedExtensions.isEmpty ||
+      allowedExtensions
+          .map((value) => value.toLowerCase())
+          .any(normalizedName.endsWith);
+  if (!extensionMatches) return false;
+  if (acceptedMimeTypes.isEmpty || acceptedMimeTypes.contains('*/*')) {
+    return true;
+  }
+  if (asset.mediaType == 'application/octet-stream') return true;
+  return acceptedMimeTypes.any((value) {
+    if (value == asset.mediaType) return true;
+    return value.endsWith('/*') &&
+        asset.mediaType.startsWith(value.substring(0, value.length - 1));
+  });
+}
 
 List<String> _stringListOption(Map<String, dynamic> options, String key,
     {List<String> fallback = const []}) {

@@ -285,6 +285,11 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final output = controller.output;
+    final copyableOutput = output != null &&
+            output.content.isNotEmpty &&
+            (output.format == 'markdown' || output.format == 'plain_text')
+        ? output
+        : null;
     return PopScope(
       canPop: !controller.running,
       child: Scaffold(
@@ -299,9 +304,9 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
           actions: [
-            if (output?.content.isNotEmpty == true)
+            if (copyableOutput != null)
               IconButton(
-                onPressed: () => _copyAll(output!.content),
+                onPressed: () => _copyAll(copyableOutput.content),
                 tooltip: '复制全文',
                 icon: const Icon(Icons.copy_all_outlined),
               ),

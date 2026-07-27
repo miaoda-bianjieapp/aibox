@@ -6,4 +6,11 @@ import java.util.UUID;
 public interface DocumentContentExtractor {
 
     DocumentExtractionResult extract(UUID assetId, int maxCharacters);
+
+    default DocumentExtractionResult extract(
+            UUID assetId,
+            DocumentExtractionOptions options
+    ) {
+        return extract(assetId, options.maxCharacters());
+    }
 }
