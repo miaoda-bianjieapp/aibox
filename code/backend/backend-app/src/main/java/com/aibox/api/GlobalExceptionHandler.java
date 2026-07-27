@@ -14,6 +14,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.time.Instant;
@@ -76,6 +77,11 @@ public class GlobalExceptionHandler {
                 exception.retryable()
         );
         return response(status, exception.code(), exception.getMessage(), List.of());
+    }
+
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnect(AsyncRequestNotUsableException exception) {
+        log.debug("Client disconnected while response content was being written");
     }
 
     @ExceptionHandler(Exception.class)
