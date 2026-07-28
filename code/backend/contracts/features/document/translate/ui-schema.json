@@ -1,0 +1,76 @@
+{
+  "order": ["document", "targetLanguage"],
+  "widgets": {
+    "document": "file",
+    "targetLanguage": "select"
+  },
+  "enumLabels": {
+    "targetLanguage": {
+      "zh-CN": "简体中文",
+      "zh-TW": "繁体中文",
+      "en": "英语",
+      "ja": "日语",
+      "ko": "韩语",
+      "fr": "法语",
+      "de": "德语",
+      "es": "西班牙语",
+      "ru": "俄语"
+    }
+  },
+  "fieldOptions": {
+    "document": {
+      "acceptedMimeTypes": [
+        "application/pdf",
+        "application/x-pdf",
+        "application/msword",
+        "application/vnd.ms-word",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/zip",
+        "application/x-zip-compressed",
+        "application/octet-stream"
+      ],
+      "allowedExtensions": [".docx", ".doc", ".pdf"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 52428800,
+      "maxTotalSizeBytes": 52428800,
+      "showPreview": false,
+      "uploadLabel": "选择并上传文档"
+    }
+  },
+  "fieldHelp": {
+    "document": {
+      "text": "可翻译正文最多 3 万字符；扫描 PDF 最多 20 页。系统按文档结构分批，最多调用模型 5 次。复杂 DOC 结构可能无法写回，届时请转换为 DOCX。PDF 不生成补充译文页，输出页数与原文一致；系统优先保持原文字区域和字号，空间不足时在原页内避让图片、适度扩展文字区域并缩小字号，最低 4pt。成功结果必须包含全部译文；仍无法完整容纳时任务失败，不输出缺译或截断文件。"
+    }
+  },
+  "modelSelectionGroups": [
+    {
+      "key": "documentTranslationModel",
+      "label": "文档翻译模型",
+      "description": "正文翻译和扫描页识别使用同一模型家族。",
+      "capabilities": ["TEXT_GENERATION", "VISION"],
+      "options": [
+        {
+          "value": "gpt-5.6-sol",
+          "displayName": "GPT-5.6 Sol",
+          "description": "默认模型，适合复杂文档与长段落翻译。",
+          "deployments": {
+            "TEXT_GENERATION": "codex2api-gpt-5-6-sol-text",
+            "VISION": "codex2api-gpt-5-6-sol-vision"
+          }
+        },
+        {
+          "value": "gpt-5.4-mini",
+          "displayName": "GPT-5.4 Mini",
+          "description": "响应更轻量，适合排版和语言较简单的文档。",
+          "deployments": {
+            "TEXT_GENERATION": "codex2api-gpt-5-4-mini-text",
+            "VISION": "codex2api-gpt-5-4-mini-vision"
+          }
+        }
+      ]
+    }
+  ],
+  "feeNotice": "文档翻译会调用所选付费模型，单个任务最多约 5 次调用；扫描 PDF 还会使用同一模型家族的视觉能力。点击“开始翻译”即表示确认本次调用。",
+  "submitLabel": "开始翻译",
+  "revisionSubmitLabel": "重新翻译"
+}

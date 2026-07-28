@@ -1,0 +1,30 @@
+featureCode: document.translate
+workspaceCode: document
+version: 5
+displayName: 文档翻译
+description: 将单个 Word 或 PDF 文档翻译为指定语言，并输出尽量保留原始排版的同格式文件。
+status: INTERNAL
+executionMode: ASYNC
+resultType: file
+rendererKey: file
+requiredCapabilities:
+  - TEXT_GENERATION
+  - VISION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxInputFiles: 1
+  maxInputFileBytes: 52428800
+  maxTranslatableCharacters: 30000
+  maxScannedPdfPages: 20
+  maxModelInvocations: 5
+  minPdfFontPoints: 4
+  pdfOverflowStrategy: INLINE_SAFE_REFLOW_OR_FAIL
+  allowPdfLayoutExpansion: true
+  preservePdfPageCount: true
+  requireCompleteTranslation: true
+modelAliases:
+  text: text.document-translation
+  vision: vision.document-translation

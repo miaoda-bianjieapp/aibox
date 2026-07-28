@@ -67,4 +67,47 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('file artifacts expose the generic save action', (tester) async {
+    final artifact = ArtifactView(
+      id: 'artifact-file',
+      taskId: 'task-file',
+      runId: 'run-file',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'file',
+      title: '合同译文',
+      mimeType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      content: const {
+        'assetId': 'translated-file',
+        'name': 'contract-en.docx',
+        'sourceAssetId': 'source-file',
+      },
+      metadata: const {},
+      assets: [
+        AssetView(
+          id: 'translated-file',
+          name: 'contract-en.docx',
+          mediaType:
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          sizeBytes: 2048,
+          createdAt: DateTime(2026, 7, 27, 11),
+          origin: 'MODEL_OUTPUT',
+          category: 'DOCUMENT',
+        ),
+      ],
+      createdAt: DateTime(2026, 7, 27, 11),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: ArtifactResultPage(
+        artifact: artifact,
+        rendererKey: 'file',
+      ),
+    ));
+
+    expect(find.byTooltip('下载文件'), findsOneWidget);
+    expect(find.text('contract-en.docx'), findsOneWidget);
+  });
 }
