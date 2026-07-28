@@ -7,6 +7,7 @@ import '../models/prompt_optimization_undo_store.dart';
 import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
 import '../network/task_execution_result.dart';
+import '../pages/document_compare_result_page.dart';
 import '../pages/outline_result_page.dart';
 import '../pages/task_execution_page.dart';
 import '../pages/writing_result_page.dart';
@@ -109,6 +110,15 @@ Route<void> _artifactResultRoute({
       ),
     );
   }
+  if (rendererKey == 'document_compare') {
+    return MaterialPageRoute<void>(
+      builder: (context) => DocumentCompareResultPage(
+        data: data,
+        artifact: artifact,
+        onContinue: onContinue,
+      ),
+    );
+  }
   return MaterialPageRoute<void>(
     builder: (context) => ArtifactResultPage(
       artifact: artifact,
@@ -162,6 +172,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   bool _submitting = false;
   bool _initialized = false;
   bool _derivedAssetsHandedOff = false;
+  bool _taskTitleEdited = false;
   int _modelSelectorEpoch = 0;
 
   @override
@@ -169,6 +180,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     super.initState();
     _nameController = TextEditingController(
         text: widget.request.taskTitle ?? widget.request.entry.title);
+    _taskTitleEdited =
+        widget.request.taskTitle != null || widget.request.isRevision;
     _projectId = widget.request.projectId;
     _featureFuture = widget.data.api.getFeature(widget.request.entry.id);
   }
@@ -253,6 +266,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                     TextField(
                       controller: _nameController,
                       enabled: !_submitting && !widget.request.isRevision,
+                      onChanged: (_) => _taskTitleEdited = true,
                       decoration:
                           const InputDecoration(hintText: '用于在历史任务中识别这项工作'),
                     ),
@@ -366,6 +380,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       }
     }
     _initializeRevisionArtifactReference(feature);
+    _refreshTaskTitleFromAssets(feature);
   }
 
   void _initializeRevisionArtifactReference(FeatureDetail feature) {
@@ -946,7 +961,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
     final options = feature.fieldOptions(field);
     final assets = _assetsByField[field] ?? const <AssetView>[];
-    final maxItems = _integerOption(options, 'maxItems') ?? 1;
+    final maxItems = _assetItemBounds(feature, field, options).maxItems;
     final requiresReferenceSupport =
         _assetFieldRequiresReferenceSupport(feature, field);
     final disabledByModel =
@@ -1220,6 +1235,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           (_assetsByField[field] ??= []).add(asset);
           staleMasks.addAll(_clearDependentMaskFields(feature, field));
         });
+        _refreshTaskTitleFromAssets(feature);
         for (final stale in staleMasks) {
           await _deleteTemporaryDerivedAsset(stale);
         }
@@ -1287,6 +1303,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       staleMasks.addAll(_clearDependentMaskFields(feature, field));
       _error = null;
     });
+    _refreshTaskTitleFromAssets(feature);
     await _deleteTemporaryDerivedAssets(staleMasks);
   }
 
@@ -1300,6 +1317,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _assetsByField[field]?.remove(asset);
       removed.addAll(_clearDependentMaskFields(feature, field));
     });
+    _refreshTaskTitleFromAssets(feature);
     unawaited(_deleteTemporaryDerivedAssets(removed));
   }
 
@@ -1436,8 +1454,16 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           continue;
         }
         final assets = _assetsByField[field] ?? const <AssetView>[];
-        if (feature.requiredFields.contains(field) && assets.isEmpty) {
-          setState(() => _error = '请上传${schema['title'] ?? field}');
+        final itemBounds =
+            _assetItemBounds(feature, field, feature.fieldOptions(field));
+        if (assets.length < itemBounds.minItems) {
+          setState(() => _error =
+              '${schema['title'] ?? field}至少需要 ${itemBounds.minItems} 个文件');
+          return;
+        }
+        if (assets.length > itemBounds.maxItems) {
+          setState(() => _error =
+              '${schema['title'] ?? field}最多只能选择 ${itemBounds.maxItems} 个文件');
           return;
         }
         if (assets.isNotEmpty) {
@@ -1472,6 +1498,25 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       }
       for (final asset in _assetsByField[field] ?? const <AssetView>[]) {
         if (!inputAssetIds.contains(asset.id)) inputAssetIds.add(asset.id);
+      }
+    }
+    final maxTotalSizeBytes =
+        _integerOption(feature.config, 'maxTotalSizeBytes');
+    if (maxTotalSizeBytes != null) {
+      final selectedAssets = <String, AssetView>{};
+      for (final assets in _assetsByField.values) {
+        for (final asset in assets) {
+          selectedAssets[asset.id] = asset;
+        }
+      }
+      final totalBytes = selectedAssets.values
+          .fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
+      if (totalBytes > maxTotalSizeBytes) {
+        setState(() {
+          _submitting = false;
+          _error = '全部文件合计不能超过 ${_formatBytes(maxTotalSizeBytes)}';
+        });
+        return;
       }
     }
 
@@ -1667,6 +1712,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _status = null;
       _error = null;
     });
+    _refreshTaskTitleFromAssets(feature);
     unawaited(_deleteTemporaryDerivedAssets(removedDerivedAssets));
   }
 
@@ -1675,6 +1721,66 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         schema['type'] == 'asset' ||
         const {'file', 'image', 'image_mask', 'audio', 'video'}
             .contains(widgetType);
+  }
+
+  _AssetItemBounds _assetItemBounds(
+    FeatureDetail feature,
+    String field,
+    Map<String, dynamic> options,
+  ) {
+    var minimum = feature.requiredFields.contains(field) ? 1 : 0;
+    var maximum = _integerOption(options, 'maxItems') ?? 1;
+    final rawRule = options['itemCountByFieldPresence'];
+    if (rawRule is Map) {
+      final rule = Map<String, dynamic>.from(rawRule);
+      final dependency = rule['field']?.toString();
+      if (dependency != null && dependency.isNotEmpty) {
+        final present = _assetsByField[dependency]?.isNotEmpty ?? false;
+        final rawBranch = rule[present ? 'present' : 'absent'];
+        if (rawBranch is Map) {
+          final branch = Map<String, dynamic>.from(rawBranch);
+          minimum = _integerOption(branch, 'minItems') ?? minimum;
+          maximum = _integerOption(branch, 'maxItems') ?? maximum;
+        }
+      }
+    }
+    maximum = maximum.clamp(1, 100);
+    return _AssetItemBounds(
+      minItems: minimum.clamp(0, maximum),
+      maxItems: maximum,
+    );
+  }
+
+  void _refreshTaskTitleFromAssets(FeatureDetail feature) {
+    if (_taskTitleEdited || widget.request.isRevision) return;
+    final rawConfig = feature.config['taskTitleFromAssets'];
+    if (rawConfig is! Map) return;
+    final config = Map<String, dynamic>.from(rawConfig);
+    final baselineField = config['baselineField']?.toString();
+    final comparisonField = config['comparisonField']?.toString();
+    final baseline = baselineField == null
+        ? null
+        : _assetsByField[baselineField]?.firstOrNull;
+    final comparisons = comparisonField == null
+        ? const <AssetView>[]
+        : _assetsByField[comparisonField] ?? const <AssetView>[];
+    String? title;
+    if (baseline != null) {
+      title = (config['baselineTemplate']?.toString() ?? '{name} 多文档对比')
+          .replaceAll('{name}', _assetBaseName(baseline.name));
+    } else if (comparisons.isNotEmpty) {
+      title =
+          (config['comparisonTemplate']?.toString() ?? '{name} 等 {count} 份文档对比')
+              .replaceAll('{name}', _assetBaseName(comparisons.first.name))
+              .replaceAll('{count}', comparisons.length.toString());
+    }
+    if (title == null || title.trim().isEmpty) {
+      title = widget.request.entry.title;
+    }
+    _nameController.value = TextEditingValue(
+      text: title,
+      selection: TextSelection.collapsed(offset: title.length),
+    );
   }
 
   static List<String> _assetIdsFromValue(Object? value) {
@@ -1687,6 +1793,16 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final single = value?.toString();
     return single == null || single.isEmpty ? const [] : [single];
   }
+}
+
+class _AssetItemBounds {
+  const _AssetItemBounds({
+    required this.minItems,
+    required this.maxItems,
+  });
+
+  final int minItems;
+  final int maxItems;
 }
 
 class _FeeNotice extends StatelessWidget {
@@ -1921,6 +2037,12 @@ IconData _fileIcon(String name) {
     '.doc' || '.docx' => Icons.description_outlined,
     _ => Icons.insert_drive_file_outlined,
   };
+}
+
+String _assetBaseName(String name) {
+  final trimmed = name.trim();
+  final index = trimmed.lastIndexOf('.');
+  return index <= 0 ? trimmed : trimmed.substring(0, index);
 }
 
 String _defaultUploadLabel(String widgetType) => switch (widgetType) {

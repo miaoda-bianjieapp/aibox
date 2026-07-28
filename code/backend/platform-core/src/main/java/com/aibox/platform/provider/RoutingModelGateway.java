@@ -3,6 +3,8 @@ package com.aibox.platform.provider;
 import com.aibox.feature.spi.AudioTranscriptionRequest;
 import com.aibox.feature.spi.AudioTranscriptionResponse;
 import com.aibox.feature.spi.DocumentCitation;
+import com.aibox.feature.spi.DocumentComparisonRequest;
+import com.aibox.feature.spi.DocumentComparisonResponse;
 import com.aibox.feature.spi.DocumentConversationTurn;
 import com.aibox.feature.spi.DocumentQuestionRequest;
 import com.aibox.feature.spi.DocumentQuestionResponse;
@@ -25,6 +27,7 @@ import com.aibox.feature.spi.TextToSpeechResponse;
 import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
 import com.aibox.platform.asset.AssetService;
+import com.aibox.platform.document.DocumentComparisonEngine;
 import com.aibox.platform.document.DocumentKnowledgeService;
 import com.aibox.platform.model.ModelRoutingService;
 import com.aibox.platform.prompt.PromptOptimizationModelGateway;
@@ -314,6 +317,17 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
                 answer.outputTokens(),
                 Map.copyOf(metadata)
         );
+    }
+
+    @Override
+    public DocumentComparisonResponse compareDocuments(
+            DocumentComparisonRequest request
+    ) {
+        return new DocumentComparisonEngine(
+                documentKnowledgeService,
+                this::generateText,
+                this::generateMultimodalText
+        ).compare(request);
     }
 
     private List<DocumentKnowledgeService.ChunkCandidate> rerankCandidates(

@@ -1,0 +1,125 @@
+{
+  "order": [
+    "baselineDocument",
+    "comparisonDocuments",
+    "comparisonMode",
+    "instructions"
+  ],
+  "widgets": {
+    "baselineDocument": "file",
+    "comparisonDocuments": "file",
+    "comparisonMode": "segmented",
+    "instructions": "textarea"
+  },
+  "enumLabels": {
+    "comparisonMode": {
+      "auto": "自动识别",
+      "contract": "合同对比",
+      "policy": "制度对比",
+      "version": "版本对比"
+    }
+  },
+  "fieldOptions": {
+    "baselineDocument": {
+      "acceptedMimeTypes": [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/zip",
+        "application/octet-stream"
+      ],
+      "allowedExtensions": [
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".txt", ".md", ".csv", ".json"
+      ],
+      "maxItems": 1,
+      "maxFileSizeBytes": 52428800,
+      "maxTotalSizeBytes": 52428800,
+      "allowAssetLibrarySelection": true,
+      "uploadLabel": "选择基准文档"
+    },
+    "comparisonDocuments": {
+      "acceptedMimeTypes": [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/plain",
+        "text/markdown",
+        "text/csv",
+        "application/json",
+        "application/zip",
+        "application/octet-stream"
+      ],
+      "allowedExtensions": [
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".txt", ".md", ".csv", ".json"
+      ],
+      "maxItems": 5,
+      "itemCountByFieldPresence": {
+        "field": "baselineDocument",
+        "present": {"minItems": 1, "maxItems": 4},
+        "absent": {"minItems": 2, "maxItems": 5}
+      },
+      "maxFileSizeBytes": 52428800,
+      "maxTotalSizeBytes": 209715200,
+      "allowAssetLibrarySelection": true,
+      "uploadLabel": "选择对比文档"
+    },
+    "comparisonMode": {
+      "showSelectedIcon": false,
+      "compact": true,
+      "labelMaxLines": 1
+    }
+  },
+  "fieldHelp": {
+    "baselineDocument": {
+      "text": "基准文档可不上传；DOCX 和 PDF 基准文档可在结果页导出标注副本。"
+    },
+    "comparisonDocuments": {
+      "text": "有基准文档时最多 4 份，无基准文档时最多 5 份；全部文件合计不能超过 200 MB。"
+    }
+  },
+  "modelSelectionGroups": [
+    {
+      "key": "documentComparisonModel",
+      "label": "文档对比模型",
+      "description": "正文比较和扫描页理解使用同一模型家族。",
+      "capabilities": ["TEXT_GENERATION", "VISION"],
+      "options": [
+        {
+          "value": "gpt-5.6-sol",
+          "displayName": "GPT-5.6 Sol",
+          "description": "默认模型，适合复杂合同、制度和长文档版本对比。",
+          "deployments": {
+            "TEXT_GENERATION": "codex2api-gpt-5-6-sol-text",
+            "VISION": "codex2api-gpt-5-6-sol-vision"
+          }
+        },
+        {
+          "value": "gpt-5.4-mini",
+          "displayName": "GPT-5.4 Mini",
+          "description": "响应更轻量，适合结构清晰的常规文档对比。",
+          "deployments": {
+            "TEXT_GENERATION": "codex2api-gpt-5-4-mini-text",
+            "VISION": "codex2api-gpt-5-4-mini-vision"
+          }
+        }
+      ]
+    }
+  ],
+  "feeNotice": "文档解析、扫描页识别、多轮差异归纳和风险分析可能产生模型费用。点击“开始对比”即表示确认本次调用。",
+  "submitLabel": "开始对比",
+  "revisionSubmitLabel": "生成新对比版本"
+}
