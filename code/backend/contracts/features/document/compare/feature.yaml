@@ -1,0 +1,29 @@
+featureCode: document.compare
+workspaceCode: document
+version: 5
+displayName: 多文档对比
+description: 先生成可追溯的多文档文本对比结果，Excel 报告和基准标注文档在用户点击导出时按需生成。
+status: INTERNAL
+executionMode: ASYNC
+resultType: document_comparison
+rendererKey: document_compare
+requiredCapabilities:
+  - TEXT_GENERATION
+  - VISION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxFiles: 5
+  maxFileSizeBytes: 52428800
+  maxTotalSizeBytes: 209715200
+  maxInstructionsLength: 2000
+taskTitleFromAssets:
+  baselineField: baselineDocument
+  comparisonField: comparisonDocuments
+  baselineTemplate: "{name} 多文档对比"
+  comparisonTemplate: "{name} 等 {count} 份文档对比"
+modelAliases:
+  text: text.document-compare
+  vision: vision.document-compare

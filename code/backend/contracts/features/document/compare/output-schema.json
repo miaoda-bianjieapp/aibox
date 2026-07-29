@@ -1,0 +1,378 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "format",
+    "mode",
+    "detectedMode",
+    "hasBaseline",
+    "summary",
+    "comparability",
+    "reportMarkdown",
+    "documents",
+    "pairwiseComparisons",
+    "crossDocumentConclusion",
+    "risks",
+    "citations",
+    "warnings",
+    "exportOptions"
+  ],
+  "properties": {
+    "format": {"const": "document_comparison"},
+    "mode": {
+      "type": "string",
+      "enum": ["auto", "contract", "policy", "version"]
+    },
+    "detectedMode": {
+      "type": "string",
+      "enum": ["contract", "policy", "version", "general"]
+    },
+    "hasBaseline": {"type": "boolean"},
+    "summary": {"type": "string", "minLength": 1},
+    "comparability": {"$ref": "#/$defs/comparability"},
+    "reportMarkdown": {"type": "string", "minLength": 1},
+    "documents": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": {"$ref": "#/$defs/document"}
+    },
+    "pairwiseComparisons": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {"$ref": "#/$defs/pairwiseComparison"}
+    },
+    "crossDocumentConclusion": {
+      "$ref": "#/$defs/crossDocumentConclusion"
+    },
+    "risks": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/risk"}
+    },
+    "citations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/citation"}
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string", "maxLength": 500}
+    },
+    "exportOptions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/exportOption"}
+    },
+    "excelAssetId": {"type": "string", "format": "uuid"},
+    "annotatedBaselineAssetId": {"type": "string", "format": "uuid"},
+    "annotatedBaselineFormat": {
+      "type": "string",
+      "enum": ["docx", "pdf"]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "comparability": {
+            "properties": {
+              "status": {"enum": ["IDENTICAL", "NOT_COMPARABLE"]}
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["comparability"]
+      },
+      "then": {
+        "properties": {
+          "crossDocumentConclusion": {
+            "properties": {
+              "findings": {"maxItems": 0}
+            }
+          },
+          "risks": {"maxItems": 0}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "document": {
+      "type": "object",
+      "required": ["assetId", "fileName", "role"],
+      "properties": {
+        "assetId": {"type": "string", "format": "uuid"},
+        "fileName": {"type": "string", "minLength": 1, "maxLength": 500},
+        "role": {"type": "string", "enum": ["baseline", "comparison"]}
+      },
+      "additionalProperties": false
+    },
+    "comparability": {
+      "type": "object",
+      "required": ["status", "reason", "sharedTopics", "citationMarkers"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "IDENTICAL",
+            "COMPARABLE",
+            "PARTIALLY_COMPARABLE",
+            "NOT_COMPARABLE"
+          ]
+        },
+        "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "sharedTopics": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500}
+        },
+        "citationMarkers": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^S[1-9][0-9]*$"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {"const": "PARTIALLY_COMPARABLE"}
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "sharedTopics": {"minItems": 1}
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "exportOption": {
+      "type": "object",
+      "required": ["type", "label", "fileName", "mediaType"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["excel", "annotatedBaseline"]
+        },
+        "label": {"type": "string", "minLength": 1, "maxLength": 100},
+        "fileName": {"type": "string", "minLength": 1, "maxLength": 500},
+        "mediaType": {"type": "string", "minLength": 1, "maxLength": 160}
+      },
+      "additionalProperties": false
+    },
+    "difference": {
+      "type": "object",
+      "required": [
+        "topic", "baselineContent", "comparisonContent", "impact",
+        "changeType", "citationMarkers"
+      ],
+      "properties": {
+        "topic": {"type": "string", "minLength": 1, "maxLength": 500},
+        "baselineContent": {"type": "string"},
+        "comparisonContent": {"type": "string"},
+        "impact": {"type": "string", "minLength": 1},
+        "changeType": {
+          "type": "string",
+          "enum": ["added", "deleted", "modified", "same", "uncertain"]
+        },
+        "citationMarkers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^S[1-9][0-9]*$"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "pairwiseComparison": {
+      "type": "object",
+      "required": [
+        "comparisonAssetId", "comparisonFileName", "summary",
+        "comparability", "differences"
+      ],
+      "properties": {
+        "comparisonAssetId": {"type": "string", "format": "uuid"},
+        "comparisonFileName": {"type": "string", "minLength": 1, "maxLength": 500},
+        "summary": {"type": "string", "minLength": 1},
+        "comparability": {"$ref": "#/$defs/comparability"},
+        "differences": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/difference"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "comparability": {
+                "properties": {
+                  "status": {"enum": ["IDENTICAL", "NOT_COMPARABLE"]}
+                },
+                "required": ["status"]
+              }
+            },
+            "required": ["comparability"]
+          },
+          "then": {
+            "properties": {
+              "differences": {"maxItems": 0}
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "documentStatement": {
+      "type": "object",
+      "required": ["assetId", "fileName", "content", "citationMarkers"],
+      "properties": {
+        "assetId": {"type": "string", "format": "uuid"},
+        "fileName": {"type": "string", "minLength": 1, "maxLength": 500},
+        "content": {"type": "string"},
+        "citationMarkers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^S[1-9][0-9]*$"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "consensusFinding": {
+      "type": "object",
+      "required": [
+        "topic", "documentStatements", "commonality", "difference",
+        "impact", "citationMarkers"
+      ],
+      "properties": {
+        "topic": {"type": "string", "minLength": 1, "maxLength": 500},
+        "documentStatements": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/documentStatement"}
+        },
+        "commonality": {"type": "string"},
+        "difference": {"type": "string"},
+        "impact": {"type": "string", "minLength": 1},
+        "citationMarkers": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^S[1-9][0-9]*$"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "crossDocumentConclusion": {
+      "type": "object",
+      "required": ["summary", "findings"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "findings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/consensusFinding"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "risk": {
+      "type": "object",
+      "required": [
+        "severity", "title", "basis", "recommendation",
+        "affectedAssetIds", "citationMarkers"
+      ],
+      "properties": {
+        "severity": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 500},
+        "basis": {"type": "string", "minLength": 1},
+        "recommendation": {"type": "string", "minLength": 1},
+        "affectedAssetIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "uuid"}
+        },
+        "citationMarkers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^S[1-9][0-9]*$"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "citation": {
+      "type": "object",
+      "required": ["marker", "assetId", "fileName", "excerpt", "locator"],
+      "properties": {
+        "marker": {"type": "string", "pattern": "^S[1-9][0-9]*$"},
+        "assetId": {"type": "string", "format": "uuid"},
+        "fileName": {"type": "string", "minLength": 1, "maxLength": 500},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 600},
+        "locator": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["type", "pageNumber"],
+              "properties": {
+                "type": {"const": "PDF_PAGE"},
+                "pageNumber": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["type", "paragraphStart", "paragraphEnd"],
+              "properties": {
+                "type": {"const": "WORD_PARAGRAPH"},
+                "paragraphStart": {"type": "integer", "minimum": 1},
+                "paragraphEnd": {"type": "integer", "minimum": 1},
+                "heading": {"type": "string", "maxLength": 500},
+                "visual": {"type": "boolean"}
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["type", "sheetName", "startRow", "endRow"],
+              "properties": {
+                "type": {"const": "EXCEL_ROWS"},
+                "sheetName": {"type": "string", "minLength": 1, "maxLength": 255},
+                "startRow": {"type": "integer", "minimum": 1},
+                "endRow": {"type": "integer", "minimum": 1},
+                "chartIndex": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["type", "slideNumber"],
+              "properties": {
+                "type": {"const": "PPT_SLIDE"},
+                "slideNumber": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["type", "startLine", "endLine"],
+              "properties": {
+                "type": {"const": "TEXT_LINES"},
+                "startLine": {"type": "integer", "minimum": 1},
+                "endLine": {"type": "integer", "minimum": 1}
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

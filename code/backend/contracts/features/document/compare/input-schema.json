@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["comparisonDocuments", "comparisonMode"],
+  "properties": {
+    "baselineDocument": {
+      "type": "string",
+      "format": "uuid",
+      "title": "基准文档",
+      "description": "可选。上传后会分别对比每份文档，并生成跨文档综合结论。"
+    },
+    "comparisonDocuments": {
+      "type": "array",
+      "title": "对比文档",
+      "description": "有基准文档时选择 1 至 4 份；无基准文档时选择 2 至 5 份。",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "comparisonMode": {
+      "type": "string",
+      "enum": ["auto", "contract", "policy", "version"],
+      "default": "auto",
+      "title": "对比模式",
+      "description": "自动识别文档类型，或按合同、制度、版本的重点维度进行对比。"
+    },
+    "instructions": {
+      "type": "string",
+      "maxLength": 2000,
+      "title": "补充对比要求",
+      "description": "可选。说明需要重点关注的条款、制度要求、风险或版本变化。"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["baselineDocument"]
+      },
+      "then": {
+        "properties": {
+          "comparisonDocuments": {
+            "minItems": 1,
+            "maxItems": 4
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "comparisonDocuments": {
+            "minItems": 2,
+            "maxItems": 5
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

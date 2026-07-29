@@ -100,8 +100,11 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
   }
 
   Future<void> _reload() async {
-    setState(() => _future = widget.data.api.getTask(widget.taskId));
-    await _future;
+    final next = widget.data.api.getTask(widget.taskId);
+    setState(() {
+      _future = next;
+    });
+    await next;
   }
 
   Future<void> _continueFrom(TaskDetail detail, ArtifactView artifact) async {
