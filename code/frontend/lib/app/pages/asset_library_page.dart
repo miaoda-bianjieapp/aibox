@@ -67,6 +67,10 @@ typedef AssetFileSaver = Future<SavedLocalFile?> Function({
 
 typedef AssetTemporaryFileCleaner = Future<void> Function(File file);
 typedef AssetTemporaryFileSizeReader = Future<int> Function(File file);
+typedef AssetDeleteImpactLoader = Future<AssetDeleteImpact> Function(
+  Set<String> assetIds,
+);
+typedef AssetBatchDeleter = Future<void> Function(Set<String> assetIds);
 
 class AssetLibraryPage extends StatefulWidget {
   const AssetLibraryPage({
@@ -79,6 +83,8 @@ class AssetLibraryPage extends StatefulWidget {
     this.fileSaver,
     this.temporaryFileCleaner,
     this.temporaryFileSizeReader,
+    this.deleteImpactLoader,
+    this.assetDeleter,
   });
 
   final AppDataController data;
@@ -89,6 +95,8 @@ class AssetLibraryPage extends StatefulWidget {
   final AssetFileSaver? fileSaver;
   final AssetTemporaryFileCleaner? temporaryFileCleaner;
   final AssetTemporaryFileSizeReader? temporaryFileSizeReader;
+  final AssetDeleteImpactLoader? deleteImpactLoader;
+  final AssetBatchDeleter? assetDeleter;
 
   @override
   State<AssetLibraryPage> createState() => _AssetLibraryPageState();
@@ -120,12 +128,13 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   bool _searchVisible = false;
   bool _selectionLoading = false;
   bool _downloading = false;
+  bool _deleting = false;
   bool _downloadCancellationRequested = false;
   int _downloadProcessed = 0;
   int _downloadTotal = 0;
 
   bool get _selectionMode => _selectedAssets.isNotEmpty;
-  bool get _selectionBusy => _selectionLoading || _downloading;
+  bool get _selectionBusy => _selectionLoading || _downloading || _deleting;
 
   @override
   void initState() {
@@ -152,7 +161,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
         if (didPop) return;
         if (_downloading) {
           _cancelDownload();
-        } else {
+        } else if (!_selectionBusy) {
           setState(_selectedAssets.clear);
         }
       },
@@ -162,7 +171,9 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
               ? IconButton(
                   onPressed: _downloading
                       ? _cancelDownload
-                      : () => setState(_selectedAssets.clear),
+                      : _selectionBusy
+                          ? null
+                          : () => setState(_selectedAssets.clear),
                   tooltip: _downloading ? '取消下载' : '退出选择',
                   icon: const Icon(Icons.close_rounded),
                 )
@@ -179,6 +190,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
               PopupMenuButton<String>(
                 key: const ValueKey<String>('asset-selection-more'),
                 tooltip: '更多操作',
+                enabled: !_selectionBusy,
                 onSelected: (value) {
                   if (value == 'delete') unawaited(_deleteSelected());
                 },
@@ -414,7 +426,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
             selectionMode: _selectionMode,
             contentUrl: widget.data.api.assetContentUrl(asset.id),
             onTap: () => _tapAsset(asset),
-            onLongPress: _downloading ? null : () => _toggleSelection(asset),
+            onLongPress: _selectionBusy ? null : () => _toggleSelection(asset),
           );
         },
       ),
@@ -473,7 +485,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   }
 
   void _tapAsset(AssetView asset) {
-    if (_downloading) return;
+    if (_selectionBusy) return;
     if (_selectionMode) {
       _toggleSelection(asset);
       return;
@@ -485,6 +497,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   }
 
   void _toggleSelection(AssetView asset) {
+    if (_selectionBusy) return;
     setState(() {
       if (_selectedAssets.remove(asset.id) == null) {
         if (_selectedAssets.length < _maxSelectionSize) {
@@ -502,6 +515,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   Future<void> _replaceSelectionFromFullFilter({
     required bool invert,
   }) async {
+    if (_selectionBusy) return;
     final libraryType = _libraryType;
     final category = _category;
     final query = _searchController.text.trim();
@@ -1012,10 +1026,16 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   }
 
   Future<void> _deleteSelected() async {
+    if (_selectionBusy) return;
+    final selected = List<AssetView>.unmodifiable(_selectedAssets.values);
+    final selectedIds = Set<String>.unmodifiable(
+      selected.map((asset) => asset.id),
+    );
+    if (selectedIds.isEmpty) return;
+    setState(() => _deleting = true);
     try {
-      final selected = List<AssetView>.of(_selectedAssets.values);
-      final impact =
-          await widget.data.api.getAssetDeleteImpact(_selectedAssets.keys);
+      final impact = await (widget.deleteImpactLoader?.call(selectedIds) ??
+          widget.data.api.getAssetDeleteImpact(selectedIds));
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
@@ -1025,9 +1045,18 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
         ),
       );
       if (confirmed != true) return;
-      await widget.data.deleteAssets(_selectedAssets.keys);
+      final deleter = widget.assetDeleter;
+      if (deleter == null) {
+        await widget.data.deleteAssets(selectedIds);
+      } else {
+        await deleter(selectedIds);
+      }
       if (!mounted) return;
-      setState(_selectedAssets.clear);
+      setState(() {
+        for (final assetId in selectedIds) {
+          _selectedAssets.remove(assetId);
+        }
+      });
       await _load();
     } catch (exception) {
       if (mounted) {
@@ -1035,6 +1064,8 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
           SnackBar(content: Text('$exception')),
         );
       }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
     }
   }
 }

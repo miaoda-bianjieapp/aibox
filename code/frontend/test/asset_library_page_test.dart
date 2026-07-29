@@ -232,6 +232,73 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('keeps one immutable delete snapshot while impact is pending',
+      (tester) async {
+    final assets = [_asset('asset-a'), _asset('asset-b')];
+    final impactRequested = Completer<void>();
+    final impactResponse = Completer<AssetDeleteImpact>();
+    Set<String>? impactIds;
+    Set<String>? deletedIds;
+
+    await tester.pumpWidget(_app(_page(
+      assets,
+      deleteImpactLoader: (assetIds) {
+        impactIds = assetIds;
+        impactRequested.complete();
+        return impactResponse.future;
+      },
+      assetDeleter: (assetIds) async {
+        deletedIds = assetIds;
+      },
+    )));
+    await tester.pumpAndSettle();
+    await tester.longPress(
+      find.byKey(const ValueKey<String>('asset-row-asset-a')),
+    );
+    await tester.pump();
+    await tester.tap(find.text('删除（1）'));
+    await tester.runAsync(
+      () => impactRequested.future.timeout(const Duration(seconds: 2)),
+    );
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<IconButton>(
+            find.widgetWithIcon(IconButton, Icons.close_rounded),
+          )
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('asset-row-asset-b')),
+    );
+    await tester.pump();
+    expect(find.text('已选择 1 项'), findsOneWidget);
+    expect(_selectionIcon(tester, 'asset-a'), Icons.check_circle_rounded);
+    expect(_selectionIcon(tester, 'asset-b'),
+        Icons.radio_button_unchecked_rounded);
+
+    impactResponse.complete(const AssetDeleteImpact(
+      assetCount: 1,
+      totalBytes: 1024,
+      affectedTaskCount: 0,
+      affectedRunCount: 0,
+    ));
+    await tester.pump();
+    expect(find.text('• asset-a.pdf'), findsOneWidget);
+    expect(find.text('• asset-b.pdf'), findsNothing);
+    for (var second = 0; second < 3; second++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.tap(find.text('永久删除'));
+    await tester.pumpAndSettle();
+
+    expect(impactIds, <String>{'asset-a'});
+    expect(deletedIds, <String>{'asset-a'});
+    expect(identical(impactIds, deletedIds), isTrue);
+  });
 }
 
 Widget _page(
@@ -242,6 +309,8 @@ Widget _page(
   AssetFileSaver? fileSaver,
   AssetTemporaryFileCleaner? temporaryFileCleaner,
   AssetTemporaryFileSizeReader? temporaryFileSizeReader,
+  AssetDeleteImpactLoader? deleteImpactLoader,
+  AssetBatchDeleter? assetDeleter,
 }) {
   return AssetLibraryPage(
     data: AppDataController(),
@@ -259,6 +328,8 @@ Widget _page(
     fileSaver: fileSaver,
     temporaryFileCleaner: temporaryFileCleaner,
     temporaryFileSizeReader: temporaryFileSizeReader,
+    deleteImpactLoader: deleteImpactLoader,
+    assetDeleter: assetDeleter,
   );
 }
 
