@@ -1,18 +1,83 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../models/feature_models.dart';
 import '../network/api_exception.dart';
+import '../network/backend_api.dart';
 import '../network/native_file_picker.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
 import 'asset_preview_page.dart';
 
+const int assetDownloadMaxCount = 30;
+const int assetDownloadMaxTotalBytes = 5 * 1024 * 1024 * 1024;
+
+Set<String> invertAssetSelection(
+  Set<String> allAssetIds,
+  Set<String> selectedAssetIds,
+) {
+  return allAssetIds.difference(Set<String>.of(selectedAssetIds));
+}
+
+String? validateAssetDownloadSelection(Iterable<AssetView> assets) {
+  final selected = assets.toList();
+  if (selected.isEmpty) return '请至少选择一个资产';
+  if (selected.length > assetDownloadMaxCount) {
+    return '单次最多下载 $assetDownloadMaxCount 个资产';
+  }
+  if (selected.any((asset) => !asset.available)) {
+    return '所选资产中包含已不可用的文件';
+  }
+  final totalBytes =
+      selected.fold<int>(0, (total, asset) => total + asset.sizeBytes);
+  if (totalBytes > assetDownloadMaxTotalBytes) {
+    return '所选资产总大小不能超过 5GB';
+  }
+  return null;
+}
+
+typedef AssetLibraryPageLoader = Future<AssetPage> Function({
+  required String libraryType,
+  required String category,
+  required String query,
+  String? cursor,
+  int pageSize,
+});
+
+typedef AssetTemporaryDownloader = Future<File> Function(
+  AssetView asset,
+  bool Function() isCancelled,
+);
+
+typedef AssetDirectoryPicker = Future<String?> Function();
+
+typedef AssetDirectorySaver = Future<String> Function({
+  required String directoryUri,
+  required File source,
+  required AssetView asset,
+});
+
+typedef AssetTemporaryFileCleaner = Future<void> Function(File file);
+
 class AssetLibraryPage extends StatefulWidget {
-  const AssetLibraryPage({super.key, required this.data});
+  const AssetLibraryPage({
+    super.key,
+    required this.data,
+    this.assetLoader,
+    this.temporaryDownloader,
+    this.directoryPicker,
+    this.directorySaver,
+    this.temporaryFileCleaner,
+  });
 
   final AppDataController data;
+  final AssetLibraryPageLoader? assetLoader;
+  final AssetTemporaryDownloader? temporaryDownloader;
+  final AssetDirectoryPicker? directoryPicker;
+  final AssetDirectorySaver? directorySaver;
+  final AssetTemporaryFileCleaner? temporaryFileCleaner;
 
   @override
   State<AssetLibraryPage> createState() => _AssetLibraryPageState();
@@ -31,7 +96,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
 
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final Set<String> _selectedIds = {};
+  final Map<String, AssetView> _selectedAssets = {};
   Timer? _searchDebounce;
   List<AssetView> _items = const [];
   String _libraryType = 'USER_FILE';
@@ -43,8 +108,13 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   bool _uploading = false;
   bool _searchVisible = false;
   bool _selectionLoading = false;
+  bool _downloading = false;
+  bool _downloadCancellationRequested = false;
+  int _downloadProcessed = 0;
+  int _downloadTotal = 0;
 
-  bool get _selectionMode => _selectedIds.isNotEmpty;
+  bool get _selectionMode => _selectedAssets.isNotEmpty;
+  bool get _selectionBusy => _selectionLoading || _downloading;
 
   @override
   void initState() {
@@ -68,19 +138,37 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
     return PopScope(
       canPop: !_selectionMode,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) setState(_selectedIds.clear);
+        if (didPop) return;
+        if (_downloading) {
+          _cancelDownload();
+        } else {
+          setState(_selectedAssets.clear);
+        }
       },
       child: Scaffold(
         appBar: AppBar(
           leading: _selectionMode
               ? IconButton(
-                  onPressed: () => setState(_selectedIds.clear),
-                  tooltip: '退出选择',
+                  onPressed: _downloading
+                      ? _cancelDownload
+                      : () => setState(_selectedAssets.clear),
+                  tooltip: _downloading ? '取消下载' : '退出选择',
                   icon: const Icon(Icons.close_rounded),
                 )
               : null,
-          title: Text(_selectionMode ? '已选择 ${_selectedIds.length} 项' : '附件库'),
+          title: Text(
+            _selectionMode ? '已选择 ${_selectedAssets.length} 项' : '附件库',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           actions: [
+            if (_selectionMode && _libraryType == 'MODEL_ASSET')
+              IconButton(
+                key: const ValueKey<String>('asset-download-selected'),
+                onPressed: _selectionBusy ? null : _downloadSelected,
+                tooltip: '下载所选资产',
+                icon: const Icon(Icons.download_outlined),
+              ),
             if (!_selectionMode)
               IconButton(
                 onPressed: () => setState(() {
@@ -123,52 +211,9 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
                     color: AppColors.paper,
                     border: Border(top: BorderSide(color: AppColors.line)),
                   ),
-                  child: SizedBox(
-                    height: 48,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _selectionLoading ? null : _selectAll,
-                            style: _selectionActionStyle(),
-                            icon:
-                                const Icon(Icons.select_all_rounded, size: 19),
-                            label: const Text('全选'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed:
-                                _selectionLoading ? null : _invertSelection,
-                            style: _selectionActionStyle(),
-                            icon: const Icon(Icons.compare_arrows_rounded,
-                                size: 19),
-                            label: const Text('反选'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          flex: 2,
-                          child: FilledButton.icon(
-                            onPressed:
-                                _selectionLoading ? null : _deleteSelected,
-                            style: FilledButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 6),
-                              backgroundColor: AppColors.danger,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            icon: const Icon(Icons.delete_outline_rounded,
-                                size: 19),
-                            label: Text('删除（${_selectedIds.length}）'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  child: _downloading
+                      ? _buildDownloadProgress()
+                      : _buildSelectionActions(),
                 ),
               )
             : null,
@@ -197,13 +242,15 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
             ],
             selected: {_libraryType},
             showSelectedIcon: false,
-            onSelectionChanged: (selection) {
-              setState(() {
-                _libraryType = selection.first;
-                _selectedIds.clear();
-              });
-              unawaited(_load());
-            },
+            onSelectionChanged: _selectionBusy
+                ? null
+                : (selection) {
+                    setState(() {
+                      _libraryType = selection.first;
+                      _selectedAssets.clear();
+                    });
+                    unawaited(_load());
+                  },
             style: ButtonStyle(
               shape: WidgetStatePropertyAll(
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -215,6 +262,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
             TextField(
               controller: _searchController,
               autofocus: true,
+              enabled: !_selectionBusy,
               textInputAction: TextInputAction.search,
               onChanged: _searchChanged,
               decoration: InputDecoration(
@@ -246,13 +294,15 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
                     label: Text(item.$2),
                     selected: selected,
                     showCheckmark: false,
-                    onSelected: (_) {
-                      setState(() {
-                        _category = item.$1;
-                        _selectedIds.clear();
-                      });
-                      unawaited(_load());
-                    },
+                    onSelected: _selectionBusy
+                        ? null
+                        : (_) {
+                            setState(() {
+                              _category = item.$1;
+                              _selectedAssets.clear();
+                            });
+                            unawaited(_load());
+                          },
                   ),
                 );
               }).toList(),
@@ -327,11 +377,11 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
           final asset = _items[index];
           return _AssetRow(
             asset: asset,
-            selected: _selectedIds.contains(asset.id),
+            selected: _selectedAssets.containsKey(asset.id),
             selectionMode: _selectionMode,
             contentUrl: widget.data.api.assetContentUrl(asset.id),
             onTap: () => _tapAsset(asset),
-            onLongPress: () => _toggleSelection(asset.id),
+            onLongPress: _downloading ? null : () => _toggleSelection(asset),
           );
         },
       ),
@@ -350,7 +400,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
       });
     }
     try {
-      final page = await widget.data.api.listAssetLibrary(
+      final page = await _listAssetLibrary(
         libraryType: _libraryType,
         category: _category,
         query: _searchController.text.trim(),
@@ -390,8 +440,9 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   }
 
   void _tapAsset(AssetView asset) {
+    if (_downloading) return;
     if (_selectionMode) {
-      _toggleSelection(asset.id);
+      _toggleSelection(asset);
       return;
     }
     Navigator.of(context).push(MaterialPageRoute<void>(
@@ -400,11 +451,11 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
     ));
   }
 
-  void _toggleSelection(String assetId) {
+  void _toggleSelection(AssetView asset) {
     setState(() {
-      if (!_selectedIds.remove(assetId)) {
-        if (_selectedIds.length < _maxSelectionSize) {
-          _selectedIds.add(assetId);
+      if (_selectedAssets.remove(asset.id) == null) {
+        if (_selectedAssets.length < _maxSelectionSize) {
+          _selectedAssets[asset.id] = asset;
         }
       }
     });
@@ -424,18 +475,20 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
     final scope = '$libraryType|$category|$query';
     setState(() => _selectionLoading = true);
     try {
-      final allIds = <String>{};
+      final allAssets = <String, AssetView>{};
       String? cursor;
       do {
-        final page = await widget.data.api.listAssetLibrary(
+        final page = await _listAssetLibrary(
           libraryType: libraryType,
           category: category,
           query: query,
           cursor: cursor,
           pageSize: 50,
         );
-        allIds.addAll(page.items.map((asset) => asset.id));
-        if (allIds.length > _maxSelectionSize) {
+        for (final asset in page.items) {
+          allAssets[asset.id] = asset;
+        }
+        if (allAssets.length > _maxSelectionSize) {
           throw const ApiException(
             '当前筛选结果超过 1000 个文件，请缩小分类或搜索范围后再全选',
           );
@@ -444,11 +497,15 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
       } while (cursor != null);
       if (!mounted || scope != _selectionScope) return;
       setState(() {
-        final replacement =
-            invert ? allIds.where((id) => !_selectedIds.contains(id)) : allIds;
-        _selectedIds
+        final previousSelection = Set<String>.of(_selectedAssets.keys);
+        final replacementIds = invert
+            ? invertAssetSelection(allAssets.keys.toSet(), previousSelection)
+            : allAssets.keys.toSet();
+        _selectedAssets
           ..clear()
-          ..addAll(replacement);
+          ..addEntries(replacementIds.map(
+            (id) => MapEntry<String, AssetView>(id, allAssets[id]!),
+          ));
       });
     } catch (exception) {
       if (mounted) {
@@ -463,6 +520,110 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
 
   String get _selectionScope =>
       '$_libraryType|$_category|${_searchController.text.trim()}';
+
+  Future<AssetPage> _listAssetLibrary({
+    required String libraryType,
+    required String category,
+    required String query,
+    String? cursor,
+    int pageSize = 20,
+  }) {
+    final loader = widget.assetLoader;
+    if (loader != null) {
+      return loader(
+        libraryType: libraryType,
+        category: category,
+        query: query,
+        cursor: cursor,
+        pageSize: pageSize,
+      );
+    }
+    return widget.data.api.listAssetLibrary(
+      libraryType: libraryType,
+      category: category,
+      query: query,
+      cursor: cursor,
+      pageSize: pageSize,
+    );
+  }
+
+  Widget _buildSelectionActions() {
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _selectionBusy ? null : _selectAll,
+              style: _selectionActionStyle(),
+              icon: const Icon(Icons.select_all_rounded, size: 19),
+              label: const Text('全选'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _selectionBusy ? null : _invertSelection,
+              style: _selectionActionStyle(),
+              icon: const Icon(Icons.compare_arrows_rounded, size: 19),
+              label: const Text('反选'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 2,
+            child: FilledButton.icon(
+              onPressed: _selectionBusy ? null : _deleteSelected,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                backgroundColor: AppColors.danger,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              icon: const Icon(Icons.delete_outline_rounded, size: 19),
+              label: Text('删除（${_selectedAssets.length}）'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDownloadProgress() {
+    final current = _downloadTotal == 0
+        ? 0
+        : (_downloadProcessed + 1).clamp(1, _downloadTotal);
+    final progress =
+        _downloadTotal == 0 ? null : _downloadProcessed / _downloadTotal;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _downloadCancellationRequested
+                    ? '正在取消下载'
+                    : '正在下载 $current/$_downloadTotal',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            TextButton(
+              key: const ValueKey<String>('asset-download-cancel'),
+              onPressed:
+                  _downloadCancellationRequested ? null : _cancelDownload,
+              child: const Text('取消'),
+            ),
+          ],
+        ),
+        LinearProgressIndicator(value: progress),
+      ],
+    );
+  }
 
   static ButtonStyle _selectionActionStyle() {
     return OutlinedButton.styleFrom(
@@ -503,9 +664,164 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
     }
   }
 
+  Future<void> _downloadSelected() async {
+    final selected = List<AssetView>.of(_selectedAssets.values);
+    final validationError = validateAssetDownloadSelection(selected);
+    if (validationError != null) {
+      _showMessage(validationError);
+      return;
+    }
+
+    String? directoryUri;
+    try {
+      directoryUri = await (widget.directoryPicker?.call() ??
+          NativeFilePicker.pickDirectory());
+    } catch (exception) {
+      _showMessage('$exception');
+      return;
+    }
+    if (!mounted || directoryUri == null || directoryUri.isEmpty) return;
+
+    setState(() {
+      _downloading = true;
+      _downloadCancellationRequested = false;
+      _downloadProcessed = 0;
+      _downloadTotal = selected.length;
+    });
+
+    final successfulIds = <String>{};
+    var failedCount = 0;
+    var cancelled = false;
+    for (final asset in selected) {
+      if (_downloadCancellationRequested) {
+        cancelled = true;
+        break;
+      }
+      File? temporaryFile;
+      try {
+        temporaryFile = await _downloadAssetToTemporaryFile(asset);
+        if (_downloadCancellationRequested) {
+          throw const AssetDownloadCancelledException();
+        }
+        await _saveAssetToDirectory(
+          directoryUri: directoryUri,
+          source: temporaryFile,
+          asset: asset,
+        );
+        successfulIds.add(asset.id);
+      } on AssetDownloadCancelledException {
+        cancelled = true;
+      } catch (_) {
+        failedCount++;
+      } finally {
+        await _cleanupTemporaryFile(temporaryFile);
+      }
+      if (cancelled) break;
+      if (mounted) {
+        setState(() => _downloadProcessed++);
+      }
+      if (_downloadCancellationRequested) {
+        cancelled = true;
+        break;
+      }
+    }
+
+    if (!mounted) return;
+    final retainedCount = selected.length - successfulIds.length;
+    setState(() {
+      for (final assetId in successfulIds) {
+        _selectedAssets.remove(assetId);
+      }
+      _downloading = false;
+      _downloadCancellationRequested = false;
+      _downloadProcessed = 0;
+      _downloadTotal = 0;
+    });
+
+    if (cancelled) {
+      _showMessage(
+        '已保存 ${successfulIds.length} 个，下载已取消，'
+        '$retainedCount 个保留待重试',
+      );
+    } else if (failedCount > 0) {
+      _showMessage(
+        '已保存 ${successfulIds.length} 个，'
+        '$failedCount 个失败，失败项已保留',
+      );
+    } else {
+      _showMessage('已保存 ${successfulIds.length} 个资产');
+    }
+  }
+
+  Future<File> _downloadAssetToTemporaryFile(AssetView asset) {
+    final downloader = widget.temporaryDownloader;
+    if (downloader != null) {
+      return downloader(asset, () => _downloadCancellationRequested);
+    }
+    return widget.data.api.downloadAssetToTemporaryFile(
+      asset.id,
+      fileName: asset.name,
+      isCancelled: () => _downloadCancellationRequested,
+    );
+  }
+
+  Future<String> _saveAssetToDirectory({
+    required String directoryUri,
+    required File source,
+    required AssetView asset,
+  }) {
+    final saver = widget.directorySaver;
+    if (saver != null) {
+      return saver(
+        directoryUri: directoryUri,
+        source: source,
+        asset: asset,
+      );
+    }
+    return NativeFilePicker.saveFileToDirectory(
+      directoryUri: directoryUri,
+      filePath: source.path,
+      fileName: asset.name,
+      mediaType: asset.mediaType,
+    );
+  }
+
+  void _cancelDownload() {
+    if (!_downloading || _downloadCancellationRequested) return;
+    setState(() => _downloadCancellationRequested = true);
+    if (widget.directorySaver == null) {
+      unawaited(NativeFilePicker.cancelDirectorySave());
+    }
+  }
+
+  Future<void> _cleanupTemporaryFile(File? file) async {
+    if (file == null) return;
+    final cleaner = widget.temporaryFileCleaner;
+    if (cleaner != null) {
+      await cleaner(file);
+      return;
+    }
+    try {
+      final directory = file.parent;
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    } on FileSystemException {
+      // Download cache cleanup is best effort.
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   Future<void> _deleteSelected() async {
     try {
-      final impact = await widget.data.api.getAssetDeleteImpact(_selectedIds);
+      final impact =
+          await widget.data.api.getAssetDeleteImpact(_selectedAssets.keys);
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
@@ -532,9 +848,9 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
         ),
       );
       if (confirmed != true) return;
-      await widget.data.deleteAssets(_selectedIds);
+      await widget.data.deleteAssets(_selectedAssets.keys);
       if (!mounted) return;
-      setState(_selectedIds.clear);
+      setState(_selectedAssets.clear);
       await _load();
     } catch (exception) {
       if (mounted) {
@@ -561,11 +877,12 @@ class _AssetRow extends StatelessWidget {
   final bool selectionMode;
   final String contentUrl;
   final VoidCallback onTap;
-  final VoidCallback onLongPress;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return Material(
+      key: ValueKey<String>('asset-row-${asset.id}'),
       color: selected ? AppColors.accentSoft : Colors.transparent,
       child: InkWell(
         onTap: onTap,
@@ -576,6 +893,7 @@ class _AssetRow extends StatelessWidget {
             children: [
               if (selectionMode) ...[
                 Icon(
+                  key: ValueKey<String>('asset-selection-${asset.id}'),
                   selected
                       ? Icons.check_circle_rounded
                       : Icons.radio_button_unchecked_rounded,

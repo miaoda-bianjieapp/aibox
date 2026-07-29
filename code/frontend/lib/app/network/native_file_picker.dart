@@ -99,4 +99,33 @@ abstract final class NativeFilePicker {
     );
     return result == true;
   }
+
+  static Future<String?> pickDirectory() {
+    return _channel.invokeMethod<String>('pickDirectory');
+  }
+
+  static Future<String> saveFileToDirectory({
+    required String directoryUri,
+    required String filePath,
+    required String fileName,
+    required String mediaType,
+  }) async {
+    final result = await _channel.invokeMethod<String>(
+      'saveFileToDirectory',
+      {
+        'directoryUri': directoryUri,
+        'filePath': filePath,
+        'fileName': fileName,
+        'mediaType': mediaType,
+      },
+    );
+    if (result == null || result.isEmpty) {
+      throw const FormatException('文件保存结果无效');
+    }
+    return result;
+  }
+
+  static Future<void> cancelDirectorySave() {
+    return _channel.invokeMethod<void>('cancelSaveFileToDirectory');
+  }
 }
