@@ -1,13 +1,17 @@
 package com.aibox.platform.asset;
 
+import com.aibox.feature.spi.FeatureValidationException;
 import com.aibox.feature.spi.TabularAnalysisDataset;
 import com.aibox.feature.spi.TabularAnalysisLimits;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,6 +21,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -96,6 +101,30 @@ class AssetTabularAnalysisProcessorTest {
         assertThat(result.sheets().get(0).columns()).hasSize(3);
         assertThat(result.sheets().get(0).columns().get(2).name()).isEqualTo("列3");
         assertThat(result.sheets().get(0).columns().get(2).nonEmptyCount()).isEqualTo(1);
+    }
+
+    @Test
+    void stopsReadingMillionRowCsvAsSoonAsRowLimitIsExceeded() throws IOException {
+        Path csv = temporaryDirectory.resolve("million-rows.csv");
+        try (OutputStream output = new BufferedOutputStream(Files.newOutputStream(csv));
+             Writer writer = new OutputStreamWriter(output, StandardCharsets.UTF_8)) {
+            writer.write("序号,内容\n");
+            for (int index = 1; index <= 1_000_000; index++) {
+                writer.write(Integer.toString(index));
+                writer.write(",value\n");
+            }
+            writer.flush();
+            output.write(0xC3);
+        }
+        UUID assetId = UUID.randomUUID();
+        AssetTabularAnalysisProcessor processor = processor(assetId, csv);
+
+        assertThatThrownBy(() -> processor.analyze(
+                assetId,
+                new TabularAnalysisLimits(20, 10, 200, 500_000)
+        ))
+                .isInstanceOf(FeatureValidationException.class)
+                .hasMessageContaining("数据行总数不能超过 10");
     }
 
     private static AssetTabularAnalysisProcessor processor(

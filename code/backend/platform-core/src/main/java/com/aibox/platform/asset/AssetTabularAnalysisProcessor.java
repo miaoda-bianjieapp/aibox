@@ -180,45 +180,49 @@ public class AssetTabularAnalysisProcessor implements TabularAnalysisProcessor {
              );
              PushbackReader reader = withoutUtf8Bom(decoded);
              CSVParser parser = CSVFormat.DEFAULT.parse(reader)) {
-            CSVRecord headerRecord = null;
-            List<CSVRecord> dataRecords = new ArrayList<>();
+            List<CellValue> headerValues = null;
+            List<DataRow> rows = new ArrayList<>();
+            Counters counters = new Counters(limits);
+            int width = 0;
             for (CSVRecord record : parser) {
                 if (record.stream().allMatch(value -> value == null || value.isBlank())) continue;
-                if (headerRecord == null) {
-                    headerRecord = record;
-                } else {
-                    dataRecords.add(record);
+                int recordWidth = Math.max(1, record.size());
+                if (recordWidth > limits.maxColumnsPerSheet()) {
+                    throw invalidFile("CSV 列数不能超过 " + limits.maxColumnsPerSheet());
                 }
-            }
-            if (headerRecord == null) {
-                throw invalidFile("CSV 没有可读取的数据");
-            }
-            int width = headerRecord.size();
-            for (CSVRecord record : dataRecords) {
-                width = Math.max(width, record.size());
-            }
-            if (width > limits.maxColumnsPerSheet()) {
-                throw invalidFile("CSV 列数不能超过 " + limits.maxColumnsPerSheet());
-            }
-            width = Math.max(1, width);
-            List<CellValue> headerValues = recordValues(headerRecord, width);
-            List<String> headers = normalizeHeaders(headerValues.stream()
-                    .map(CellValue::display)
-                    .toList());
-            Counters counters = new Counters(limits);
-            counters.addCells(headerValues.stream().filter(CellValue::nonEmpty).count());
-            List<DataRow> rows = new ArrayList<>();
-            for (CSVRecord record : dataRecords) {
-                List<CellValue> cells = recordValues(record, width);
+
+                List<CellValue> values = recordValues(record, recordWidth);
+                if (headerValues == null) {
+                    headerValues = values;
+                    width = recordWidth;
+                    counters.addCells(values.stream().filter(CellValue::nonEmpty).count());
+                    continue;
+                }
+
+                List<CellValue> cells = values;
                 long nonEmpty = cells.stream().filter(CellValue::nonEmpty).count();
                 if (nonEmpty == 0) continue;
                 counters.addRow();
                 counters.addCells(nonEmpty);
+                width = Math.max(width, recordWidth);
                 rows.add(new DataRow(Math.toIntExact(record.getRecordNumber()), cells));
             }
+            if (headerValues == null) {
+                throw invalidFile("CSV 没有可读取的数据");
+            }
+            int finalWidth = width;
+            List<CellValue> normalizedHeaderValues = padValues(headerValues, finalWidth);
+            List<String> headers = normalizeHeaders(normalizedHeaderValues.stream()
+                    .map(CellValue::display)
+                    .toList());
+            List<DataRow> normalizedRows = rows.stream()
+                    .map(row -> row.cells.size() == finalWidth
+                            ? row
+                            : new DataRow(row.sourceRowNumber, padValues(row.cells, finalWidth)))
+                    .toList();
             return new ParsedDataset(
                     "csv",
-                    List.of(new ParsedSheet("CSV", headers, List.copyOf(rows))),
+                    List.of(new ParsedSheet("CSV", headers, normalizedRows)),
                     counters.rows,
                     counters.nonEmptyCells
             );
@@ -801,6 +805,16 @@ public class AssetTabularAnalysisProcessor implements TabularAnalysisProcessor {
             values.add(parseTextValue(index < record.size() ? record.get(index) : ""));
         }
         return List.copyOf(values);
+    }
+
+    private static List<CellValue> padValues(List<CellValue> values, int width) {
+        if (values.size() == width) return values;
+        List<CellValue> padded = new ArrayList<>(width);
+        padded.addAll(values);
+        while (padded.size() < width) {
+            padded.add(CellValue.empty());
+        }
+        return List.copyOf(padded);
     }
 
     private static CellValue cellValue(Cell cell, DataFormatter formatter) {
