@@ -7,14 +7,6 @@ import 'package:yuanzuo_ai/app/state/app_data_controller.dart';
 void main() {
   testWidgets('renders structured comparison and exposes export action',
       (tester) async {
-    final excel = AssetView(
-      id: 'excel-1',
-      name: '多文档对比报告.xlsx',
-      mediaType:
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      sizeBytes: 1024,
-      createdAt: DateTime(2026, 7, 28),
-    );
     final artifact = ArtifactView(
       id: 'artifact-1',
       taskId: 'task-1',
@@ -27,6 +19,7 @@ void main() {
       content: const {
         'format': 'document_comparison',
         'detectedMode': 'contract',
+        'summary': '三份文档的终止期限不同',
         'comparability': {
           'status': 'COMPARABLE',
           'reason': '三份合同主题和用途一致，可以进行完整比较',
@@ -34,7 +27,15 @@ void main() {
           'citationMarkers': ['S1', 'S2'],
         },
         'reportMarkdown': '# 对比结论\n存在重要变化',
-        'excelAssetId': 'excel-1',
+        'exportOptions': [
+          {
+            'type': 'excel',
+            'label': '导出 Excel 报告',
+            'fileName': '多文档对比报告.xlsx',
+            'mediaType':
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }
+        ],
         'pairwiseComparisons': [],
         'crossDocumentConclusion': {
           'summary': '三份文档的终止期限不同',
@@ -90,7 +91,7 @@ void main() {
         'warnings': [],
       },
       metadata: const {},
-      assets: [excel],
+      assets: const [],
       createdAt: DateTime(2026, 7, 28, 10, 30),
     );
 
@@ -114,6 +115,9 @@ void main() {
     );
     expect(find.text('通知期限缩短'), findsOneWidget);
     expect(find.byTooltip('导出'), findsOneWidget);
+    await tester.tap(find.byTooltip('导出'));
+    await tester.pumpAndSettle();
+    expect(find.text('导出 Excel 报告'), findsOneWidget);
   });
 
   testWidgets('shows terminal comparability and hides empty analysis sections',
@@ -130,6 +134,7 @@ void main() {
       content: const {
         'format': 'document_comparison',
         'detectedMode': 'general',
+        'summary': '文档主题或用途不同，不适合进行实质差异对比。',
         'comparability': {
           'status': 'NOT_COMPARABLE',
           'reason': '采购合同与员工手册的主题和用途不同',
@@ -137,6 +142,15 @@ void main() {
           'citationMarkers': [],
         },
         'reportMarkdown': '# 对比结论\n文档不可比',
+        'exportOptions': [
+          {
+            'type': 'excel',
+            'label': '导出 Excel 报告',
+            'fileName': '多文档对比报告.xlsx',
+            'mediaType':
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }
+        ],
         'pairwiseComparisons': [
           {
             'comparisonAssetId': 'comparison-1',

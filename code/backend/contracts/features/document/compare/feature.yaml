@@ -1,8 +1,8 @@
 featureCode: document.compare
 workspaceCode: document
-version: 3
+version: 4
 displayName: 多文档对比
-description: 对比最多五份文档，识别完全相同、可比、部分可比或不可比情况，并提供差异、风险和可追溯来源。
+description: 先生成可追溯的多文档文本对比结果，Excel 报告和基准标注文档在用户点击导出时按需生成。
 status: INTERNAL
 executionMode: ASYNC
 resultType: document_comparison

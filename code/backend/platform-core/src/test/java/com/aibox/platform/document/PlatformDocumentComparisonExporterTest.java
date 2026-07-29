@@ -2,8 +2,9 @@ package com.aibox.platform.document;
 
 import com.aibox.feature.spi.DocumentCitation;
 import com.aibox.feature.spi.DocumentComparisonExportRequest;
-import com.aibox.feature.spi.DocumentComparisonExportResult;
+import com.aibox.feature.spi.DocumentComparisonExports;
 import com.aibox.feature.spi.DocumentComparisonResponse;
+import com.aibox.feature.spi.GeneratedDocumentExport;
 import com.aibox.feature.spi.ModelAsset;
 import com.aibox.platform.asset.AssetService;
 import org.apache.pdfbox.Loader;
@@ -26,6 +27,7 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -54,8 +56,18 @@ class PlatformDocumentComparisonExporterTest {
         PlatformDocumentComparisonExporter exporter =
                 new PlatformDocumentComparisonExporter(assetService);
 
-        DocumentComparisonExportResult result = exporter.export(
+        GeneratedDocumentExport excel = exporter.export(
                 new DocumentComparisonExportRequest(
+                        DocumentComparisonExports.EXCEL,
+                        baselineId,
+                        "baseline.docx",
+                        "contract",
+                        response(baselineId, comparisonId)
+                )
+        );
+        GeneratedDocumentExport annotatedExport = exporter.export(
+                new DocumentComparisonExportRequest(
+                        DocumentComparisonExports.ANNOTATED_BASELINE,
                         baselineId,
                         "baseline.docx",
                         "contract",
@@ -63,11 +75,8 @@ class PlatformDocumentComparisonExporterTest {
                 )
         );
 
-        assertThat(result.warnings()).isEmpty();
-        assertThat(result.exports()).extracting("contentField")
-                .containsExactly("excelAssetId", "annotatedBaselineAssetId");
         try (XSSFWorkbook workbook = new XSSFWorkbook(
-                new ByteArrayInputStream(result.exports().get(0).content())
+                new ByteArrayInputStream(excel.content())
         )) {
             assertWrappedBody(workbook.getSheet("对比概览"), 6, 1);
             assertThat(workbook.getSheet("对比概览").getRow(3).getCell(1)
@@ -75,7 +84,7 @@ class PlatformDocumentComparisonExporterTest {
             assertWrappedBody(workbook.getSheet("差异-comparison.pdf"), 1, 2);
             assertWrappedBody(workbook.getSheet("来源"), 1, 3);
         }
-        byte[] annotated = result.exports().get(1).content();
+        byte[] annotated = annotatedExport.content();
         try (XWPFDocument document = new XWPFDocument(
                 new ByteArrayInputStream(annotated)
         )) {
@@ -110,8 +119,9 @@ class PlatformDocumentComparisonExporterTest {
         PlatformDocumentComparisonExporter exporter =
                 new PlatformDocumentComparisonExporter(assetService);
 
-        DocumentComparisonExportResult result = exporter.export(
+        GeneratedDocumentExport result = exporter.export(
                 new DocumentComparisonExportRequest(
+                        DocumentComparisonExports.ANNOTATED_BASELINE,
                         baselineId,
                         "baseline.pdf",
                         "contract",
@@ -119,11 +129,7 @@ class PlatformDocumentComparisonExporterTest {
                 )
         );
 
-        byte[] annotated = result.exports().stream()
-                .filter(item -> "annotatedBaselineAssetId".equals(item.contentField()))
-                .findFirst()
-                .orElseThrow()
-                .content();
+        byte[] annotated = result.content();
         try (PDDocument document = Loader.loadPDF(annotated)) {
             List<PDAnnotationText> annotations = document.getPage(0).getAnnotations()
                     .stream()
@@ -148,6 +154,21 @@ class PlatformDocumentComparisonExporterTest {
     }
 
     @Test
+    void offersAnnotatedPdfWhenOnlyRiskReferencesTheBaseline() {
+        UUID baselineId = UUID.randomUUID();
+        UUID comparisonId = UUID.randomUUID();
+
+        assertThat(DocumentComparisonExports.availableOptions(
+                baselineId,
+                "baseline.pdf",
+                riskOnlyResponse(baselineId, comparisonId)
+        )).extracting("type").containsExactly(
+                DocumentComparisonExports.EXCEL,
+                DocumentComparisonExports.ANNOTATED_BASELINE
+        );
+    }
+
+    @Test
     void skipsAnnotatedBaselineWhenThereAreNoDifferenceNotes() {
         UUID baselineId = UUID.randomUUID();
         UUID comparisonId = UUID.randomUUID();
@@ -155,18 +176,15 @@ class PlatformDocumentComparisonExporterTest {
         PlatformDocumentComparisonExporter exporter =
                 new PlatformDocumentComparisonExporter(assetService);
 
-        DocumentComparisonExportResult result = exporter.export(
+        assertThatThrownBy(() -> exporter.export(
                 new DocumentComparisonExportRequest(
+                        DocumentComparisonExports.ANNOTATED_BASELINE,
                         baselineId,
                         "baseline.pdf",
                         "contract",
                         terminalResponse(baselineId, comparisonId)
                 )
-        );
-
-        assertThat(result.warnings()).isEmpty();
-        assertThat(result.exports()).extracting("contentField")
-                .containsExactly("excelAssetId");
+        )).isInstanceOf(IllegalArgumentException.class);
         verify(assetService, never()).readForModel(baselineId);
     }
 
@@ -355,6 +373,47 @@ class PlatformDocumentComparisonExporterTest {
                                 Map.of("type", "PDF_PAGE", "pageNumber", 1)
                         )
                 ),
+                List.of(),
+                Map.of()
+        );
+    }
+
+    private static DocumentComparisonResponse riskOnlyResponse(
+            UUID baselineId,
+            UUID comparisonId
+    ) {
+        List<String> markers = List.of("S1");
+        return new DocumentComparisonResponse(
+                "contract",
+                "One material risk",
+                comparable(markers),
+                "# Comparison\nOne material risk",
+                List.of(new DocumentComparisonResponse.PairwiseComparison(
+                        comparisonId,
+                        "comparison.pdf",
+                        "No direct differences",
+                        comparable(markers),
+                        List.of()
+                )),
+                new DocumentComparisonResponse.CrossDocumentConclusion(
+                        "One material risk",
+                        List.of()
+                ),
+                List.of(new DocumentComparisonResponse.Risk(
+                        "HIGH",
+                        "Liability cap is missing",
+                        "The baseline contains the only liability limit",
+                        "Restore a clear liability cap",
+                        List.of(baselineId, comparisonId),
+                        markers
+                )),
+                List.of(new DocumentCitation(
+                        "S1",
+                        baselineId,
+                        "baseline.pdf",
+                        "Liability is capped",
+                        Map.of("type", "PDF_PAGE", "pageNumber", 1)
+                )),
                 List.of(),
                 Map.of()
         );

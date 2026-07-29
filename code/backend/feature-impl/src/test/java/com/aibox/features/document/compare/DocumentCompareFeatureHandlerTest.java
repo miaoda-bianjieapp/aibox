@@ -2,14 +2,11 @@ package com.aibox.features.document.compare;
 
 import com.aibox.feature.spi.ArtifactReference;
 import com.aibox.feature.spi.DocumentCitation;
-import com.aibox.feature.spi.DocumentComparisonExportResult;
-import com.aibox.feature.spi.DocumentComparisonExporter;
 import com.aibox.feature.spi.DocumentComparisonRequest;
 import com.aibox.feature.spi.DocumentComparisonResponse;
 import com.aibox.feature.spi.FeatureExecutionContext;
 import com.aibox.feature.spi.FeatureExecutionResult;
 import com.aibox.feature.spi.FeatureValidationException;
-import com.aibox.feature.spi.GeneratedDocumentExport;
 import com.aibox.feature.spi.InputAssetReference;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.TextGenerationRequest;
@@ -33,26 +30,8 @@ class DocumentCompareFeatureHandlerTest {
         UUID baselineId = UUID.randomUUID();
         UUID comparisonId = UUID.randomUUID();
         AtomicReference<DocumentComparisonRequest> captured = new AtomicReference<>();
-        DocumentComparisonExporter exporter = request ->
-                new DocumentComparisonExportResult(
-                        List.of(
-                                new GeneratedDocumentExport(
-                                        "excelAssetId",
-                                        "compare.xlsx",
-                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                        new byte[]{1, 2}
-                                ),
-                                new GeneratedDocumentExport(
-                                        "annotatedBaselineAssetId",
-                                        "baseline_annotated.docx",
-                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                        new byte[]{3, 4}
-                                )
-                        ),
-                        List.of("export warning")
-                );
         DocumentCompareFeatureHandler handler =
-                new DocumentCompareFeatureHandler(exporter);
+                new DocumentCompareFeatureHandler();
         ModelGateway gateway = new ModelGateway() {
             @Override
             public TextGenerationResponse generateText(TextGenerationRequest request) {
@@ -105,15 +84,16 @@ class DocumentCompareFeatureHandlerTest {
                 "COMPARABLE",
                 ((Map<?, ?>) artifact.content().get("comparability")).get("status")
         );
-        assertEquals("docx", artifact.content().get("annotatedBaselineFormat"));
-        assertTrue(((List<?>) artifact.content().get("warnings"))
-                .contains("export warning"));
+        assertEquals("存在一项重要期限变化", artifact.content().get("summary"));
         assertEquals(
-                List.of("excelAssetId", "annotatedBaselineAssetId"),
-                artifact.outputAssets().stream()
-                        .map(item -> item.contentField())
+                List.of("excel", "annotatedBaseline"),
+                ((List<?>) artifact.content().get("exportOptions")).stream()
+                        .map(Map.class::cast)
+                        .map(item -> item.get("type"))
                         .toList()
         );
+        assertTrue(artifact.outputAssets().isEmpty());
+        assertEquals(2, artifact.metadata().get("availableExportCount"));
         assertEquals(
                 baseArtifact.id().toString(),
                 artifact.metadata().get("basedOnArtifactId")
@@ -125,8 +105,7 @@ class DocumentCompareFeatureHandlerTest {
     @Test
     void enforcesConditionalDocumentCountsAndUniqueFiles() {
         DocumentCompareFeatureHandler handler =
-                new DocumentCompareFeatureHandler(request ->
-                        new DocumentComparisonExportResult(List.of(), List.of()));
+                new DocumentCompareFeatureHandler();
         UUID only = UUID.randomUUID();
         FeatureExecutionContext noBaselineWithOne = new FeatureExecutionContext(
                 UUID.randomUUID(),

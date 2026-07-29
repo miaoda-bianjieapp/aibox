@@ -2,21 +2,18 @@ package com.aibox.features.document.compare;
 
 import com.aibox.feature.spi.ArtifactDraft;
 import com.aibox.feature.spi.DocumentCitation;
-import com.aibox.feature.spi.DocumentComparisonExportRequest;
-import com.aibox.feature.spi.DocumentComparisonExportResult;
-import com.aibox.feature.spi.DocumentComparisonExporter;
+import com.aibox.feature.spi.DocumentComparisonExportOption;
+import com.aibox.feature.spi.DocumentComparisonExports;
 import com.aibox.feature.spi.DocumentComparisonRequest;
 import com.aibox.feature.spi.DocumentComparisonResponse;
 import com.aibox.feature.spi.FeatureExecutionContext;
 import com.aibox.feature.spi.FeatureExecutionResult;
 import com.aibox.feature.spi.FeatureOutputEmitter;
 import com.aibox.feature.spi.FeatureValidationException;
-import com.aibox.feature.spi.GeneratedDocumentExport;
 import com.aibox.feature.spi.InputAssetReference;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelGateway;
 import com.aibox.feature.spi.ModelProviderException;
-import com.aibox.feature.spi.OutputAssetDraft;
 import com.aibox.feature.spi.StreamingFeatureHandler;
 import org.springframework.stereotype.Component;
 
@@ -54,12 +51,6 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
             ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
             ".txt", ".md", ".csv", ".json"
     );
-
-    private final DocumentComparisonExporter exporter;
-
-    public DocumentCompareFeatureHandler(DocumentComparisonExporter exporter) {
-        this.exporter = exporter;
-    }
 
     @Override
     public String featureCode() {
@@ -218,21 +209,14 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
             );
         }
 
-        outputEmitter.replaceText("main", "正在生成 Excel 和基准文档标注版");
-        DocumentComparisonExportResult exportResult = exporter.export(
-                new DocumentComparisonExportRequest(
+        List<DocumentComparisonExportOption> exportOptions =
+                DocumentComparisonExports.availableOptions(
                         baselineId,
                         baselineFileName,
-                        mode,
                         response
-                )
-        );
-        List<String> warnings = new ArrayList<>(response.warnings());
-        warnings.addAll(exportResult.warnings());
+                );
+        List<String> warnings = response.warnings();
 
-        List<OutputAssetDraft> outputs = exportResult.exports().stream()
-                .map(DocumentCompareFeatureHandler::outputDraft)
-                .toList();
         Map<String, Object> content = content(
                 context,
                 baselineId,
@@ -241,7 +225,7 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
                 mode,
                 response,
                 warnings,
-                exportResult.exports()
+                exportOptions
         );
         Map<String, Object> metadata = new LinkedHashMap<>(response.metadata());
         metadata.put("promptVersion", PROMPT_VERSION);
@@ -250,7 +234,7 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
         metadata.put("comparabilityStatus", response.comparability().status());
         metadata.put("hasBaseline", baselineId != null);
         metadata.put("inputDocumentCount", context.inputAssetIds().size());
-        metadata.put("exportCount", outputs.size());
+        metadata.put("availableExportCount", exportOptions.size());
         if (context.baseArtifact() != null) {
             metadata.put(
                     "basedOnArtifactId",
@@ -262,14 +246,14 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
             );
         }
 
-        outputEmitter.replaceText("main", "对比完成，可查看正文、来源和导出文件");
+        outputEmitter.replaceText("main", "对比完成，可查看正文和来源；导出文件将在需要时生成");
         return FeatureExecutionResult.of(new ArtifactDraft(
                 "document_comparison",
                 artifactTitle(baselineId, comparisonIds, assetsById),
                 "application/vnd.yuanzuo.document-comparison+json",
                 content,
                 Map.copyOf(metadata),
-                outputs
+                List.of()
         ));
     }
 
@@ -281,13 +265,14 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
             String mode,
             DocumentComparisonResponse response,
             List<String> warnings,
-            List<GeneratedDocumentExport> exports
+            List<DocumentComparisonExportOption> exportOptions
     ) {
         LinkedHashMap<String, Object> content = new LinkedHashMap<>();
         content.put("format", "document_comparison");
         content.put("mode", mode);
         content.put("detectedMode", response.detectedMode());
         content.put("hasBaseline", baselineId != null);
+        content.put("summary", response.summary());
         content.put("comparability", comparabilityMap(response.comparability()));
         content.put("reportMarkdown", response.reportMarkdown());
         content.put(
@@ -317,14 +302,12 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
                         .toList()
         );
         content.put("warnings", List.copyOf(new LinkedHashSet<>(warnings)));
-        if (exports.stream().anyMatch(
-                item -> "annotatedBaselineAssetId".equals(item.contentField())
-        )) {
-            content.put(
-                    "annotatedBaselineFormat",
-                    extension(assetsById.get(baselineId).fileName()).substring(1)
-            );
-        }
+        content.put(
+                "exportOptions",
+                exportOptions.stream()
+                        .map(DocumentCompareFeatureHandler::exportOptionMap)
+                        .toList()
+        );
         return Map.copyOf(content);
     }
 
@@ -453,12 +436,14 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
         );
     }
 
-    private static OutputAssetDraft outputDraft(GeneratedDocumentExport export) {
-        return new OutputAssetDraft(
-                export.contentField(),
-                export.fileName(),
-                export.mediaType(),
-                export.content()
+    private static Map<String, Object> exportOptionMap(
+            DocumentComparisonExportOption option
+    ) {
+        return Map.of(
+                "type", option.type(),
+                "label", option.label(),
+                "fileName", option.fileName(),
+                "mediaType", option.mediaType()
         );
     }
 

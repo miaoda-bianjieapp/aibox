@@ -98,7 +98,7 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
               onSelected: _export,
               itemBuilder: (context) => exports
                   .map((item) => PopupMenuItem<String>(
-                        value: item.asset.id,
+                        value: item.type,
                         child: Row(
                           children: [
                             Icon(item.icon, size: 20),
@@ -559,34 +559,39 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
   }
 
   List<_ExportItem> _availableExports() {
+    final configured = _mapList(_content['exportOptions'])
+        .map((option) {
+          final type = option['type']?.toString().trim() ?? '';
+          final label = option['label']?.toString().trim() ?? '';
+          if (type.isEmpty || label.isEmpty) return null;
+          return _ExportItem(
+            type: type,
+            label: label,
+            icon: _exportIcon(type),
+          );
+        })
+        .whereType<_ExportItem>()
+        .toList();
+    if (configured.isNotEmpty) return configured;
+
     final result = <_ExportItem>[];
     final excelId = _content['excelAssetId']?.toString();
     final annotatedId = _content['annotatedBaselineAssetId']?.toString();
-    final excel = _outputAsset(excelId);
-    final annotated = _outputAsset(annotatedId);
-    if (excel != null) {
+    if (excelId != null && excelId.isNotEmpty) {
       result.add(_ExportItem(
-        asset: excel,
+        type: 'excel',
         label: '导出 Excel 报告',
         icon: Icons.table_view_outlined,
       ));
     }
-    if (annotated != null) {
+    if (annotatedId != null && annotatedId.isNotEmpty) {
       result.add(_ExportItem(
-        asset: annotated,
+        type: 'annotatedBaseline',
         label: '导出基准文档标注版',
         icon: Icons.rate_review_outlined,
       ));
     }
     return result;
-  }
-
-  AssetView? _outputAsset(String? id) {
-    if (id == null || id.isEmpty) return null;
-    for (final asset in widget.artifact.assets) {
-      if (asset.id == id && asset.available) return asset;
-    }
-    return null;
   }
 
   Future<void> _copyReport() async {
@@ -599,9 +604,9 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
     );
   }
 
-  Future<void> _export(String assetId) async {
+  Future<void> _export(String exportType) async {
     final item = _availableExports()
-        .where((value) => value.asset.id == assetId)
+        .where((value) => value.type == exportType)
         .firstOrNull;
     if (item == null) return;
     setState(() {
@@ -609,10 +614,14 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
       _error = null;
     });
     try {
-      final bytes = await widget.data.api.downloadAssetContent(item.asset.id);
+      final asset = await widget.data.api.exportArtifact(
+        widget.artifact.id,
+        item.type,
+      );
+      final bytes = await widget.data.api.downloadAssetContent(asset.id);
       await NativeFilePicker.save(
-        fileName: item.asset.name,
-        mediaType: item.asset.mediaType,
+        fileName: asset.name,
+        mediaType: asset.mediaType,
         bytes: bytes,
       );
     } catch (exception) {
@@ -779,12 +788,12 @@ class _ComparisonCitation {
 
 class _ExportItem {
   const _ExportItem({
-    required this.asset,
+    required this.type,
     required this.label,
     required this.icon,
   });
 
-  final AssetView asset;
+  final String type;
   final String label;
   final IconData icon;
 }
@@ -833,6 +842,11 @@ Color _comparabilityColor(String value) => switch (value) {
       'PARTIALLY_COMPARABLE' => const Color(0xFF8A5A00),
       'NOT_COMPARABLE' => AppColors.danger,
       _ => AppColors.accent,
+    };
+
+IconData _exportIcon(String value) => switch (value) {
+      'annotatedBaseline' => Icons.rate_review_outlined,
+      _ => Icons.table_view_outlined,
     };
 
 String _modeLabel(String? value) => switch (value) {

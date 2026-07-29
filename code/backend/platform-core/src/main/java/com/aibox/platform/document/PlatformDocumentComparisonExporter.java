@@ -2,8 +2,8 @@ package com.aibox.platform.document;
 
 import com.aibox.feature.spi.DocumentCitation;
 import com.aibox.feature.spi.DocumentComparisonExportRequest;
-import com.aibox.feature.spi.DocumentComparisonExportResult;
 import com.aibox.feature.spi.DocumentComparisonExporter;
+import com.aibox.feature.spi.DocumentComparisonExports;
 import com.aibox.feature.spi.DocumentComparisonResponse;
 import com.aibox.feature.spi.GeneratedDocumentExport;
 import com.aibox.feature.spi.ModelAsset;
@@ -62,10 +62,6 @@ import java.util.Set;
 public final class PlatformDocumentComparisonExporter
         implements DocumentComparisonExporter {
 
-    private static final String XLSX_MEDIA_TYPE =
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    private static final String DOCX_MEDIA_TYPE =
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     private static final float PDF_ANNOTATION_SIZE = 18.0f;
     private static final float PDF_ANNOTATION_GAP = 4.0f;
     private static final float PDF_ANNOTATION_MARGIN = 8.0f;
@@ -89,44 +85,34 @@ public final class PlatformDocumentComparisonExporter
     }
 
     @Override
-    public DocumentComparisonExportResult export(
+    public GeneratedDocumentExport export(
             DocumentComparisonExportRequest request
     ) {
-        List<GeneratedDocumentExport> exports = new ArrayList<>();
-        List<String> warnings = new ArrayList<>();
-        try {
-            exports.add(new GeneratedDocumentExport(
-                    "excelAssetId",
-                    "多文档对比报告.xlsx",
-                    XLSX_MEDIA_TYPE,
+        var option = DocumentComparisonExports.requireAvailable(
+                request.exportType(),
+                request.baselineAssetId(),
+                request.baselineFileName(),
+                request.comparison()
+        );
+        if (DocumentComparisonExports.EXCEL.equals(request.exportType())) {
+            return new GeneratedDocumentExport(
+                    DocumentComparisonExports.EXCEL_CONTENT_FIELD,
+                    option.fileName(),
+                    option.mediaType(),
                     writeExcel(request)
-            ));
-        } catch (RuntimeException exception) {
-            warnings.add("Excel 报告生成失败，正文对比结果仍可正常查看");
+            );
         }
-
         String extension = extension(request.baselineFileName());
-        if (request.baselineAssetId() != null
-                && Set.of(".docx", ".pdf").contains(extension)
-                && hasAnnotationNotes(request, extension)) {
-            try {
-                ModelAsset baseline = assetService.readForModel(
-                        request.baselineAssetId()
-                );
-                AnnotatedExport annotated = ".docx".equals(extension)
-                        ? annotateDocx(request, baseline)
-                        : annotatePdf(request, baseline);
-                exports.add(new GeneratedDocumentExport(
-                        "annotatedBaselineAssetId",
-                        annotated.fileName(),
-                        annotated.mediaType(),
-                        annotated.content()
-                ));
-            } catch (RuntimeException exception) {
-                warnings.add("基准文档标注版生成失败，原始文档和正文结果未受影响");
-            }
-        }
-        return new DocumentComparisonExportResult(exports, warnings);
+        ModelAsset baseline = assetService.readForModel(request.baselineAssetId());
+        AnnotatedExport annotated = ".docx".equals(extension)
+                ? annotateDocx(request, baseline)
+                : annotatePdf(request, baseline);
+        return new GeneratedDocumentExport(
+                DocumentComparisonExports.ANNOTATED_BASELINE_CONTENT_FIELD,
+                option.fileName(),
+                option.mediaType(),
+                annotated.content()
+        );
     }
 
     private static byte[] writeExcel(DocumentComparisonExportRequest request) {
@@ -353,10 +339,10 @@ public final class PlatformDocumentComparisonExporter
             }
             document.write(output);
             return new AnnotatedExport(
-                    annotatedFileName(request.baselineFileName(), ".docx"),
-                    DOCX_MEDIA_TYPE,
-                    output.toByteArray()
-            );
+                annotatedFileName(request.baselineFileName(), ".docx"),
+                DocumentComparisonExports.DOCX_MEDIA_TYPE,
+                output.toByteArray()
+        );
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to annotate DOCX", exception);
         }
@@ -704,15 +690,6 @@ public final class PlatformDocumentComparisonExporter
             DocumentComparisonExportRequest request
     ) {
         return locationNotes(request, "WORD_PARAGRAPH", "paragraphStart");
-    }
-
-    private static boolean hasAnnotationNotes(
-            DocumentComparisonExportRequest request,
-            String extension
-    ) {
-        return ".docx".equals(extension)
-                ? !paragraphNotes(request).isEmpty()
-                : !pageNotes(request).isEmpty();
     }
 
     private static Map<Integer, List<String>> pageNotes(
