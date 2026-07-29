@@ -7,6 +7,7 @@ import '../models/prompt_optimization_undo_store.dart';
 import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
 import '../network/task_execution_result.dart';
+import '../pages/data_analysis_result_page.dart';
 import '../pages/document_compare_result_page.dart';
 import '../pages/outline_result_page.dart';
 import '../pages/task_execution_page.dart';
@@ -77,6 +78,14 @@ Route<void> _artifactResultRoute({
   required String? rendererKey,
   VoidCallback? onContinue,
 }) {
+  if (rendererKey == 'data_analysis') {
+    return MaterialPageRoute<void>(
+      builder: (context) => DataAnalysisResultPage(
+        artifact: artifact,
+        onContinue: onContinue,
+      ),
+    );
+  }
   if (rendererKey == 'outline_text_editor') {
     return MaterialPageRoute<void>(
       builder: (pageContext) => OutlineResultPage(
