@@ -27,6 +27,12 @@ void main() {
       content: const {
         'format': 'document_comparison',
         'detectedMode': 'contract',
+        'comparability': {
+          'status': 'COMPARABLE',
+          'reason': '三份合同主题和用途一致，可以进行完整比较',
+          'sharedTopics': ['终止期限'],
+          'citationMarkers': ['S1', 'S2'],
+        },
         'reportMarkdown': '# 对比结论\n存在重要变化',
         'excelAssetId': 'excel-1',
         'pairwiseComparisons': [],
@@ -101,7 +107,121 @@ void main() {
 
     expect(find.text('三份文档的终止期限不同'), findsOneWidget);
     expect(find.text('终止期限'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('通知期限缩短'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('通知期限缩短'), findsOneWidget);
     expect(find.byTooltip('导出'), findsOneWidget);
+  });
+
+  testWidgets('shows terminal comparability and hides empty analysis sections',
+      (tester) async {
+    final artifact = ArtifactView(
+      id: 'artifact-terminal',
+      taskId: 'task-terminal',
+      runId: 'run-terminal',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'document_comparison',
+      title: '完全不同文档对比',
+      mimeType: 'application/vnd.yuanzuo.document-comparison+json',
+      content: const {
+        'format': 'document_comparison',
+        'detectedMode': 'general',
+        'comparability': {
+          'status': 'NOT_COMPARABLE',
+          'reason': '采购合同与员工手册的主题和用途不同',
+          'sharedTopics': [],
+          'citationMarkers': [],
+        },
+        'reportMarkdown': '# 对比结论\n文档不可比',
+        'pairwiseComparisons': [
+          {
+            'comparisonAssetId': 'comparison-1',
+            'comparisonFileName': '员工手册.pdf',
+            'summary': '不适合进行实质差异对比',
+            'comparability': {
+              'status': 'NOT_COMPARABLE',
+              'reason': '采购合同与员工手册的主题和用途不同',
+              'sharedTopics': [],
+              'citationMarkers': [],
+            },
+            'differences': [],
+          }
+        ],
+        'crossDocumentConclusion': {
+          'summary': '文档主题或用途不同，不适合进行实质差异对比。',
+          'findings': [],
+        },
+        'risks': [],
+        'citations': [],
+        'warnings': [],
+      },
+      metadata: const {},
+      assets: const [],
+      createdAt: DateTime(2026, 7, 29, 10, 30),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DocumentCompareResultPage(
+          data: AppDataController(),
+          artifact: artifact,
+          loadTask: (_) => Future<TaskDetail>.error('offline test'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('不可比'), findsWidgets);
+    expect(find.text('采购合同与员工手册的主题和用途不同'), findsOneWidget);
+    expect(find.text('多文档综合结论'), findsNothing);
+    expect(find.text('风险清单'), findsNothing);
+  });
+
+  testWidgets('does not infer comparability for legacy artifacts',
+      (tester) async {
+    final artifact = ArtifactView(
+      id: 'artifact-legacy',
+      taskId: 'task-legacy',
+      runId: 'run-legacy',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'document_comparison',
+      title: '历史文档对比',
+      mimeType: 'application/vnd.yuanzuo.document-comparison+json',
+      content: const {
+        'format': 'document_comparison',
+        'detectedMode': 'contract',
+        'reportMarkdown': '# 对比结论\n存在差异',
+        'pairwiseComparisons': [],
+        'crossDocumentConclusion': {
+          'summary': '历史对比结论',
+          'findings': [],
+        },
+        'risks': [],
+        'citations': [],
+        'warnings': [],
+      },
+      metadata: const {},
+      assets: const [],
+      createdAt: DateTime(2026, 7, 28, 10, 30),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DocumentCompareResultPage(
+          data: AppDataController(),
+          artifact: artifact,
+          loadTask: (_) => Future<TaskDetail>.error('offline test'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('历史对比结论'), findsOneWidget);
+    expect(find.text('可比'), findsNothing);
   });
 }

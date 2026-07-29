@@ -325,7 +325,7 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
     ) {
         return new DocumentComparisonEngine(
                 documentKnowledgeService,
-                this::generateText,
+                this::generateTextStream,
                 this::generateMultimodalText
         ).compare(request);
     }

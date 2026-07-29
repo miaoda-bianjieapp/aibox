@@ -1,8 +1,8 @@
 featureCode: document.compare
 workspaceCode: document
-version: 1
+version: 3
 displayName: 多文档对比
-description: 对比最多五份合同、制度或不同版本文档，标注差异、综合结论和风险，并提供可追溯来源。
+description: 对比最多五份文档，识别完全相同、可比、部分可比或不可比情况，并提供差异、风险和可追溯来源。
 status: INTERNAL
 executionMode: ASYNC
 resultType: document_comparison

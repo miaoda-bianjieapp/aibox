@@ -44,6 +44,7 @@
       "maxFileSizeBytes": 52428800,
       "maxTotalSizeBytes": 52428800,
       "allowAssetLibrarySelection": true,
+      "excludeAssetsSelectedInFields": ["comparisonDocuments"],
       "uploadLabel": "选择基准文档"
     },
     "comparisonDocuments": {
@@ -75,6 +76,7 @@
       "maxFileSizeBytes": 52428800,
       "maxTotalSizeBytes": 209715200,
       "allowAssetLibrarySelection": true,
+      "excludeAssetsSelectedInFields": ["baselineDocument"],
       "uploadLabel": "选择对比文档"
     },
     "comparisonMode": {

@@ -101,6 +101,10 @@ class DocumentCompareFeatureHandlerTest {
         var artifact = result.artifacts().get(0);
         assertEquals("document_comparison", artifact.kind());
         assertEquals("document_comparison", artifact.content().get("format"));
+        assertEquals(
+                "COMPARABLE",
+                ((Map<?, ?>) artifact.content().get("comparability")).get("status")
+        );
         assertEquals("docx", artifact.content().get("annotatedBaselineFormat"));
         assertTrue(((List<?>) artifact.content().get("warnings"))
                 .contains("export warning"));
@@ -248,6 +252,12 @@ class DocumentCompareFeatureHandlerTest {
                         comparisonId,
                         "comparison.pdf",
                         "终止期限发生变化",
+                        new DocumentComparisonResponse.Comparability(
+                                "COMPARABLE",
+                                "两份合同均规定终止期限",
+                                List.of("终止期限"),
+                                markers
+                        ),
                         List.of(difference)
                 );
         DocumentComparisonResponse.ConsensusFinding finding =
@@ -284,6 +294,12 @@ class DocumentCompareFeatureHandlerTest {
         return new DocumentComparisonResponse(
                 "contract",
                 "存在一项重要期限变化",
+                new DocumentComparisonResponse.Comparability(
+                        "COMPARABLE",
+                        "两份合同主题和用途一致",
+                        List.of("终止期限"),
+                        markers
+                ),
                 "# 对比结论\n存在一项重要期限变化",
                 List.of(pair),
                 new DocumentComparisonResponse.CrossDocumentConclusion(

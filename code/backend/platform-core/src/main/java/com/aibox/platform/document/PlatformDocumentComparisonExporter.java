@@ -11,9 +11,12 @@ import com.aibox.platform.asset.AssetService;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDDeviceRGB;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -22,6 +25,7 @@ import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.IndexedColors;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
 import org.apache.poi.ss.util.WorkbookUtil;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.xwpf.usermodel.XWPFComment;
@@ -32,6 +36,12 @@ import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTMarkupRange;
 import org.springframework.stereotype.Component;
 
+import java.awt.Color;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
+import java.awt.GraphicsEnvironment;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -56,6 +66,21 @@ public final class PlatformDocumentComparisonExporter
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     private static final String DOCX_MEDIA_TYPE =
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    private static final float PDF_ANNOTATION_SIZE = 18.0f;
+    private static final float PDF_ANNOTATION_GAP = 4.0f;
+    private static final float PDF_ANNOTATION_MARGIN = 8.0f;
+    private static final int PDF_NOTE_RENDER_SCALE = 2;
+    private static final int PDF_NOTE_PAGE_MARGIN = 64;
+    private static final int PDF_NOTE_CARD_GAP = 16;
+    private static final int PDF_NOTE_LINE_HEIGHT = 30;
+    private static final int PDF_NOTE_MAX_VISIBLE_LINES = 12;
+    private static final int PDF_NOTE_MAX_CHARACTERS = 800;
+    private static final String PDF_NOTE_FONT_FAMILY = pdfNoteFontFamily();
+    private static final Color PDF_NOTE_HEADING = new Color(27, 61, 57);
+    private static final Color PDF_NOTE_ACCENT = new Color(15, 138, 112);
+    private static final Color PDF_NOTE_MUTED = new Color(96, 118, 115);
+    private static final Color PDF_NOTE_CARD = new Color(255, 249, 232);
+    private static final Color PDF_NOTE_BORDER = new Color(226, 174, 60);
 
     private final AssetService assetService;
 
@@ -82,7 +107,8 @@ public final class PlatformDocumentComparisonExporter
 
         String extension = extension(request.baselineFileName());
         if (request.baselineAssetId() != null
-                && Set.of(".docx", ".pdf").contains(extension)) {
+                && Set.of(".docx", ".pdf").contains(extension)
+                && hasAnnotationNotes(request, extension)) {
             try {
                 ModelAsset baseline = assetService.readForModel(
                         request.baselineAssetId()
@@ -108,11 +134,12 @@ public final class PlatformDocumentComparisonExporter
         try (XSSFWorkbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             CellStyle header = headerStyle(workbook);
-            writeOverview(workbook, request, header);
-            writePairwise(workbook, comparison, header);
-            writeConsensus(workbook, comparison, header);
-            writeRisks(workbook, comparison, header);
-            writeSources(workbook, comparison, header);
+            CellStyle body = bodyStyle(workbook);
+            writeOverview(workbook, request, header, body);
+            writePairwise(workbook, comparison, header, body);
+            writeConsensus(workbook, comparison, header, body);
+            writeRisks(workbook, comparison, header, body);
+            writeSources(workbook, comparison, header, body);
             workbook.write(output);
             return output.toByteArray();
         } catch (IOException exception) {
@@ -123,13 +150,29 @@ public final class PlatformDocumentComparisonExporter
     private static void writeOverview(
             XSSFWorkbook workbook,
             DocumentComparisonExportRequest request,
-            CellStyle header
+            CellStyle header,
+            CellStyle body
     ) {
         Sheet sheet = workbook.createSheet("对比概览");
         List<List<String>> rows = List.of(
                 List.of("对比模式", request.mode()),
                 List.of("识别模式", request.comparison().detectedMode()),
                 List.of("是否包含基准", request.baselineAssetId() == null ? "否" : "是"),
+                List.of(
+                        "可比性状态",
+                        comparabilityLabel(request.comparison().comparability().status())
+                ),
+                List.of(
+                        "可比性说明",
+                        request.comparison().comparability().reason()
+                ),
+                List.of(
+                        "共同主题",
+                        String.join(
+                                "；",
+                                request.comparison().comparability().sharedTopics()
+                        )
+                ),
                 List.of("对比结论", request.comparison().summary()),
                 List.of("警告", String.join("；", request.comparison().warnings()))
         );
@@ -138,7 +181,9 @@ public final class PlatformDocumentComparisonExporter
             Cell key = row.createCell(0);
             key.setCellValue(rows.get(index).get(0));
             key.setCellStyle(header);
-            row.createCell(1).setCellValue(cellText(rows.get(index).get(1)));
+            Cell value = row.createCell(1);
+            value.setCellValue(cellText(rows.get(index).get(1)));
+            value.setCellStyle(body);
         }
         setWidths(sheet, 20, 100);
     }
@@ -146,7 +191,8 @@ public final class PlatformDocumentComparisonExporter
     private static void writePairwise(
             XSSFWorkbook workbook,
             DocumentComparisonResponse comparison,
-            CellStyle header
+            CellStyle header,
+            CellStyle body
     ) {
         int number = 0;
         Set<String> names = new LinkedHashSet<>();
@@ -171,7 +217,7 @@ public final class PlatformDocumentComparisonExporter
             for (DocumentComparisonResponse.Difference difference
                     : pair.differences()) {
                 Row row = sheet.createRow(rowNumber++);
-                writeCells(row, List.of(
+                writeCells(row, body, List.of(
                         difference.topic(),
                         changeTypeLabel(difference.changeType()),
                         difference.baselineContent(),
@@ -188,7 +234,8 @@ public final class PlatformDocumentComparisonExporter
     private static void writeConsensus(
             XSSFWorkbook workbook,
             DocumentComparisonResponse comparison,
-            CellStyle header
+            CellStyle header,
+            CellStyle body
     ) {
         Sheet sheet = workbook.createSheet("综合结论");
         writeHeader(
@@ -204,7 +251,7 @@ public final class PlatformDocumentComparisonExporter
                     .reduce((left, right) -> left + "\n" + right)
                     .orElse("");
             Row row = sheet.createRow(rowNumber++);
-            writeCells(row, List.of(
+            writeCells(row, body, List.of(
                     finding.topic(),
                     statements,
                     finding.commonality(),
@@ -220,7 +267,8 @@ public final class PlatformDocumentComparisonExporter
     private static void writeRisks(
             XSSFWorkbook workbook,
             DocumentComparisonResponse comparison,
-            CellStyle header
+            CellStyle header,
+            CellStyle body
     ) {
         Sheet sheet = workbook.createSheet("风险清单");
         writeHeader(
@@ -231,7 +279,7 @@ public final class PlatformDocumentComparisonExporter
         int rowNumber = 1;
         for (DocumentComparisonResponse.Risk risk : comparison.risks()) {
             Row row = sheet.createRow(rowNumber++);
-            writeCells(row, List.of(
+            writeCells(row, body, List.of(
                     severityLabel(risk.severity()),
                     risk.title(),
                     risk.basis(),
@@ -250,7 +298,8 @@ public final class PlatformDocumentComparisonExporter
     private static void writeSources(
             XSSFWorkbook workbook,
             DocumentComparisonResponse comparison,
-            CellStyle header
+            CellStyle header,
+            CellStyle body
     ) {
         Sheet sheet = workbook.createSheet("来源");
         writeHeader(
@@ -261,7 +310,7 @@ public final class PlatformDocumentComparisonExporter
         int rowNumber = 1;
         for (DocumentCitation citation : comparison.citations()) {
             Row row = sheet.createRow(rowNumber++);
-            writeCells(row, List.of(
+            writeCells(row, body, List.of(
                     citation.marker(),
                     citation.fileName(),
                     locatorText(citation.locator()),
@@ -320,26 +369,21 @@ public final class PlatformDocumentComparisonExporter
         Map<Integer, List<String>> notes = pageNotes(request);
         try (PDDocument document = Loader.loadPDF(baseline.content());
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            for (Map.Entry<Integer, List<String>> entry : notes.entrySet()) {
+            List<PDPage> originalPages = new ArrayList<>();
+            document.getPages().forEach(originalPages::add);
+            for (Map.Entry<Integer, List<String>> entry : notes.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .toList()) {
                 int pageIndex = entry.getKey() - 1;
-                if (pageIndex < 0 || pageIndex >= document.getNumberOfPages()) continue;
-                PDPage page = document.getPage(pageIndex);
-                PDRectangle box = page.getCropBox();
-                PDAnnotationText annotation = new PDAnnotationText();
-                annotation.setName("Comment");
-                annotation.setContents(String.join("\n\n", entry.getValue()));
-                annotation.setColor(new PDColor(
-                        new float[]{1.0f, 0.78f, 0.12f},
-                        PDDeviceRGB.INSTANCE
-                ));
-                annotation.setRectangle(new PDRectangle(
-                        Math.max(box.getLowerLeftX(), box.getUpperRightX() - 34),
-                        Math.max(box.getLowerLeftY(), box.getUpperRightY() - 34),
-                        28,
-                        28
-                ));
-                annotation.setPage(page);
-                page.getAnnotations().add(annotation);
+                if (pageIndex < 0 || pageIndex >= originalPages.size()) continue;
+                PDPage sourcePage = originalPages.get(pageIndex);
+                addPdfAnnotations(sourcePage, entry.getValue());
+                addVisiblePdfNotePages(
+                        document,
+                        sourcePage,
+                        entry.getKey(),
+                        entry.getValue()
+                );
             }
             document.save(output);
             return new AnnotatedExport(
@@ -352,10 +396,323 @@ public final class PlatformDocumentComparisonExporter
         }
     }
 
+    private static void addPdfAnnotations(PDPage page, List<String> notes)
+            throws IOException {
+        PDRectangle box = page.getCropBox();
+        float step = PDF_ANNOTATION_SIZE + PDF_ANNOTATION_GAP;
+        int rowsPerColumn = Math.max(
+                1,
+                (int) Math.floor(
+                        (box.getHeight() - 2 * PDF_ANNOTATION_MARGIN
+                                + PDF_ANNOTATION_GAP) / step
+                )
+        );
+        for (int index = 0; index < notes.size(); index++) {
+            int row = index % rowsPerColumn;
+            int column = index / rowsPerColumn;
+            float x = box.getUpperRightX() - PDF_ANNOTATION_MARGIN
+                    - PDF_ANNOTATION_SIZE - column * step;
+            float y = box.getUpperRightY() - PDF_ANNOTATION_MARGIN
+                    - PDF_ANNOTATION_SIZE - row * step;
+
+            PDAnnotationText annotation = new PDAnnotationText();
+            annotation.setName("Comment");
+            annotation.setContents(notes.get(index));
+            annotation.setColor(new PDColor(
+                    new float[]{1.0f, 0.78f, 0.12f},
+                    PDDeviceRGB.INSTANCE
+            ));
+            annotation.setRectangle(new PDRectangle(
+                    Math.max(box.getLowerLeftX() + PDF_ANNOTATION_MARGIN, x),
+                    Math.max(box.getLowerLeftY() + PDF_ANNOTATION_MARGIN, y),
+                    PDF_ANNOTATION_SIZE,
+                    PDF_ANNOTATION_SIZE
+            ));
+            annotation.setPage(page);
+            page.getAnnotations().add(annotation);
+        }
+    }
+
+    private static void addVisiblePdfNotePages(
+            PDDocument document,
+            PDPage sourcePage,
+            int sourcePageNumber,
+            List<String> notes
+    ) throws IOException {
+        PDRectangle sourceBox = sourcePage.getCropBox();
+        boolean rotated = Math.floorMod(sourcePage.getRotation(), 180) != 0;
+        float pageWidth = rotated ? sourceBox.getHeight() : sourceBox.getWidth();
+        float pageHeight = rotated ? sourceBox.getWidth() : sourceBox.getHeight();
+        PDPage insertionPoint = sourcePage;
+        for (BufferedImage image : renderPdfNotePages(
+                sourcePageNumber,
+                notes,
+                pageWidth,
+                pageHeight
+        )) {
+            PDPage notePage = new PDPage(new PDRectangle(pageWidth, pageHeight));
+            document.getPages().insertAfter(notePage, insertionPoint);
+            PDImageXObject imageObject = LosslessFactory.createFromImage(
+                    document,
+                    image
+            );
+            try (PDPageContentStream content = new PDPageContentStream(
+                    document,
+                    notePage
+            )) {
+                content.drawImage(imageObject, 0, 0, pageWidth, pageHeight);
+            }
+            insertionPoint = notePage;
+        }
+    }
+
+    private static List<BufferedImage> renderPdfNotePages(
+            int sourcePageNumber,
+            List<String> notes,
+            float pageWidth,
+            float pageHeight
+    ) {
+        int pixelWidth = Math.max(
+                640,
+                Math.round(pageWidth * PDF_NOTE_RENDER_SCALE)
+        );
+        int pixelHeight = Math.max(
+                900,
+                Math.round(pageHeight * PDF_NOTE_RENDER_SCALE)
+        );
+        int contentWidth = pixelWidth - 2 * PDF_NOTE_PAGE_MARGIN - 72;
+        java.awt.Font titleFont = new java.awt.Font(
+                PDF_NOTE_FONT_FAMILY,
+                java.awt.Font.BOLD,
+                36
+        );
+        java.awt.Font subtitleFont = new java.awt.Font(
+                PDF_NOTE_FONT_FAMILY,
+                java.awt.Font.PLAIN,
+                22
+        );
+        java.awt.Font bodyFont = new java.awt.Font(
+                PDF_NOTE_FONT_FAMILY,
+                java.awt.Font.PLAIN,
+                24
+        );
+        java.awt.Font badgeFont = new java.awt.Font(
+                PDF_NOTE_FONT_FAMILY,
+                java.awt.Font.BOLD,
+                22
+        );
+        List<BufferedImage> pages = new ArrayList<>();
+        int noteIndex = 0;
+        int continuation = 1;
+        while (noteIndex < notes.size()) {
+            BufferedImage image = new BufferedImage(
+                    pixelWidth,
+                    pixelHeight,
+                    BufferedImage.TYPE_INT_RGB
+            );
+            Graphics2D graphics = image.createGraphics();
+            configurePdfNoteGraphics(graphics);
+            graphics.setColor(Color.WHITE);
+            graphics.fillRect(0, 0, pixelWidth, pixelHeight);
+
+            graphics.setColor(PDF_NOTE_HEADING);
+            graphics.setFont(titleFont);
+            graphics.drawString(
+                    "原文第 " + sourcePageNumber + " 页标注内容"
+                            + (continuation == 1 ? "" : "（续 " + continuation + "）"),
+                    PDF_NOTE_PAGE_MARGIN,
+                    PDF_NOTE_PAGE_MARGIN + 36
+            );
+            graphics.setColor(PDF_NOTE_MUTED);
+            graphics.setFont(subtitleFont);
+            graphics.drawString(
+                    "本页标注已直接展开显示；原文页上的黄色图标仍可点击查看。",
+                    PDF_NOTE_PAGE_MARGIN,
+                    PDF_NOTE_PAGE_MARGIN + 76
+            );
+            graphics.setColor(PDF_NOTE_ACCENT);
+            graphics.fillRoundRect(
+                    PDF_NOTE_PAGE_MARGIN,
+                    PDF_NOTE_PAGE_MARGIN + 94,
+                    pixelWidth - 2 * PDF_NOTE_PAGE_MARGIN,
+                    6,
+                    6,
+                    6
+            );
+
+            int y = PDF_NOTE_PAGE_MARGIN + 126;
+            int firstNoteIndex = noteIndex;
+            while (noteIndex < notes.size()) {
+                List<String> lines = wrapPdfNoteText(
+                        graphics,
+                        abbreviate(notes.get(noteIndex), PDF_NOTE_MAX_CHARACTERS),
+                        bodyFont,
+                        contentWidth
+                );
+                lines = visiblePdfNoteLines(lines);
+                int cardHeight = Math.max(
+                        86,
+                        34 + lines.size() * PDF_NOTE_LINE_HEIGHT
+                );
+                if (noteIndex > firstNoteIndex
+                        && y + cardHeight > pixelHeight - PDF_NOTE_PAGE_MARGIN - 54) {
+                    break;
+                }
+
+                graphics.setColor(PDF_NOTE_CARD);
+                graphics.fillRoundRect(
+                        PDF_NOTE_PAGE_MARGIN,
+                        y,
+                        pixelWidth - 2 * PDF_NOTE_PAGE_MARGIN,
+                        cardHeight,
+                        18,
+                        18
+                );
+                graphics.setColor(PDF_NOTE_BORDER);
+                graphics.drawRoundRect(
+                        PDF_NOTE_PAGE_MARGIN,
+                        y,
+                        pixelWidth - 2 * PDF_NOTE_PAGE_MARGIN,
+                        cardHeight,
+                        18,
+                        18
+                );
+                graphics.setColor(PDF_NOTE_ACCENT);
+                graphics.fillRoundRect(
+                        PDF_NOTE_PAGE_MARGIN + 18,
+                        y + 18,
+                        40,
+                        40,
+                        12,
+                        12
+                );
+                graphics.setColor(Color.WHITE);
+                graphics.setFont(badgeFont);
+                String badge = String.valueOf(noteIndex + 1);
+                FontMetrics badgeMetrics = graphics.getFontMetrics();
+                graphics.drawString(
+                        badge,
+                        PDF_NOTE_PAGE_MARGIN + 38
+                                - badgeMetrics.stringWidth(badge) / 2,
+                        y + 46
+                );
+
+                graphics.setColor(PDF_NOTE_HEADING);
+                graphics.setFont(bodyFont);
+                int textY = y + 34;
+                for (String line : lines) {
+                    graphics.drawString(
+                            line,
+                            PDF_NOTE_PAGE_MARGIN + 72,
+                            textY
+                    );
+                    textY += PDF_NOTE_LINE_HEIGHT;
+                }
+                y += cardHeight + PDF_NOTE_CARD_GAP;
+                noteIndex++;
+            }
+
+            graphics.setColor(PDF_NOTE_MUTED);
+            graphics.setFont(subtitleFont);
+            graphics.drawString(
+                    "显示标注 " + (firstNoteIndex + 1) + "-" + noteIndex
+                            + "，共 " + notes.size() + " 条",
+                    PDF_NOTE_PAGE_MARGIN,
+                    pixelHeight - PDF_NOTE_PAGE_MARGIN
+            );
+            graphics.dispose();
+            pages.add(image);
+            continuation++;
+        }
+        return pages;
+    }
+
+    private static void configurePdfNoteGraphics(Graphics2D graphics) {
+        graphics.setRenderingHint(
+                RenderingHints.KEY_ANTIALIASING,
+                RenderingHints.VALUE_ANTIALIAS_ON
+        );
+        graphics.setRenderingHint(
+                RenderingHints.KEY_TEXT_ANTIALIASING,
+                RenderingHints.VALUE_TEXT_ANTIALIAS_ON
+        );
+        graphics.setRenderingHint(
+                RenderingHints.KEY_RENDERING,
+                RenderingHints.VALUE_RENDER_QUALITY
+        );
+    }
+
+    private static List<String> wrapPdfNoteText(
+            Graphics2D graphics,
+            String text,
+            java.awt.Font font,
+            int maximumWidth
+    ) {
+        graphics.setFont(font);
+        FontMetrics metrics = graphics.getFontMetrics(font);
+        List<String> lines = new ArrayList<>();
+        for (String paragraph : text.replace("\r", "").split("\n", -1)) {
+            if (paragraph.isEmpty()) {
+                lines.add("");
+                continue;
+            }
+            StringBuilder line = new StringBuilder();
+            for (int offset = 0; offset < paragraph.length(); ) {
+                int codePoint = paragraph.codePointAt(offset);
+                String character = new String(Character.toChars(codePoint));
+                String candidate = line + character;
+                if (!line.isEmpty() && metrics.stringWidth(candidate) > maximumWidth) {
+                    lines.add(line.toString());
+                    line.setLength(0);
+                }
+                line.append(character);
+                offset += Character.charCount(codePoint);
+            }
+            if (!line.isEmpty()) lines.add(line.toString());
+        }
+        return lines.isEmpty() ? List.of("") : lines;
+    }
+
+    private static List<String> visiblePdfNoteLines(List<String> lines) {
+        if (lines.size() <= PDF_NOTE_MAX_VISIBLE_LINES) return lines;
+        List<String> result = new ArrayList<>(
+                lines.subList(0, PDF_NOTE_MAX_VISIBLE_LINES)
+        );
+        int last = result.size() - 1;
+        result.set(last, result.get(last) + "...");
+        return List.copyOf(result);
+    }
+
+    private static String pdfNoteFontFamily() {
+        Set<String> available = new LinkedHashSet<>(List.of(
+                GraphicsEnvironment.getLocalGraphicsEnvironment()
+                        .getAvailableFontFamilyNames(Locale.ROOT)
+        ));
+        for (String preferred : List.of(
+                "Microsoft YaHei",
+                "Noto Sans CJK SC",
+                "SimHei",
+                "DengXian",
+                "SansSerif"
+        )) {
+            if (available.contains(preferred)) return preferred;
+        }
+        return "SansSerif";
+    }
+
     private static Map<Integer, List<String>> paragraphNotes(
             DocumentComparisonExportRequest request
     ) {
         return locationNotes(request, "WORD_PARAGRAPH", "paragraphStart");
+    }
+
+    private static boolean hasAnnotationNotes(
+            DocumentComparisonExportRequest request,
+            String extension
+    ) {
+        return ".docx".equals(extension)
+                ? !paragraphNotes(request).isEmpty()
+                : !pageNotes(request).isEmpty();
     }
 
     private static Map<Integer, List<String>> pageNotes(
@@ -482,6 +839,14 @@ public final class PlatformDocumentComparisonExporter
         style.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
         style.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         style.setWrapText(true);
+        style.setVerticalAlignment(VerticalAlignment.TOP);
+        return style;
+    }
+
+    private static CellStyle bodyStyle(XSSFWorkbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        style.setWrapText(true);
+        style.setVerticalAlignment(VerticalAlignment.TOP);
         return style;
     }
 
@@ -497,9 +862,15 @@ public final class PlatformDocumentComparisonExporter
         }
     }
 
-    private static void writeCells(Row row, List<String> values) {
+    private static void writeCells(
+            Row row,
+            CellStyle style,
+            List<String> values
+    ) {
         for (int index = 0; index < values.size(); index++) {
-            row.createCell(index).setCellValue(cellText(values.get(index)));
+            Cell cell = row.createCell(index);
+            cell.setCellValue(cellText(values.get(index)));
+            cell.setCellStyle(style);
         }
     }
 
@@ -575,6 +946,15 @@ public final class PlatformDocumentComparisonExporter
             case "HIGH" -> "高风险";
             case "MEDIUM" -> "中风险";
             default -> "低风险";
+        };
+    }
+
+    private static String comparabilityLabel(String value) {
+        return switch (value) {
+            case "IDENTICAL" -> "完全相同";
+            case "PARTIALLY_COMPARABLE" -> "部分可比";
+            case "NOT_COMPARABLE" -> "不可比";
+            default -> "可比";
         };
     }
 

@@ -38,7 +38,7 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
     private static final long MAX_TOTAL_BYTES = 200L * 1024 * 1024;
     private static final int MAX_INSTRUCTIONS_CHARACTERS = 2_000;
     private static final int MAX_OUTPUT_TOKENS = 8_000;
-    private static final int PROMPT_VERSION = 1;
+    private static final int PROMPT_VERSION = 2;
     private static final String TEXT_MODEL_ALIAS = "text.document-compare";
     private static final String VISION_MODEL_ALIAS = "vision.document-compare";
     private static final Set<String> PARAMETER_NAMES = Set.of(
@@ -247,6 +247,7 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
         metadata.put("promptVersion", PROMPT_VERSION);
         metadata.put("mode", mode);
         metadata.put("detectedMode", response.detectedMode());
+        metadata.put("comparabilityStatus", response.comparability().status());
         metadata.put("hasBaseline", baselineId != null);
         metadata.put("inputDocumentCount", context.inputAssetIds().size());
         metadata.put("exportCount", outputs.size());
@@ -287,6 +288,7 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
         content.put("mode", mode);
         content.put("detectedMode", response.detectedMode());
         content.put("hasBaseline", baselineId != null);
+        content.put("comparability", comparabilityMap(response.comparability()));
         content.put("reportMarkdown", response.reportMarkdown());
         content.put(
                 "documents",
@@ -358,9 +360,21 @@ public final class DocumentCompareFeatureHandler implements StreamingFeatureHand
                 "comparisonAssetId", pair.comparisonAssetId().toString(),
                 "comparisonFileName", pair.comparisonFileName(),
                 "summary", pair.summary(),
+                "comparability", comparabilityMap(pair.comparability()),
                 "differences", pair.differences().stream()
                         .map(DocumentCompareFeatureHandler::differenceMap)
                         .toList()
+        );
+    }
+
+    private static Map<String, Object> comparabilityMap(
+            DocumentComparisonResponse.Comparability comparability
+    ) {
+        return Map.of(
+                "status", comparability.status(),
+                "reason", comparability.reason(),
+                "sharedTopics", comparability.sharedTopics(),
+                "citationMarkers", comparability.citationMarkers()
         );
     }
 

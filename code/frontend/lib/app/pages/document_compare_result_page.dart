@@ -36,6 +36,7 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
       _mapList(_content['pairwiseComparisons']);
   Map<String, dynamic> get _conclusion =>
       _map(_content['crossDocumentConclusion']);
+  Map<String, dynamic> get _comparability => _map(_content['comparability']);
   List<Map<String, dynamic>> get _risks => _mapList(_content['risks']);
   List<String> get _warnings => _stringList(_content['warnings']);
   Map<String, _ComparisonCitation> get _citations => {
@@ -68,6 +69,11 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
     final summary = _conclusion['summary']?.toString().trim() ?? '';
     final findings = _mapList(_conclusion['findings']);
     final exports = _availableExports();
+    final hasComparability = _comparability.isNotEmpty;
+    final overallStatus =
+        hasComparability ? _comparabilityStatus(_comparability) : '';
+    final terminalComparison =
+        hasComparability && _isTerminalComparability(overallStatus);
     return Scaffold(
       appBar: AppBar(
         title: const Text('多文档对比'),
@@ -140,6 +146,10 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
                 icon: Icons.info_outline_rounded,
               ),
             ],
+            if (hasComparability) ...[
+              const SizedBox(height: 14),
+              _buildComparabilityBanner(_comparability),
+            ],
             const SizedBox(height: 24),
             const _SectionTitle(
               icon: Icons.summarize_outlined,
@@ -161,34 +171,102 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
               const SizedBox(height: 8),
               ..._pairs.map(_buildPair),
             ],
-            const SizedBox(height: 30),
-            const _SectionTitle(
-              icon: Icons.hub_outlined,
-              title: '多文档综合结论',
-            ),
-            const SizedBox(height: 8),
-            if (findings.isEmpty)
-              const _EmptyResult(text: '没有识别到有充分证据支持的综合差异。')
-            else
-              ...findings.map(_buildFinding),
-            const SizedBox(height: 30),
-            const _SectionTitle(
-              icon: Icons.gpp_maybe_outlined,
-              title: '风险清单',
-            ),
-            const SizedBox(height: 8),
-            if (_risks.isEmpty)
-              const _EmptyResult(text: '没有识别到有充分证据支持的明确风险。')
-            else
-              ..._risks.map(_buildRisk),
+            if (!terminalComparison) ...[
+              const SizedBox(height: 30),
+              const _SectionTitle(
+                icon: Icons.hub_outlined,
+                title: '多文档综合结论',
+              ),
+              const SizedBox(height: 8),
+              if (findings.isEmpty)
+                const _EmptyResult(text: '没有识别到有充分证据支持的综合差异。')
+              else
+                ...findings.map(_buildFinding),
+              const SizedBox(height: 30),
+              const _SectionTitle(
+                icon: Icons.gpp_maybe_outlined,
+                title: '风险清单',
+              ),
+              const SizedBox(height: 8),
+              if (_risks.isEmpty)
+                const _EmptyResult(text: '没有识别到有充分证据支持的明确风险。')
+              else
+                ..._risks.map(_buildRisk),
+            ],
           ],
         ),
       ),
     );
   }
 
+  Widget _buildComparabilityBanner(Map<String, dynamic> comparability) {
+    final status = _comparabilityStatus(comparability);
+    final reason = comparability['reason']?.toString().trim() ?? '';
+    final sharedTopics = _stringList(comparability['sharedTopics']);
+    final color = _comparabilityColor(status);
+    final icon = switch (status) {
+      'IDENTICAL' => Icons.done_all_rounded,
+      'PARTIALLY_COMPARABLE' => Icons.call_split_rounded,
+      'NOT_COMPARABLE' => Icons.link_off_rounded,
+      _ => Icons.compare_arrows_rounded,
+    };
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        border: Border.all(color: color.withOpacity(0.35)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(width: 8),
+              Text(
+                _comparabilityLabel(status),
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          if (reason.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            SelectableText(
+              reason,
+              style: const TextStyle(height: 1.5),
+            ),
+          ],
+          if (sharedTopics.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '共同主题：${sharedTopics.join('、')}',
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 12,
+                height: 1.45,
+              ),
+            ),
+          ],
+          _citationChips(_stringList(comparability['citationMarkers'])),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPair(Map<String, dynamic> pair) {
     final differences = _mapList(pair['differences']);
+    final comparability = _map(pair['comparability']);
+    final hasComparability = comparability.isNotEmpty;
+    final status = hasComparability ? _comparabilityStatus(comparability) : '';
+    final reason = comparability['reason']?.toString().trim() ?? '';
+    final sharedTopics = _stringList(comparability['sharedTopics']);
+    final terminalComparison =
+        hasComparability && _isTerminalComparability(status);
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -205,15 +283,60 @@ class _DocumentCompareResultPageState extends State<DocumentCompareResultPage> {
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         subtitle: Text(
-          pair['summary']?.toString() ?? '',
+          hasComparability
+              ? '${_comparabilityLabel(status)} · ${pair['summary']?.toString() ?? ''}'
+              : pair['summary']?.toString() ?? '',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
         children: [
-          if (differences.isEmpty)
-            const _EmptyResult(text: '该文档没有识别到明确差异。')
-          else
-            ...differences.map(_buildDifference),
+          if (hasComparability)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _comparabilityColor(status).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _comparabilityLabel(status),
+                    style: TextStyle(
+                      color: _comparabilityColor(status),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (reason.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(reason, style: const TextStyle(height: 1.45)),
+                  ],
+                  if (sharedTopics.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '共同主题：${sharedTopics.join('、')}',
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                  _citationChips(
+                    _stringList(comparability['citationMarkers']),
+                  ),
+                ],
+              ),
+            ),
+          if (!terminalComparison) ...[
+            if (differences.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: _EmptyResult(text: '该文档没有识别到明确差异。'),
+              )
+            else
+              ...differences.map(_buildDifference),
+          ],
         ],
       ),
     );
@@ -683,6 +806,33 @@ String _severityLabel(String value) => switch (value) {
       'HIGH' => '高风险',
       'MEDIUM' => '中风险',
       _ => '低风险',
+    };
+
+String _comparabilityStatus(Map<String, dynamic> value) {
+  final status = value['status']?.toString().toUpperCase();
+  return switch (status) {
+    'IDENTICAL' => 'IDENTICAL',
+    'PARTIALLY_COMPARABLE' => 'PARTIALLY_COMPARABLE',
+    'NOT_COMPARABLE' => 'NOT_COMPARABLE',
+    _ => 'COMPARABLE',
+  };
+}
+
+bool _isTerminalComparability(String value) =>
+    value == 'IDENTICAL' || value == 'NOT_COMPARABLE';
+
+String _comparabilityLabel(String value) => switch (value) {
+      'IDENTICAL' => '完全相同',
+      'PARTIALLY_COMPARABLE' => '部分可比',
+      'NOT_COMPARABLE' => '不可比',
+      _ => '可比',
+    };
+
+Color _comparabilityColor(String value) => switch (value) {
+      'IDENTICAL' => const Color(0xFF29705A),
+      'PARTIALLY_COMPARABLE' => const Color(0xFF8A5A00),
+      'NOT_COMPARABLE' => AppColors.danger,
+      _ => AppColors.accent,
     };
 
 String _modeLabel(String? value) => switch (value) {

@@ -7,6 +7,7 @@ import java.util.UUID;
 public record DocumentComparisonResponse(
         String detectedMode,
         String summary,
+        Comparability comparability,
         String reportMarkdown,
         List<PairwiseComparison> pairwiseComparisons,
         CrossDocumentConclusion crossDocumentConclusion,
@@ -18,6 +19,9 @@ public record DocumentComparisonResponse(
     public DocumentComparisonResponse {
         detectedMode = detectedMode == null ? "general" : detectedMode;
         summary = summary == null ? "" : summary;
+        comparability = comparability == null
+                ? new Comparability("COMPARABLE", "", List.of(), List.of())
+                : comparability;
         reportMarkdown = reportMarkdown == null ? "" : reportMarkdown;
         pairwiseComparisons = pairwiseComparisons == null
                 ? List.of()
@@ -35,12 +39,34 @@ public record DocumentComparisonResponse(
             UUID comparisonAssetId,
             String comparisonFileName,
             String summary,
+            Comparability comparability,
             List<Difference> differences
     ) {
         public PairwiseComparison {
             comparisonFileName = comparisonFileName == null ? "" : comparisonFileName;
             summary = summary == null ? "" : summary;
+            comparability = comparability == null
+                    ? new Comparability("COMPARABLE", "", List.of(), List.of())
+                    : comparability;
             differences = differences == null ? List.of() : List.copyOf(differences);
+        }
+    }
+
+    public record Comparability(
+            String status,
+            String reason,
+            List<String> sharedTopics,
+            List<String> citationMarkers
+    ) {
+        public Comparability {
+            status = status == null ? "COMPARABLE" : status;
+            reason = reason == null ? "" : reason;
+            sharedTopics = sharedTopics == null
+                    ? List.of()
+                    : List.copyOf(sharedTopics);
+            citationMarkers = citationMarkers == null
+                    ? List.of()
+                    : List.copyOf(citationMarkers);
         }
     }
 

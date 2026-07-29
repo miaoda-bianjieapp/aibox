@@ -1257,11 +1257,13 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final selectedIds = (_assetsByField[field] ?? const <AssetView>[])
         .map((asset) => asset.id)
         .toSet();
+    final excludedIds = _excludedAssetIds(feature, field);
     final candidates = widget.data.assets
         .where((asset) =>
             asset.available &&
             asset.origin == 'USER_UPLOAD' &&
             !selectedIds.contains(asset.id) &&
+            !excludedIds.contains(asset.id) &&
             _assetMatchesOptions(
               asset,
               acceptedMimeTypes,
@@ -1305,6 +1307,25 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     });
     _refreshTaskTitleFromAssets(feature);
     await _deleteTemporaryDerivedAssets(staleMasks);
+  }
+
+  Set<String> _excludedAssetIds(
+    FeatureDetail feature,
+    String field,
+  ) {
+    final rawFields =
+        feature.fieldOptions(field)['excludeAssetsSelectedInFields'];
+    final fields = rawFields is List
+        ? rawFields.map((value) => value.toString())
+        : rawFields == null
+            ? const <String>[]
+            : <String>[rawFields.toString()];
+    return {
+      for (final excludedField in fields)
+        for (final asset
+            in _assetsByField[excludedField] ?? const <AssetView>[])
+          asset.id,
+    };
   }
 
   void _removeAsset(
