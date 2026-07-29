@@ -1,0 +1,66 @@
+{
+  "order": ["dataFile", "focus"],
+  "widgets": {
+    "dataFile": "file",
+    "focus": "textarea"
+  },
+  "fieldOptions": {
+    "dataFile": {
+      "acceptedMimeTypes": [
+        "application/vnd.ms-excel",
+        "application/msexcel",
+        "application/x-msexcel",
+        "application/x-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/zip",
+        "application/x-zip-compressed",
+        "text/csv",
+        "text/plain",
+        "application/csv",
+        "text/comma-separated-values",
+        "application/octet-stream"
+      ],
+      "allowedExtensions": [".xls", ".xlsx", ".csv"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 52428800,
+      "maxTotalSizeBytes": 52428800,
+      "allowAssetLibrarySelection": true,
+      "showPreview": false,
+      "uploadLabel": "选择数据文件"
+    }
+  },
+  "fieldHelp": {
+    "dataFile": {
+      "text": "读取全部可见工作表，公式仅使用缓存显示值。最多 20 个可见工作表、10 万行、单表 200 列和 50 万个非空单元格。CSV 仅支持 UTF-8 或 UTF-8 BOM；超限时直接失败，不会抽样或截断。"
+    }
+  },
+  "modelSelectionGroups": [
+    {
+      "key": "dataAnalysisModel",
+      "label": "数据分析模型",
+      "description": "本地程序负责统计和图表数据，模型负责形成有证据的结论。",
+      "capabilities": ["TEXT_GENERATION"],
+      "options": [
+        {
+          "value": "gpt-5.6-sol",
+          "displayName": "GPT-5.6 Sol",
+          "description": "默认模型，适合多工作表和复杂指标关系。",
+          "deployments": {
+            "TEXT_GENERATION": "codex2api-gpt-5-6-sol-text"
+          }
+        },
+        {
+          "value": "gpt-5.4-mini",
+          "displayName": "GPT-5.4 Mini",
+          "description": "响应更轻量，适合结构清晰的常规数据。",
+          "deployments": {
+            "TEXT_GENERATION": "codex2api-gpt-5-4-mini-text"
+          }
+        }
+      ]
+    }
+  ],
+  "feeNotice": "数据解析、统计和图表在本地完成；分析结论会调用所选付费文本模型。模型最多调用两次，第二次仅用于修复结构化结果。点击“开始分析”即表示确认本次调用。",
+  "submitLabel": "开始分析",
+  "revisionSubmitLabel": "重新分析"
+}
