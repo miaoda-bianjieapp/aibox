@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yuanzuo_ai/app/models/feature_models.dart';
+import 'package:yuanzuo_ai/app/network/native_file_picker.dart';
 import 'package:yuanzuo_ai/app/pages/asset_library_page.dart';
 import 'package:yuanzuo_ai/app/state/app_data_controller.dart';
 import 'package:yuanzuo_ai/app/theme/app_theme.dart';
@@ -52,7 +53,10 @@ void main() {
       find.byKey(const ValueKey<String>('asset-row-asset-a')),
     );
     await tester.pump();
-    expect(find.byTooltip('下载所选资产'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('asset-download-selected')),
+      findsNothing,
+    );
 
     await tester.tap(find.byTooltip('退出选择'));
     await tester.pump();
@@ -63,7 +67,16 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byTooltip('下载所选资产'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('asset-download-selected')),
+      findsOneWidget,
+    );
+    expect(find.text('下载（1）'), findsOneWidget);
+    expect(find.text('删除（1）'), findsNothing);
+    expect(
+      find.byKey(const ValueKey<String>('asset-selection-more')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('invert selects the complement instead of reselecting all',
@@ -89,15 +102,26 @@ void main() {
   testWidgets('keeps only failed downloads selected', (tester) async {
     final assets = [_asset('asset-a'), _asset('asset-b')];
     final failedSaveAttempted = Completer<void>();
+    final temporaryDirectory = await tester.runAsync(
+      () => Directory.systemTemp.createTemp('asset-library-test-'),
+    );
+    addTearDown(() async {
+      if (await temporaryDirectory!.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+    });
+    await tester.runAsync(() async {
+      for (final asset in assets) {
+        await File('${temporaryDirectory!.path}/${asset.id}')
+            .writeAsBytes(List<int>.filled(asset.sizeBytes, 0));
+      }
+    });
 
     await tester.pumpWidget(_app(_page(
       assets,
       directoryPicker: () async => 'content://download-folder',
       temporaryDownloader: (asset, isCancelled) async {
-        return File(
-          '${Directory.systemTemp.path}/'
-          'asset-download-test-${asset.id}/${asset.name}',
-        );
+        return File('${temporaryDirectory!.path}/${asset.id}');
       },
       directorySaver: ({
         required directoryUri,
@@ -108,9 +132,15 @@ void main() {
           failedSaveAttempted.complete();
           throw const FileSystemException('disk error');
         }
-        return asset.name;
+        return SavedLocalFile(
+          name: asset.name,
+          uri: 'content://download-folder/${asset.id}',
+          sizeBytes: asset.sizeBytes,
+        );
       },
+      fileSaver: ({required source, required asset}) async => null,
       temporaryFileCleaner: (_) async {},
+      temporaryFileSizeReader: (_) async => assetDownloadTestFileSize,
     )));
     await tester.pumpAndSettle();
     await tester.tap(find.text('我的资产'));
@@ -124,7 +154,9 @@ void main() {
     );
     await tester.pump();
     expect(find.text('已选择 2 项'), findsOneWidget);
-    await tester.tap(find.byTooltip('下载所选资产'));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('asset-download-selected')),
+    );
     await tester.runAsync(() async {
       await failedSaveAttempted.future.timeout(const Duration(seconds: 2));
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -135,7 +167,70 @@ void main() {
     expect(_selectionIcon(tester, 'asset-a'),
         Icons.radio_button_unchecked_rounded);
     expect(_selectionIcon(tester, 'asset-b'), Icons.check_circle_rounded);
-    expect(find.text('已保存 1 个，1 个失败，失败项已保留'), findsOneWidget);
+    expect(find.text('下载未全部完成'), findsOneWidget);
+    expect(find.text('已取消系统保存'), findsOneWidget);
+  });
+
+  testWidgets('falls back to single-file save when directory writing fails',
+      (tester) async {
+    final asset = _asset('asset-a');
+    final fallbackCompleted = Completer<void>();
+    final temporaryDirectory = await tester.runAsync(
+      () => Directory.systemTemp.createTemp('asset-fallback-test-'),
+    );
+    addTearDown(() async {
+      if (await temporaryDirectory!.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+    });
+    final temporaryFile = File('${temporaryDirectory!.path}/${asset.id}');
+    await tester.runAsync(
+      () => temporaryFile.writeAsBytes(List<int>.filled(asset.sizeBytes, 0)),
+    );
+
+    await tester.pumpWidget(_app(_page(
+      [asset],
+      directoryPicker: () async => 'content://download-folder',
+      temporaryDownloader: (_, __) async => temporaryFile,
+      directorySaver: ({
+        required directoryUri,
+        required source,
+        required asset,
+      }) async {
+        throw const FileSystemException('directory provider rejected write');
+      },
+      fileSaver: ({required source, required asset}) async {
+        fallbackCompleted.complete();
+        return SavedLocalFile(
+          name: asset.name,
+          uri: 'content://picked/${asset.id}',
+          sizeBytes: asset.sizeBytes,
+        );
+      },
+      temporaryFileCleaner: (_) async {},
+      temporaryFileSizeReader: (_) async => asset.sizeBytes,
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('我的资产'));
+    await tester.pumpAndSettle();
+    await tester.longPress(
+      find.byKey(const ValueKey<String>('asset-row-asset-a')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('asset-download-selected')),
+    );
+    await tester.runAsync(() async {
+      await fallbackCompleted.future.timeout(const Duration(seconds: 2));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pumpAndSettle();
+
+    expect(find.text('附件库'), findsOneWidget);
+    expect(
+      find.text('已保存 1 个资产，设备目录写入不兼容，已改用系统保存'),
+      findsOneWidget,
+    );
   });
 }
 
@@ -144,7 +239,9 @@ Widget _page(
   AssetDirectoryPicker? directoryPicker,
   AssetTemporaryDownloader? temporaryDownloader,
   AssetDirectorySaver? directorySaver,
+  AssetFileSaver? fileSaver,
   AssetTemporaryFileCleaner? temporaryFileCleaner,
+  AssetTemporaryFileSizeReader? temporaryFileSizeReader,
 }) {
   return AssetLibraryPage(
     data: AppDataController(),
@@ -159,9 +256,13 @@ Widget _page(
     directoryPicker: directoryPicker,
     temporaryDownloader: temporaryDownloader,
     directorySaver: directorySaver,
+    fileSaver: fileSaver,
     temporaryFileCleaner: temporaryFileCleaner,
+    temporaryFileSizeReader: temporaryFileSizeReader,
   );
 }
+
+const int assetDownloadTestFileSize = 1024;
 
 Widget _app(Widget child) {
   return MaterialApp(

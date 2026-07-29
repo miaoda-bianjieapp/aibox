@@ -14,7 +14,16 @@ void main() {
       capturedCall = call;
       return switch (call.method) {
         'pickDirectory' => 'content://downloads',
-        'saveFileToDirectory' => 'report(1).pdf',
+        'saveFileToDirectory' => {
+            'name': 'report(1).pdf',
+            'uri': 'content://downloads/report(1).pdf',
+            'sizeBytes': 2048,
+          },
+        'saveFileFromPath' => {
+            'name': 'report.pdf',
+            'uri': 'content://picked/report.pdf',
+            'sizeBytes': 2048,
+          },
         'cancelSaveFileToDirectory' => null,
         _ => null,
       };
@@ -34,14 +43,16 @@ void main() {
   });
 
   test('saves a temporary file path without transferring file bytes', () async {
-    final savedName = await NativeFilePicker.saveFileToDirectory(
+    final saved = await NativeFilePicker.saveFileToDirectory(
       directoryUri: 'content://downloads',
       filePath: '/cache/report.pdf',
       fileName: 'report.pdf',
       mediaType: 'application/pdf',
     );
 
-    expect(savedName, 'report(1).pdf');
+    expect(saved.name, 'report(1).pdf');
+    expect(saved.uri, 'content://downloads/report(1).pdf');
+    expect(saved.sizeBytes, 2048);
     expect(capturedCall?.method, 'saveFileToDirectory');
     expect(capturedCall?.arguments, {
       'directoryUri': 'content://downloads',
@@ -49,6 +60,18 @@ void main() {
       'fileName': 'report.pdf',
       'mediaType': 'application/pdf',
     });
+  });
+
+  test('falls back to the system single-file destination picker', () async {
+    final saved = await NativeFilePicker.saveFileFromPath(
+      filePath: '/cache/report.pdf',
+      fileName: 'report.pdf',
+      mediaType: 'application/pdf',
+    );
+
+    expect(saved?.name, 'report.pdf');
+    expect(saved?.sizeBytes, 2048);
+    expect(capturedCall?.method, 'saveFileFromPath');
   });
 
   test('forwards cancellation to the native directory writer', () async {

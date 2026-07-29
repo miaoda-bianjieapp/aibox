@@ -36,6 +36,30 @@ class PickedLocalFile {
   }
 }
 
+class SavedLocalFile {
+  const SavedLocalFile({
+    required this.name,
+    required this.uri,
+    required this.sizeBytes,
+  });
+
+  factory SavedLocalFile.fromJson(Map<String, dynamic> json) {
+    final name = json['name']?.toString() ?? '';
+    final uri = json['uri']?.toString() ?? '';
+    final sizeBytes = json['sizeBytes'] is num
+        ? (json['sizeBytes'] as num).toInt()
+        : int.tryParse('${json['sizeBytes']}') ?? -1;
+    if (name.isEmpty || uri.isEmpty || sizeBytes < 0) {
+      throw const FormatException('文件保存结果无效');
+    }
+    return SavedLocalFile(name: name, uri: uri, sizeBytes: sizeBytes);
+  }
+
+  final String name;
+  final String uri;
+  final int sizeBytes;
+}
+
 abstract final class NativeFilePicker {
   static const _channel = MethodChannel('com.aibox.yuanzuo_ai/file_picker');
 
@@ -104,13 +128,13 @@ abstract final class NativeFilePicker {
     return _channel.invokeMethod<String>('pickDirectory');
   }
 
-  static Future<String> saveFileToDirectory({
+  static Future<SavedLocalFile> saveFileToDirectory({
     required String directoryUri,
     required String filePath,
     required String fileName,
     required String mediaType,
   }) async {
-    final result = await _channel.invokeMethod<String>(
+    final result = await _channel.invokeMapMethod<String, dynamic>(
       'saveFileToDirectory',
       {
         'directoryUri': directoryUri,
@@ -119,10 +143,26 @@ abstract final class NativeFilePicker {
         'mediaType': mediaType,
       },
     );
-    if (result == null || result.isEmpty) {
+    if (result == null) {
       throw const FormatException('文件保存结果无效');
     }
-    return result;
+    return SavedLocalFile.fromJson(result);
+  }
+
+  static Future<SavedLocalFile?> saveFileFromPath({
+    required String filePath,
+    required String fileName,
+    required String mediaType,
+  }) async {
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'saveFileFromPath',
+      {
+        'filePath': filePath,
+        'fileName': fileName,
+        'mediaType': mediaType,
+      },
+    );
+    return result == null ? null : SavedLocalFile.fromJson(result);
   }
 
   static Future<void> cancelDirectorySave() {

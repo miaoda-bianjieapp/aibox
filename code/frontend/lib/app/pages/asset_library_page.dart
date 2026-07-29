@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/feature_models.dart';
 import '../network/api_exception.dart';
@@ -53,13 +54,19 @@ typedef AssetTemporaryDownloader = Future<File> Function(
 
 typedef AssetDirectoryPicker = Future<String?> Function();
 
-typedef AssetDirectorySaver = Future<String> Function({
+typedef AssetDirectorySaver = Future<SavedLocalFile> Function({
   required String directoryUri,
   required File source,
   required AssetView asset,
 });
 
+typedef AssetFileSaver = Future<SavedLocalFile?> Function({
+  required File source,
+  required AssetView asset,
+});
+
 typedef AssetTemporaryFileCleaner = Future<void> Function(File file);
+typedef AssetTemporaryFileSizeReader = Future<int> Function(File file);
 
 class AssetLibraryPage extends StatefulWidget {
   const AssetLibraryPage({
@@ -69,7 +76,9 @@ class AssetLibraryPage extends StatefulWidget {
     this.temporaryDownloader,
     this.directoryPicker,
     this.directorySaver,
+    this.fileSaver,
     this.temporaryFileCleaner,
+    this.temporaryFileSizeReader,
   });
 
   final AppDataController data;
@@ -77,7 +86,9 @@ class AssetLibraryPage extends StatefulWidget {
   final AssetTemporaryDownloader? temporaryDownloader;
   final AssetDirectoryPicker? directoryPicker;
   final AssetDirectorySaver? directorySaver;
+  final AssetFileSaver? fileSaver;
   final AssetTemporaryFileCleaner? temporaryFileCleaner;
+  final AssetTemporaryFileSizeReader? temporaryFileSizeReader;
 
   @override
   State<AssetLibraryPage> createState() => _AssetLibraryPageState();
@@ -162,12 +173,34 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
-            if (_selectionMode && _libraryType == 'MODEL_ASSET')
-              IconButton(
-                key: const ValueKey<String>('asset-download-selected'),
-                onPressed: _selectionBusy ? null : _downloadSelected,
-                tooltip: '下载所选资产',
-                icon: const Icon(Icons.download_outlined),
+            if (_selectionMode &&
+                _libraryType == 'MODEL_ASSET' &&
+                !_downloading)
+              PopupMenuButton<String>(
+                key: const ValueKey<String>('asset-selection-more'),
+                tooltip: '更多操作',
+                onSelected: (value) {
+                  if (value == 'delete') unawaited(_deleteSelected());
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem<String>(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_outline_rounded,
+                          color: AppColors.danger,
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          '永久删除所选资产',
+                          style: TextStyle(color: AppColors.danger),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                icon: const Icon(Icons.more_vert_rounded),
               ),
             if (!_selectionMode)
               IconButton(
@@ -548,6 +581,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
   }
 
   Widget _buildSelectionActions() {
+    final modelAssets = _libraryType == 'MODEL_ASSET';
     return SizedBox(
       height: 48,
       child: Row(
@@ -572,18 +606,31 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
           const SizedBox(width: 8),
           Expanded(
             flex: 2,
-            child: FilledButton.icon(
-              onPressed: _selectionBusy ? null : _deleteSelected,
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                backgroundColor: AppColors.danger,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              icon: const Icon(Icons.delete_outline_rounded, size: 19),
-              label: Text('删除（${_selectedAssets.length}）'),
-            ),
+            child: modelAssets
+                ? FilledButton.icon(
+                    key: const ValueKey<String>('asset-download-selected'),
+                    onPressed: _selectionBusy ? null : _downloadSelected,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.download_outlined, size: 19),
+                    label: Text('下载（${_selectedAssets.length}）'),
+                  )
+                : FilledButton.icon(
+                    onPressed: _selectionBusy ? null : _deleteSelected,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      backgroundColor: AppColors.danger,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 19),
+                    label: Text('删除（${_selectedAssets.length}）'),
+                  ),
           ),
         ],
       ),
@@ -690,8 +737,10 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
     });
 
     final successfulIds = <String>{};
-    var failedCount = 0;
+    final failures = <_AssetDownloadFailure>[];
     var cancelled = false;
+    var useSingleFileFallback = false;
+    var fallbackUsed = false;
     for (final asset in selected) {
       if (_downloadCancellationRequested) {
         cancelled = true;
@@ -700,19 +749,56 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
       File? temporaryFile;
       try {
         temporaryFile = await _downloadAssetToTemporaryFile(asset);
+        final downloadedBytes = await _temporaryFileSize(temporaryFile);
+        if (downloadedBytes != asset.sizeBytes) {
+          throw const ApiException('下载内容不完整，请重试');
+        }
         if (_downloadCancellationRequested) {
           throw const AssetDownloadCancelledException();
         }
-        await _saveAssetToDirectory(
-          directoryUri: directoryUri,
-          source: temporaryFile,
-          asset: asset,
-        );
+        SavedLocalFile? saved;
+        if (!useSingleFileFallback) {
+          try {
+            saved = await _saveAssetToDirectory(
+              directoryUri: directoryUri,
+              source: temporaryFile,
+              asset: asset,
+            );
+          } catch (exception) {
+            if (_downloadCancellationRequested) {
+              throw const AssetDownloadCancelledException();
+            }
+            useSingleFileFallback = true;
+            fallbackUsed = true;
+            debugPrint(
+              'Asset directory save failed assetId=${asset.id} '
+              'code=${_downloadErrorCode(exception)}',
+            );
+          }
+        }
+        if (useSingleFileFallback && saved == null) {
+          saved = await _saveAssetWithPicker(
+            source: temporaryFile,
+            asset: asset,
+          );
+        }
+        if (saved == null) {
+          throw const ApiException('已取消系统保存');
+        }
+        if (saved.sizeBytes != downloadedBytes) {
+          throw const ApiException('保存后的文件大小不一致，请重试');
+        }
         successfulIds.add(asset.id);
       } on AssetDownloadCancelledException {
         cancelled = true;
-      } catch (_) {
-        failedCount++;
+      } catch (exception) {
+        debugPrint(
+          'Asset download failed assetId=${asset.id} '
+          'code=${_downloadErrorCode(exception)}',
+        );
+        failures.add(
+          _AssetDownloadFailure(asset, _downloadErrorMessage(exception)),
+        );
       } finally {
         await _cleanupTemporaryFile(temporaryFile);
       }
@@ -743,10 +829,15 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
         '已保存 ${successfulIds.length} 个，下载已取消，'
         '$retainedCount 个保留待重试',
       );
-    } else if (failedCount > 0) {
+    } else if (failures.isNotEmpty) {
+      await _showDownloadFailures(
+        successfulCount: successfulIds.length,
+        failures: failures,
+      );
+    } else if (fallbackUsed) {
       _showMessage(
-        '已保存 ${successfulIds.length} 个，'
-        '$failedCount 个失败，失败项已保留',
+        '已保存 ${successfulIds.length} 个资产，'
+        '设备目录写入不兼容，已改用系统保存',
       );
     } else {
       _showMessage('已保存 ${successfulIds.length} 个资产');
@@ -765,7 +856,7 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
     );
   }
 
-  Future<String> _saveAssetToDirectory({
+  Future<SavedLocalFile> _saveAssetToDirectory({
     required String directoryUri,
     required File source,
     required AssetView asset,
@@ -784,6 +875,103 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
       fileName: asset.name,
       mediaType: asset.mediaType,
     );
+  }
+
+  Future<SavedLocalFile?> _saveAssetWithPicker({
+    required File source,
+    required AssetView asset,
+  }) {
+    final saver = widget.fileSaver;
+    if (saver != null) {
+      return saver(source: source, asset: asset);
+    }
+    return NativeFilePicker.saveFileFromPath(
+      filePath: source.path,
+      fileName: asset.name,
+      mediaType: asset.mediaType,
+    );
+  }
+
+  Future<void> _showDownloadFailures({
+    required int successfulCount,
+    required List<_AssetDownloadFailure> failures,
+  }) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('下载未全部完成'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 360),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '已保存 $successfulCount 个，${failures.length} 个失败。'
+                  '失败项仍保持选中，可重新下载。',
+                ),
+                const SizedBox(height: 14),
+                ...failures.map(
+                  (failure) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          failure.asset.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          failure.message,
+                          style: const TextStyle(
+                            color: AppColors.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _downloadErrorCode(Object exception) {
+    if (exception is PlatformException) return exception.code;
+    if (exception is ApiException) return 'API_ERROR';
+    if (exception is FileSystemException) return 'FILE_SYSTEM_ERROR';
+    return exception.runtimeType.toString();
+  }
+
+  static String _downloadErrorMessage(Object exception) {
+    if (exception is PlatformException) {
+      return switch (exception.code) {
+        'DIRECTORY_PERMISSION_DENIED' => '所选文件夹没有写入权限，请选择其他位置',
+        'DESTINATION_UNAVAILABLE' => '目标位置不可用，请选择其他位置',
+        'SOURCE_FILE_INVALID' => '下载缓存文件无效，请重新下载',
+        'FILE_SAVE_CANCELLED' => '文件保存已取消',
+        _ => exception.message ?? '文件写入失败，请选择其他位置',
+      };
+    }
+    return exception
+        .toString()
+        .replaceFirst('ApiException: ', '')
+        .replaceFirst('FileSystemException: ', '');
   }
 
   void _cancelDownload() {
@@ -811,6 +999,11 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
     }
   }
 
+  Future<int> _temporaryFileSize(File file) {
+    final reader = widget.temporaryFileSizeReader;
+    return reader == null ? file.length() : reader(file);
+  }
+
   void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -820,31 +1013,15 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
 
   Future<void> _deleteSelected() async {
     try {
+      final selected = List<AssetView>.of(_selectedAssets.values);
       final impact =
           await widget.data.api.getAssetDeleteImpact(_selectedAssets.keys);
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Text('删除 ${impact.assetCount} 个文件？'),
-          content: Text(
-            '将释放约 ${_formatBytes(impact.totalBytes)} 存储空间。'
-            '${impact.affectedTaskCount > 0 ? '\n这些文件关联 ${impact.affectedTaskCount} 个任务、${impact.affectedRunCount} 次执行。' : ''}'
-            '\n\n删除后无法恢复，任务历史仍会保留文件名、大小和原提示词，并显示“原文件已删除”。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.danger,
-              ),
-              child: const Text('确认删除'),
-            ),
-          ],
+        builder: (context) => _AssetDeleteConfirmationDialog(
+          selected: selected,
+          impact: impact,
         ),
       );
       if (confirmed != true) return;
@@ -859,6 +1036,108 @@ class _AssetLibraryPageState extends State<AssetLibraryPage> {
         );
       }
     }
+  }
+}
+
+class _AssetDownloadFailure {
+  const _AssetDownloadFailure(this.asset, this.message);
+
+  final AssetView asset;
+  final String message;
+}
+
+class _AssetDeleteConfirmationDialog extends StatefulWidget {
+  const _AssetDeleteConfirmationDialog({
+    required this.selected,
+    required this.impact,
+  });
+
+  final List<AssetView> selected;
+  final AssetDeleteImpact impact;
+
+  @override
+  State<_AssetDeleteConfirmationDialog> createState() =>
+      _AssetDeleteConfirmationDialogState();
+}
+
+class _AssetDeleteConfirmationDialogState
+    extends State<_AssetDeleteConfirmationDialog> {
+  Timer? _timer;
+  int _remainingSeconds = 3;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      if (_remainingSeconds <= 1) {
+        timer.cancel();
+        setState(() => _remainingSeconds = 0);
+      } else {
+        setState(() => _remainingSeconds--);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final names = widget.selected.take(3).map((asset) => asset.name).toList();
+    final remainingNames = widget.selected.length - names.length;
+    return AlertDialog(
+      title: Text('永久删除 ${widget.impact.assetCount} 个资产？'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '删除后文件内容无法恢复，任务历史只保留文件名和任务信息。',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            ...names.map(
+              (name) => Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Text(
+                  '• $name',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            if (remainingNames > 0) Text('另有 $remainingNames 个资产'),
+            const SizedBox(height: 10),
+            Text('将释放约 ${_formatBytes(widget.impact.totalBytes)}。'),
+            if (widget.impact.affectedTaskCount > 0)
+              Text(
+                '关联 ${widget.impact.affectedTaskCount} 个任务、'
+                '${widget.impact.affectedRunCount} 次执行。',
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _remainingSeconds == 0
+              ? () => Navigator.of(context).pop(true)
+              : null,
+          style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+          child: Text(
+            _remainingSeconds == 0 ? '永久删除' : '永久删除（$_remainingSeconds）',
+          ),
+        ),
+      ],
+    );
   }
 }
 
