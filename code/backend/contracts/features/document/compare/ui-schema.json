@@ -32,6 +32,8 @@
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/csv",
+        "text/comma-separated-values",
         "application/json",
         "application/zip",
         "application/octet-stream"
@@ -59,6 +61,8 @@
         "text/plain",
         "text/markdown",
         "text/csv",
+        "application/csv",
+        "text/comma-separated-values",
         "application/json",
         "application/zip",
         "application/octet-stream"

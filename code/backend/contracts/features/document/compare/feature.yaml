@@ -1,6 +1,6 @@
 featureCode: document.compare
 workspaceCode: document
-version: 4
+version: 5
 displayName: 多文档对比
 description: 先生成可追溯的多文档文本对比结果，Excel 报告和基准标注文档在用户点击导出时按需生成。
 status: INTERNAL
