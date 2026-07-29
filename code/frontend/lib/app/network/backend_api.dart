@@ -274,6 +274,18 @@ class BackendApi {
     await _request('DELETE', '/assets/$assetId');
   }
 
+  Future<AssetView> exportArtifact(
+    String artifactId,
+    String exportType,
+  ) async {
+    return AssetView.fromJson(_asMap(await _request(
+      'POST',
+      '/artifacts/$artifactId/exports',
+      body: {'type': exportType},
+      responseTimeout: const Duration(minutes: 2),
+    )));
+  }
+
   String assetContentUrl(String assetId) =>
       '${ApiConfig.baseUrl}/assets/$assetId/content';
 

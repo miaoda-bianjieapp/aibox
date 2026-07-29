@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "format",
+    "summaryMarkdown",
+    "conclusions",
+    "anomalies",
+    "charts",
+    "chartAssetIds",
+    "reportAssetId",
+    "reportName",
+    "warnings",
+    "partial"
+  ],
+  "properties": {
+    "format": {
+      "const": "data_analysis"
+    },
+    "summaryMarkdown": {
+      "type": "string",
+      "minLength": 1
+    },
+    "conclusions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["title", "detail", "evidence"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "detail": {"type": "string", "minLength": 1},
+          "evidence": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "anomalies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "severity",
+          "sheetName",
+          "columnName",
+          "description",
+          "evidence",
+          "interpretation",
+          "suggestion"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"type": "string"},
+          "severity": {"type": "string", "enum": ["INFO", "WARNING", "CRITICAL"]},
+          "sheetName": {"type": "string"},
+          "columnName": {"type": "string"},
+          "rowNumber": {"type": "integer", "minimum": 1},
+          "description": {"type": "string"},
+          "evidence": {"type": "string"},
+          "interpretation": {"type": "string"},
+          "suggestion": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "charts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "type",
+          "sheetName",
+          "categoryLabel",
+          "valueLabel",
+          "aggregation",
+          "assetIndex"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "type": {"type": "string", "enum": ["BAR", "LINE"]},
+          "sheetName": {"type": "string"},
+          "categoryLabel": {"type": "string"},
+          "valueLabel": {"type": "string"},
+          "aggregation": {"type": "string"},
+          "assetIndex": {"type": "integer", "minimum": 0, "maximum": 3}
+        },
+        "additionalProperties": false
+      }
+    },
+    "chartAssetIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": {"type": "string", "format": "uuid"}
+    },
+    "reportAssetId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reportName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "partial": {
+      "const": false
+    }
+  },
+  "additionalProperties": false
+}

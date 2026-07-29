@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["dataFile"],
+  "properties": {
+    "dataFile": {
+      "type": "string",
+      "format": "uuid",
+      "title": "数据文件",
+      "description": "每次分析一个 XLS、XLSX 或 UTF-8 CSV 文件。"
+    },
+    "focus": {
+      "type": "string",
+      "maxLength": 500,
+      "title": "关注重点",
+      "description": "可选。说明需要重点关注的指标、异常或业务问题。"
+    }
+  },
+  "additionalProperties": false
+}
