@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["document", "targetLanguage"],
+  "properties": {
+    "document": {
+      "type": "string",
+      "format": "uuid",
+      "title": "待翻译文档",
+      "description": "每次处理 1 个 DOCX、DOC 或 PDF 文档，系统自动识别原文语言。"
+    },
+    "targetLanguage": {
+      "type": "string",
+      "enum": ["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru"],
+      "default": "en",
+      "title": "目标语言",
+      "description": "选择译文使用的语言。"
+    }
+  },
+  "additionalProperties": false
+}
