@@ -12,6 +12,13 @@ import 'native_file_picker.dart';
 import 'sse_event_parser.dart';
 import 'task_execution_result.dart';
 
+class AssetDownloadCancelledException implements Exception {
+  const AssetDownloadCancelledException();
+
+  @override
+  String toString() => 'Asset download cancelled';
+}
+
 class BackendApi {
   BackendApi._();
 
@@ -310,20 +317,46 @@ class BackendApi {
   Future<File> downloadAssetToTemporaryFile(
     String assetId, {
     required String fileName,
-  }) {
-    return downloadUrlToTemporaryFile(
+    bool Function()? isCancelled,
+  }) async {
+    return _downloadUrlToTemporaryFile(
       assetContentUrl(assetId),
       fileName: fileName,
+      directoryPrefix: 'yuanzuo-download-',
+      inactivityTimeout: const Duration(minutes: 2),
+      fileSystemError: '无法创建下载缓存',
+      isCancelled: isCancelled,
     );
   }
 
   Future<File> downloadUrlToTemporaryFile(
     String contentUrl, {
     required String fileName,
+  }) {
+    return _downloadUrlToTemporaryFile(
+      contentUrl,
+      fileName: fileName,
+      directoryPrefix: 'yuanzuo-preview-',
+      inactivityTimeout: const Duration(seconds: 60),
+      fileSystemError: '无法创建文件预览缓存',
+    );
+  }
+
+  Future<File> _downloadUrlToTemporaryFile(
+    String contentUrl, {
+    required String fileName,
+    required String directoryPrefix,
+    required Duration inactivityTimeout,
+    required String fileSystemError,
+    bool Function()? isCancelled,
   }) async {
     Directory? directory;
+    IOSink? sink;
     try {
-      directory = await Directory.systemTemp.createTemp('yuanzuo-preview-');
+      if (isCancelled?.call() == true) {
+        throw const AssetDownloadCancelledException();
+      }
+      directory = await Directory.systemTemp.createTemp(directoryPrefix);
       final file = File(
         '${directory.path}${Platform.pathSeparator}'
         '${_temporaryFileName(fileName)}',
@@ -337,20 +370,40 @@ class BackendApi {
         await response.drain<void>();
         throw ApiException('文件下载失败 (${response.statusCode})');
       }
-      await response.pipe(file.openWrite());
+      sink = file.openWrite();
+      await for (final chunk in response.timeout(inactivityTimeout)) {
+        if (isCancelled?.call() == true) {
+          throw const AssetDownloadCancelledException();
+        }
+        sink.add(chunk);
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      if (isCancelled?.call() == true) {
+        throw const AssetDownloadCancelledException();
+      }
       return file;
+    } on AssetDownloadCancelledException {
+      await sink?.close();
+      await _deleteTemporaryDirectory(directory);
+      rethrow;
     } on ApiException {
+      await sink?.close();
       await _deleteTemporaryDirectory(directory);
       rethrow;
     } on SocketException {
+      await sink?.close();
       await _deleteTemporaryDirectory(directory);
       throw const ApiException('无法连接电脑后端，请确认电脑和手机仍连接同一个 Wi-Fi');
     } on TimeoutException {
+      await sink?.close();
       await _deleteTemporaryDirectory(directory);
       throw const ApiException('文件下载超时，请稍后重试');
     } on FileSystemException {
+      await sink?.close();
       await _deleteTemporaryDirectory(directory);
-      throw const ApiException('无法创建文件预览缓存');
+      throw ApiException(fileSystemError);
     }
   }
 

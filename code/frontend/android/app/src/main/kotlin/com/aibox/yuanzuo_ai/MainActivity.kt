@@ -2,9 +2,15 @@ package com.aibox.yuanzuo_ai
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.util.Log
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import java.io.InterruptedIOException
+import java.util.Locale
 import java.util.UUID
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,18 +20,29 @@ class MainActivity : FlutterActivity() {
     private val channelName = "com.aibox.yuanzuo_ai/file_picker"
     private val pickRequestCode = 9104
     private val saveRequestCode = 9105
+    private val directoryRequestCode = 9106
+    private val pathSaveRequestCode = 9107
     private var pendingResult: MethodChannel.Result? = null
     private var pendingSaveBytes: ByteArray? = null
+    private var pendingSaveFilePath: String? = null
+    private var pendingSaveFileName: String? = null
     private var pendingMultiple = false
     private var pendingMaxFiles = 1
+    @Volatile
+    private var directorySaveCancellationRequested = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         cleanupPickedFileCache()
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
+                if (call.method == "cancelSaveFileToDirectory") {
+                    directorySaveCancellationRequested = true
+                    result.success(null)
+                    return@setMethodCallHandler
+                }
                 if (pendingResult != null) {
-                    result.error("PICK_IN_PROGRESS", "A file picker is already open", null)
+                    result.error("FILE_OPERATION_IN_PROGRESS", "A file operation is already in progress", null)
                     return@setMethodCallHandler
                 }
                 if (call.method == "saveFile") {
@@ -44,6 +61,90 @@ class MainActivity : FlutterActivity() {
                         putExtra(Intent.EXTRA_TITLE, fileName)
                     }
                     startActivityForResult(intent, saveRequestCode)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "saveFileToDirectory") {
+                    val directoryUri = call.argument<String>("directoryUri")
+                    val filePath = call.argument<String>("filePath")
+                    if (directoryUri.isNullOrBlank() || filePath.isNullOrBlank()) {
+                        result.error("SAVE_ARGUMENT_INVALID", "Directory and source file are required", null)
+                        return@setMethodCallHandler
+                    }
+                    val fileName = call.argument<String>("fileName") ?: "download"
+                    val mediaType = call.argument<String>("mediaType") ?: "application/octet-stream"
+                    directorySaveCancellationRequested = false
+                    pendingResult = result
+                    Thread {
+                        try {
+                            val source = requireCachedSourceFile(filePath)
+                            val saved = saveFileToDirectory(
+                                Uri.parse(directoryUri),
+                                source,
+                                fileName,
+                                mediaType,
+                            )
+                            runOnUiThread {
+                                directorySaveCancellationRequested = false
+                                pendingResult = null
+                                result.success(saved)
+                            }
+                        } catch (exception: Exception) {
+                            val errorCode = fileSaveErrorCode(exception)
+                            Log.e(
+                                fileLogTag,
+                                "Directory save failed code=$errorCode type=${exception.javaClass.simpleName}"
+                            )
+                            runOnUiThread {
+                                directorySaveCancellationRequested = false
+                                pendingResult = null
+                                result.error(
+                                    errorCode,
+                                    fileSaveErrorMessage(errorCode),
+                                    mapOf("cause" to exception.javaClass.simpleName),
+                                )
+                            }
+                        }
+                    }.start()
+                    return@setMethodCallHandler
+                }
+                if (call.method == "saveFileFromPath") {
+                    val filePath = call.argument<String>("filePath")
+                    if (filePath.isNullOrBlank()) {
+                        result.error("SOURCE_FILE_INVALID", "下载缓存文件无效", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        requireCachedSourceFile(filePath)
+                    } catch (exception: Exception) {
+                        result.error(
+                            "SOURCE_FILE_INVALID",
+                            "下载缓存文件无效",
+                            mapOf("cause" to exception.javaClass.simpleName),
+                        )
+                        return@setMethodCallHandler
+                    }
+                    val fileName = call.argument<String>("fileName") ?: "download"
+                    val mediaType = call.argument<String>("mediaType") ?: "application/octet-stream"
+                    pendingResult = result
+                    pendingSaveFilePath = filePath
+                    pendingSaveFileName = fileName
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = mediaType
+                        putExtra(Intent.EXTRA_TITLE, fileName)
+                    }
+                    startActivityForResult(intent, pathSaveRequestCode)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "pickDirectory") {
+                    pendingResult = result
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                        addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                        addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                    }
+                    startActivityForResult(intent, directoryRequestCode)
                     return@setMethodCallHandler
                 }
                 if (call.method != "pickFile" && call.method != "pickFiles") {
@@ -67,12 +168,78 @@ class MainActivity : FlutterActivity() {
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != pickRequestCode && requestCode != saveRequestCode) {
+        if (
+            requestCode != pickRequestCode
+            && requestCode != saveRequestCode
+            && requestCode != directoryRequestCode
+            && requestCode != pathSaveRequestCode
+        ) {
             super.onActivityResult(requestCode, resultCode, data)
             return
         }
         val result = pendingResult
         pendingResult = null
+        if (requestCode == directoryRequestCode) {
+            val directoryUri = data?.data
+            if (resultCode != Activity.RESULT_OK || directoryUri == null) {
+                result?.success(null)
+                return
+            }
+            val permissionFlags = data.flags and (
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            runCatching {
+                contentResolver.takePersistableUriPermission(directoryUri, permissionFlags)
+            }.onFailure { exception ->
+                Log.w(
+                    fileLogTag,
+                    "Directory permission was not persisted type=${exception.javaClass.simpleName}"
+                )
+            }
+            result?.success(directoryUri.toString())
+            return
+        }
+        if (requestCode == pathSaveRequestCode) {
+            val filePath = pendingSaveFilePath
+            val requestedName = pendingSaveFileName
+            pendingSaveFilePath = null
+            pendingSaveFileName = null
+            val outputUri = data?.data
+            if (
+                resultCode != Activity.RESULT_OK
+                || outputUri == null
+                || filePath.isNullOrBlank()
+            ) {
+                result?.success(null)
+                return
+            }
+            Thread {
+                try {
+                    val source = requireCachedSourceFile(filePath)
+                    val sizeBytes = writeFileToUri(source, outputUri, cancellable = false)
+                    val savedName = queryDisplayName(outputUri)
+                        ?: normalizeSavedFileName(requestedName ?: source.name)
+                    runOnUiThread {
+                        result?.success(savedFileResult(savedName, outputUri, sizeBytes))
+                    }
+                } catch (exception: Exception) {
+                    val errorCode = fileSaveErrorCode(exception)
+                    Log.e(
+                        fileLogTag,
+                        "Single file save failed code=$errorCode type=${exception.javaClass.simpleName}"
+                    )
+                    runOnUiThread {
+                        result?.error(
+                            errorCode,
+                            fileSaveErrorMessage(errorCode),
+                            mapOf("cause" to exception.javaClass.simpleName),
+                        )
+                    }
+                }
+            }.start()
+            return
+        }
         if (requestCode == saveRequestCode) {
             val bytes = pendingSaveBytes
             pendingSaveBytes = null
@@ -158,9 +325,184 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
+    private fun saveFileToDirectory(
+        treeUri: Uri,
+        source: File,
+        requestedName: String,
+        mediaType: String,
+    ): Map<String, Any> {
+        val treeDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, treeDocumentId)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, treeDocumentId)
+        val existingNames = mutableSetOf<String>()
+        contentResolver.query(
+            childrenUri,
+            arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val nameColumn = cursor.getColumnIndex(
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME
+            )
+            while (nameColumn >= 0 && cursor.moveToNext()) {
+                cursor.getString(nameColumn)?.let { name ->
+                    existingNames.add(name.lowercase(Locale.ROOT))
+                }
+            }
+        }
+
+        val safeName = normalizeSavedFileName(requestedName)
+        val actualName = uniqueFileName(safeName, existingNames)
+        val actualMediaType = mediaType.ifBlank { "application/octet-stream" }
+        val outputUri = DocumentsContract.createDocument(
+            contentResolver,
+            parentUri,
+            actualMediaType,
+            actualName,
+        ) ?: throw IllegalStateException("File destination is unavailable")
+        try {
+            val sizeBytes = writeFileToUri(source, outputUri, cancellable = true)
+            val savedName = queryDisplayName(outputUri) ?: actualName
+            return savedFileResult(savedName, outputUri, sizeBytes)
+        } catch (exception: Exception) {
+            runCatching { DocumentsContract.deleteDocument(contentResolver, outputUri) }
+            throw exception
+        }
+    }
+
+    private fun writeFileToUri(
+        source: File,
+        outputUri: Uri,
+        cancellable: Boolean,
+    ): Long {
+        var written = 0L
+        source.inputStream().use { input ->
+            contentResolver.openOutputStream(outputUri, "w")?.use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    if (cancellable && directorySaveCancellationRequested) {
+                        throw InterruptedIOException("File save was cancelled")
+                    }
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    written += read
+                }
+                output.flush()
+            } ?: throw FileNotFoundException("File destination cannot be written")
+        }
+        return written
+    }
+
+    private fun requireCachedSourceFile(filePath: String): File {
+        val source = File(filePath).canonicalFile
+        val cacheRoots = buildList {
+            add(cacheDir.canonicalFile)
+            add(codeCacheDir.canonicalFile)
+            externalCacheDirs
+                .filterNotNull()
+                .mapTo(this) { it.canonicalFile }
+        }
+        val insideCache = cacheRoots.any { root ->
+            source.path == root.path
+                || source.path.startsWith(root.path + File.separator)
+        }
+        if (!insideCache || !source.isFile) {
+            Log.w(
+                fileLogTag,
+                "Source cache validation failed insideCache=$insideCache exists=${source.exists()} isFile=${source.isFile}"
+            )
+            throw IllegalArgumentException("Source file is outside the application cache")
+        }
+        return source
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (column < 0) null else cursor.getString(column)
+        }
+    }
+
+    private fun savedFileResult(
+        name: String,
+        uri: Uri,
+        sizeBytes: Long,
+    ): Map<String, Any> {
+        return mapOf(
+            "name" to name,
+            "uri" to uri.toString(),
+            "sizeBytes" to sizeBytes,
+        )
+    }
+
+    private fun fileSaveErrorCode(exception: Exception): String {
+        return when (exception) {
+            is InterruptedIOException -> "FILE_SAVE_CANCELLED"
+            is SecurityException -> "DIRECTORY_PERMISSION_DENIED"
+            is FileNotFoundException -> "DESTINATION_UNAVAILABLE"
+            is IllegalArgumentException -> "SOURCE_FILE_INVALID"
+            else -> "FILE_SAVE_FAILED"
+        }
+    }
+
+    private fun fileSaveErrorMessage(code: String): String {
+        return when (code) {
+            "FILE_SAVE_CANCELLED" -> "文件保存已取消"
+            "DIRECTORY_PERMISSION_DENIED" -> "无法写入所选文件夹，请改用系统单文件保存"
+            "DESTINATION_UNAVAILABLE" -> "目标位置不可用，请选择其他文件夹"
+            "SOURCE_FILE_INVALID" -> "下载缓存文件无效，请重新下载"
+            else -> "文件写入失败，请选择其他保存位置"
+        }
+    }
+
+    private fun normalizeSavedFileName(value: String): String {
+        val leafName = value
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .replace(Regex("[\\u0000-\\u001F]"), "_")
+            .trim()
+            .ifEmpty { "download" }
+        if (leafName.length <= 240) return leafName
+        val extensionIndex = leafName.lastIndexOf('.')
+        if (extensionIndex <= 0 || extensionIndex >= leafName.length - 1) {
+            return leafName.take(240)
+        }
+        val extension = leafName.substring(extensionIndex).take(40)
+        return leafName.substring(0, extensionIndex)
+            .take(240 - extension.length) + extension
+    }
+
+    private fun uniqueFileName(name: String, existingNames: Set<String>): String {
+        if (!existingNames.contains(name.lowercase(Locale.ROOT))) return name
+        val extensionIndex = name.lastIndexOf('.')
+        val baseName = if (extensionIndex > 0) name.substring(0, extensionIndex) else name
+        val extension = if (extensionIndex > 0) name.substring(extensionIndex) else ""
+        var index = 1
+        while (true) {
+            val suffix = "($index)"
+            val trimmedBase = baseName.take((240 - extension.length - suffix.length).coerceAtLeast(1))
+            val candidate = "$trimmedBase$suffix$extension"
+            if (!existingNames.contains(candidate.lowercase(Locale.ROOT))) return candidate
+            index++
+        }
+    }
+
     private fun cleanupPickedFileCache() {
         File(cacheDir, "picked-files").listFiles()?.forEach { file ->
             runCatching { file.delete() }
         }
+    }
+
+    companion object {
+        private const val fileLogTag = "YuanzuoFile"
     }
 }
