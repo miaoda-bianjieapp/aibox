@@ -91,6 +91,20 @@ abstract final class NativeFilePicker {
         .toList();
   }
 
+  static Future<List<PickedLocalFile>> pickImages({
+    int maxFiles = 1,
+  }) async {
+    final result = await _channel.invokeListMethod<dynamic>(
+      'pickImages',
+      {'maxFiles': maxFiles.clamp(1, 10)},
+    );
+    if (result == null) return const [];
+    return result
+        .whereType<Map>()
+        .map((item) => _fromResult(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
   static PickedLocalFile _fromResult(Map<String, dynamic> result) {
     final path = result['path']?.toString();
     final sizeBytes = result['sizeBytes'] is num

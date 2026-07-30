@@ -14,6 +14,7 @@ import '../pages/task_execution_page.dart';
 import '../pages/writing_result_page.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
+import 'image_asset_picker_view.dart';
 import 'image_mask_editor.dart';
 
 Future<TaskExecutionResult?> showTaskSheet(
@@ -168,6 +169,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, Object?> _values = {};
   final Map<String, List<AssetView>> _assetsByField = {};
+  final Set<String> _uploadingAssetFields = {};
   final Set<String> _temporaryDerivedAssetIds = {};
   final Map<String, String> _selectedModelGroups = {};
   final PromptOptimizationUndoStore _promptUndoStore =
@@ -213,7 +215,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     return PopScope(
-      canPop: !_submitting,
+      canPop: !_submitting && _uploadingAssetFields.isEmpty,
       child: AnimatedPadding(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
@@ -243,7 +245,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                         child: Text(widget.request.entry.title,
                             style: Theme.of(context).textTheme.titleLarge)),
                     IconButton(
-                      onPressed: _submitting
+                      onPressed: _submitting || _uploadingAssetFields.isNotEmpty
                           ? null
                           : () => Navigator.of(context).pop(),
                       tooltip: '关闭',
@@ -988,6 +990,22 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         options['allowAssetLibrarySelection'] == true;
     final currentBytes =
         assets.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
+    if (widgetType == 'image') {
+      return _buildImageAssetField(
+        feature,
+        field,
+        schema,
+        assets: assets,
+        maxItems: maxItems,
+        disabledByModel: disabledByModel,
+        acceptedMimeTypes: acceptedMimeTypes,
+        allowedExtensions: allowedExtensions,
+        maxSizeBytes: _integerOption(options, 'maxFileSizeBytes'),
+        maxTotalSizeBytes: maxTotalSizeBytes,
+        currentBytes: currentBytes,
+        allowAssetLibrarySelection: allowAssetLibrarySelection,
+      );
+    }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (schema['description']?.toString().trim().isNotEmpty == true)
         Padding(
@@ -1078,6 +1096,80 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ],
       ),
     ]);
+  }
+
+  Widget _buildImageAssetField(
+    FeatureDetail feature,
+    String field,
+    Map<String, dynamic> schema, {
+    required List<AssetView> assets,
+    required int maxItems,
+    required bool disabledByModel,
+    required List<String> acceptedMimeTypes,
+    required List<String> allowedExtensions,
+    required int? maxSizeBytes,
+    required int? maxTotalSizeBytes,
+    required int currentBytes,
+    required bool allowAssetLibrarySelection,
+  }) {
+    final uploading = _uploadingAssetFields.contains(field);
+    final replaceExisting = maxItems == 1 && assets.isNotEmpty;
+    final remaining = replaceExisting ? 1 : maxItems - assets.length;
+    final enabled = !_submitting && !disabledByModel;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (schema['description']?.toString().trim().isNotEmpty == true)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              schema['description'].toString(),
+              style: const TextStyle(color: AppColors.muted, fontSize: 12),
+            ),
+          ),
+        ImageAssetPickerView(
+          assets: assets,
+          maxItems: maxItems,
+          uploading: uploading,
+          enabled: enabled,
+          disabledReason: disabledByModel ? '当前模型不使用参考图，已选择内容会暂时保留。' : null,
+          contentUrlFor: (asset) => widget.data.api.assetContentUrl(asset.id),
+          onPickImages: remaining <= 0
+              ? null
+              : () => _pickImages(
+                    feature,
+                    field,
+                    maxItems: maxItems,
+                    acceptedMimeTypes: acceptedMimeTypes,
+                    allowedExtensions: allowedExtensions,
+                    maxSizeBytes: maxSizeBytes,
+                    maxTotalSizeBytes: maxTotalSizeBytes,
+                    currentBytes: currentBytes,
+                  ),
+          onChooseLibrary: !allowAssetLibrarySelection || remaining <= 0
+              ? null
+              : () => _chooseLibraryAssets(
+                    feature,
+                    field,
+                    acceptedMimeTypes: acceptedMimeTypes,
+                    allowedExtensions: allowedExtensions,
+                    maximum: remaining,
+                    maxSizeBytes: maxSizeBytes,
+                    maxTotalSizeBytes: maxTotalSizeBytes,
+                    replaceExisting: replaceExisting,
+                  ),
+          onRemove: (asset) => _removeAsset(feature, field, asset),
+        ),
+        if (maxTotalSizeBytes != null && assets.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 7),
+            child: Text(
+              '${_formatBytes(currentBytes)} / ${_formatBytes(maxTotalSizeBytes)}',
+              style: const TextStyle(color: AppColors.muted, fontSize: 11),
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _buildImageMaskField(
@@ -1254,6 +1346,57 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
   }
 
+  Future<void> _pickImages(
+    FeatureDetail feature,
+    String field, {
+    required int maxItems,
+    required List<String> acceptedMimeTypes,
+    required List<String> allowedExtensions,
+    required int? maxSizeBytes,
+    required int? maxTotalSizeBytes,
+    required int currentBytes,
+  }) async {
+    final existing = _assetsByField[field] ?? const <AssetView>[];
+    final replaceExisting = maxItems == 1 && existing.isNotEmpty;
+    final remaining = replaceExisting ? 1 : maxItems - existing.length;
+    if (remaining <= 0 || _uploadingAssetFields.contains(field)) return;
+    setState(() {
+      _error = null;
+      _uploadingAssetFields.add(field);
+    });
+    try {
+      final remainingBytes = maxTotalSizeBytes == null
+          ? null
+          : (maxTotalSizeBytes - (replaceExisting ? 0 : currentBytes))
+              .clamp(0, maxTotalSizeBytes);
+      final uploaded = await widget.data.pickImagesAndUpload(
+        maxFiles: remaining,
+        mimeTypes: acceptedMimeTypes,
+        allowedExtensions: allowedExtensions,
+        maxSizeBytes: maxSizeBytes,
+        maxTotalSizeBytes: remainingBytes,
+      );
+      if (uploaded.isEmpty || !mounted) return;
+      final staleMasks = <AssetView>[];
+      setState(() {
+        if (replaceExisting) {
+          _assetsByField[field] = List<AssetView>.from(uploaded);
+        } else {
+          (_assetsByField[field] ??= []).addAll(uploaded);
+        }
+        staleMasks.addAll(_clearDependentMaskFields(feature, field));
+      });
+      _refreshTaskTitleFromAssets(feature);
+      await _deleteTemporaryDerivedAssets(staleMasks);
+    } catch (exception) {
+      if (mounted) setState(() => _error = '$exception');
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingAssetFields.remove(field));
+      }
+    }
+  }
+
   Future<void> _chooseLibraryAssets(
     FeatureDetail feature,
     String field, {
@@ -1262,6 +1405,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     required int maximum,
     required int? maxSizeBytes,
     required int? maxTotalSizeBytes,
+    bool replaceExisting = false,
   }) async {
     final selectedIds = (_assetsByField[field] ?? const <AssetView>[])
         .map((asset) => asset.id)
@@ -1297,8 +1441,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       });
       return;
     }
-    final currentBytes = (_assetsByField[field] ?? const <AssetView>[])
-        .fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
+    final currentBytes = replaceExisting
+        ? 0
+        : (_assetsByField[field] ?? const <AssetView>[])
+            .fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
     final selectedBytes =
         selected.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
     if (maxTotalSizeBytes != null &&
@@ -1310,7 +1456,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
     final staleMasks = <AssetView>[];
     setState(() {
-      (_assetsByField[field] ??= []).addAll(selected);
+      if (replaceExisting) {
+        _assetsByField[field] = List<AssetView>.from(selected);
+      } else {
+        (_assetsByField[field] ??= []).addAll(selected);
+      }
       staleMasks.addAll(_clearDependentMaskFields(feature, field));
       _error = null;
     });
@@ -1665,7 +1815,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final executeButton = SizedBox(
       height: 48,
       child: FilledButton.icon(
-        onPressed: _submitting || _optimizingPromptField != null
+        onPressed: _submitting ||
+                _optimizingPromptField != null ||
+                _uploadingAssetFields.isNotEmpty
             ? null
             : () => _execute(feature),
         style: FilledButton.styleFrom(
@@ -1685,7 +1837,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         child: SizedBox(
           height: 48,
           child: OutlinedButton.icon(
-            onPressed: _submitting || _optimizingPromptField != null
+            onPressed: _submitting ||
+                    _optimizingPromptField != null ||
+                    _uploadingAssetFields.isNotEmpty
                 ? null
                 : () => _resetParameters(feature),
             icon: const Icon(Icons.delete_outline_rounded, size: 19),

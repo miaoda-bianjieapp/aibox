@@ -13,6 +13,20 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
       capturedCall = call;
       return switch (call.method) {
+        'pickImages' => [
+            {
+              'name': 'reference-a.jpg',
+              'mediaType': 'image/jpeg',
+              'path': 'C:/cache/reference-a.jpg',
+              'sizeBytes': 1024,
+            },
+            {
+              'name': 'reference-b.png',
+              'mediaType': 'image/png',
+              'path': 'C:/cache/reference-b.png',
+              'sizeBytes': 2048,
+            },
+          ],
         'pickDirectory' => 'content://downloads',
         'saveFileToDirectory' => {
             'name': 'report(1).pdf',
@@ -40,6 +54,18 @@ void main() {
 
     expect(directory, 'content://downloads');
     expect(capturedCall?.method, 'pickDirectory');
+  });
+
+  test('opens the system photo picker with the requested image limit',
+      () async {
+    final files = await NativeFilePicker.pickImages(maxFiles: 2);
+
+    expect(files.map((file) => file.name), [
+      'reference-a.jpg',
+      'reference-b.png',
+    ]);
+    expect(capturedCall?.method, 'pickImages');
+    expect(capturedCall?.arguments, {'maxFiles': 2});
   });
 
   test('saves a temporary file path without transferring file bytes', () async {

@@ -12,6 +12,8 @@ import java.io.FileOutputStream
 import java.io.InterruptedIOException
 import java.util.Locale
 import java.util.UUID
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -22,6 +24,7 @@ class MainActivity : FlutterActivity() {
     private val saveRequestCode = 9105
     private val directoryRequestCode = 9106
     private val pathSaveRequestCode = 9107
+    private val imagePickRequestCode = 9108
     private var pendingResult: MethodChannel.Result? = null
     private var pendingSaveBytes: ByteArray? = null
     private var pendingSaveFilePath: String? = null
@@ -147,6 +150,39 @@ class MainActivity : FlutterActivity() {
                     startActivityForResult(intent, directoryRequestCode)
                     return@setMethodCallHandler
                 }
+                if (call.method == "pickImages") {
+                    pendingResult = result
+                    pendingMultiple = true
+                    pendingMaxFiles =
+                        (call.argument<Int>("maxFiles") ?: 1).coerceIn(1, 10)
+                    try {
+                        val request = PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                        )
+                        val intent = if (pendingMaxFiles == 1) {
+                            ActivityResultContracts.PickVisualMedia()
+                                .createIntent(this, request)
+                        } else {
+                            ActivityResultContracts.PickMultipleVisualMedia(pendingMaxFiles)
+                                .createIntent(this, request)
+                        }
+                        startActivityForResult(intent, imagePickRequestCode)
+                    } catch (exception: Exception) {
+                        pendingResult = null
+                        pendingMultiple = false
+                        pendingMaxFiles = 1
+                        Log.e(
+                            fileLogTag,
+                            "Photo picker launch failed type=${exception.javaClass.simpleName}"
+                        )
+                        result.error(
+                            "IMAGE_PICKER_UNAVAILABLE",
+                            "Unable to open the system photo picker",
+                            mapOf("cause" to exception.javaClass.simpleName),
+                        )
+                    }
+                    return@setMethodCallHandler
+                }
                 if (call.method != "pickFile" && call.method != "pickFiles") {
                     result.notImplemented()
                     return@setMethodCallHandler
@@ -173,12 +209,34 @@ class MainActivity : FlutterActivity() {
             && requestCode != saveRequestCode
             && requestCode != directoryRequestCode
             && requestCode != pathSaveRequestCode
+            && requestCode != imagePickRequestCode
         ) {
             super.onActivityResult(requestCode, resultCode, data)
             return
         }
         val result = pendingResult
         pendingResult = null
+        if (requestCode == imagePickRequestCode) {
+            val maxFiles = pendingMaxFiles
+            pendingMultiple = false
+            pendingMaxFiles = 1
+            if (resultCode != Activity.RESULT_OK || data == null) {
+                result?.success(null)
+                return
+            }
+            val uris = if (maxFiles == 1) {
+                listOfNotNull(
+                    ActivityResultContracts.PickVisualMedia()
+                        .parseResult(resultCode, data)
+                )
+            } else {
+                ActivityResultContracts.PickMultipleVisualMedia(maxFiles)
+                    .parseResult(resultCode, data)
+                    .take(maxFiles)
+            }
+            completePickedUris(result, uris, multiple = true)
+            return
+        }
         if (requestCode == directoryRequestCode) {
             val directoryUri = data?.data
             if (resultCode != Activity.RESULT_OK || directoryUri == null) {
@@ -275,6 +333,18 @@ class MainActivity : FlutterActivity() {
                 add(data.data!!)
             }
         }
+        if (uris.isEmpty()) {
+            result?.success(null)
+            return
+        }
+        completePickedUris(result, uris, multiple)
+    }
+
+    private fun completePickedUris(
+        result: MethodChannel.Result?,
+        uris: List<Uri>,
+        multiple: Boolean,
+    ) {
         if (uris.isEmpty()) {
             result?.success(null)
             return
