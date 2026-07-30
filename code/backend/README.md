@@ -61,7 +61,8 @@ java -jar .\backend-app\target\backend-app-0.1.0-SNAPSHOT.jar
 
 Word、Excel 和 PowerPoint 的版式预览依赖 LibreOffice。Windows 会自动查找标准安装目录；
 其他环境需要确保 `soffice` 在 PATH 中，或在 `yuanzuo.asset.office-preview.libreoffice-path`
-配置可执行文件路径。转换失败时会自动降级为 POI 提取文本。
+配置可执行文件路径。Excel 和 CSV 默认提供结构化表格预览，Excel 可切换到 PDF 查看图片
+和复杂样式；Word、PowerPoint 转换失败时会自动降级为 POI 提取文本。
 
 服务默认监听 `http://localhost:8080`，健康检查为：
 

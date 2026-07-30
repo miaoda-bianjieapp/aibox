@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import '../models/feature_models.dart';
 import '../network/backend_api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/spreadsheet_preview_view.dart';
 
 class AssetPreviewPage extends StatefulWidget {
   const AssetPreviewPage({
@@ -18,6 +19,9 @@ class AssetPreviewPage extends StatefulWidget {
     this.initialPage,
     this.initialLine,
     this.endLine,
+    this.initialSheetName,
+    this.initialRow,
+    this.endRow,
   });
 
   final BackendApi api;
@@ -25,6 +29,9 @@ class AssetPreviewPage extends StatefulWidget {
   final int? initialPage;
   final int? initialLine;
   final int? endLine;
+  final String? initialSheetName;
+  final int? initialRow;
+  final int? endRow;
 
   @override
   State<AssetPreviewPage> createState() => _AssetPreviewPageState();
@@ -79,6 +86,9 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
                   initialPage: widget.initialPage,
                   initialLine: widget.initialLine,
                   endLine: widget.endLine,
+                  initialSheetName: widget.initialSheetName,
+                  initialRow: widget.initialRow,
+                  endRow: widget.endRow,
                 );
               },
             )
@@ -99,6 +109,9 @@ class _PreviewBody extends StatelessWidget {
     required this.initialPage,
     required this.initialLine,
     required this.endLine,
+    required this.initialSheetName,
+    required this.initialRow,
+    required this.endRow,
   });
 
   final AssetPreviewDescriptor descriptor;
@@ -107,6 +120,9 @@ class _PreviewBody extends StatelessWidget {
   final int? initialPage;
   final int? initialLine;
   final int? endLine;
+  final String? initialSheetName;
+  final int? initialRow;
+  final int? endRow;
 
   @override
   Widget build(BuildContext context) {
@@ -120,6 +136,22 @@ class _PreviewBody extends StatelessWidget {
           contentUrl: url,
           fileName: _pdfFileName(asset.name),
           initialPage: initialPage,
+        ),
+      'SPREADSHEET' when descriptor.spreadsheet != null =>
+        SpreadsheetPreviewView(
+          preview: descriptor.spreadsheet!,
+          initialSheetName: initialSheetName,
+          initialRow: initialRow,
+          endRow: endRow,
+          layoutUnavailable: descriptor.fallback,
+          layoutPreview: url == null
+              ? null
+              : _PdfPreview(
+                  api: api,
+                  contentUrl: url,
+                  fileName: _pdfFileName(asset.name),
+                  initialPage: initialPage,
+                ),
         ),
       'TEXT' => _TextPreview(
           text: descriptor.text ?? '',

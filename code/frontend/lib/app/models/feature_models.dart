@@ -658,6 +658,66 @@ class AssetDeleteImpact {
   final int affectedRunCount;
 }
 
+class SpreadsheetPreviewData {
+  const SpreadsheetPreviewData({
+    required this.sheets,
+    required this.truncated,
+  });
+
+  factory SpreadsheetPreviewData.fromJson(Map<String, dynamic> json) =>
+      SpreadsheetPreviewData(
+        sheets: _mapList(json['sheets'])
+            .map(SpreadsheetSheetPreview.fromJson)
+            .toList(),
+        truncated: json['truncated'] == true,
+      );
+
+  final List<SpreadsheetSheetPreview> sheets;
+  final bool truncated;
+}
+
+class SpreadsheetSheetPreview {
+  const SpreadsheetSheetPreview({
+    required this.name,
+    required this.headerRowNumber,
+    required this.columns,
+    required this.rows,
+    required this.truncated,
+  });
+
+  factory SpreadsheetSheetPreview.fromJson(Map<String, dynamic> json) =>
+      SpreadsheetSheetPreview(
+        name: _string(json, 'name'),
+        headerRowNumber: _integer(json, 'headerRowNumber'),
+        columns: _stringList(json['columns']),
+        rows:
+            _mapList(json['rows']).map(SpreadsheetRowPreview.fromJson).toList(),
+        truncated: json['truncated'] == true,
+      );
+
+  final String name;
+  final int headerRowNumber;
+  final List<String> columns;
+  final List<SpreadsheetRowPreview> rows;
+  final bool truncated;
+}
+
+class SpreadsheetRowPreview {
+  const SpreadsheetRowPreview({
+    required this.rowNumber,
+    required this.cells,
+  });
+
+  factory SpreadsheetRowPreview.fromJson(Map<String, dynamic> json) =>
+      SpreadsheetRowPreview(
+        rowNumber: _integer(json, 'rowNumber'),
+        cells: _stringList(json['cells']),
+      );
+
+  final int rowNumber;
+  final List<String> cells;
+}
+
 class AssetPreviewDescriptor {
   const AssetPreviewDescriptor({
     required this.kind,
@@ -666,6 +726,7 @@ class AssetPreviewDescriptor {
     required this.text,
     required this.truncated,
     required this.fallback,
+    required this.spreadsheet,
   });
 
   factory AssetPreviewDescriptor.fromJson(Map<String, dynamic> json) =>
@@ -676,6 +737,9 @@ class AssetPreviewDescriptor {
         text: json['text']?.toString(),
         truncated: json['truncated'] == true,
         fallback: json['fallback'] == true,
+        spreadsheet: json['spreadsheet'] is Map
+            ? SpreadsheetPreviewData.fromJson(_map(json['spreadsheet']))
+            : null,
       );
 
   final String kind;
@@ -684,6 +748,7 @@ class AssetPreviewDescriptor {
   final String? text;
   final bool truncated;
   final bool fallback;
+  final SpreadsheetPreviewData? spreadsheet;
 }
 
 class AccountSummary {

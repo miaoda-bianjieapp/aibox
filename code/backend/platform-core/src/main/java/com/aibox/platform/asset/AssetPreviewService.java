@@ -26,13 +26,16 @@ public class AssetPreviewService {
 
     private final AssetService assetService;
     private final OfficePreviewConverter officePreviewConverter;
+    private final SpreadsheetPreviewReader spreadsheetPreviewReader;
 
     public AssetPreviewService(
             AssetService assetService,
-            OfficePreviewConverter officePreviewConverter
+            OfficePreviewConverter officePreviewConverter,
+            SpreadsheetPreviewReader spreadsheetPreviewReader
     ) {
         this.assetService = assetService;
         this.officePreviewConverter = officePreviewConverter;
+        this.spreadsheetPreviewReader = spreadsheetPreviewReader;
     }
 
     public PreviewDescriptor preview(UUID assetId) {
@@ -42,13 +45,13 @@ public class AssetPreviewService {
         String contentUrl = "/api/v1/assets/" + asset.id() + "/content";
         return switch (asset.category()) {
             case "IMAGE" -> new PreviewDescriptor(
-                    "IMAGE", asset.mediaType(), contentUrl, null, false, false
+                    "IMAGE", asset.mediaType(), contentUrl, null, false, false, null
             );
             case "VIDEO" -> new PreviewDescriptor(
-                    "VIDEO", asset.mediaType(), contentUrl, null, false, false
+                    "VIDEO", asset.mediaType(), contentUrl, null, false, false, null
             );
             case "AUDIO" -> new PreviewDescriptor(
-                    "AUDIO", asset.mediaType(), contentUrl, null, false, false
+                    "AUDIO", asset.mediaType(), contentUrl, null, false, false, null
             );
             case "DOCUMENT" -> documentPreview(asset, stored.path(), extension, contentUrl);
             default -> throw new PlatformException(
@@ -96,15 +99,39 @@ public class AssetPreviewService {
     ) {
         if (".pdf".equals(extension) || "application/pdf".equalsIgnoreCase(asset.mediaType())) {
             return new PreviewDescriptor(
-                    "PDF", "application/pdf", contentUrl, null, false, false
+                    "PDF", "application/pdf", contentUrl, null, false, false, null
             );
+        }
+        if (isSpreadsheet(extension)) {
+            return spreadsheetPreview(asset, path, extension);
         }
         if (isOffice(extension)) {
             return officePreview(asset, path, extension);
         }
         TextPreview text = readText(path);
         return new PreviewDescriptor(
-                "TEXT", asset.mediaType(), null, text.content(), text.truncated(), false
+                "TEXT", asset.mediaType(), null, text.content(), text.truncated(), false, null
+        );
+    }
+
+    private PreviewDescriptor spreadsheetPreview(
+            AssetService.AssetView asset,
+            Path path,
+            String extension
+    ) {
+        SpreadsheetPreviewReader.SpreadsheetPreview spreadsheet =
+                spreadsheetPreviewReader.read(path, extension);
+        String layoutUrl = isExcel(extension)
+                ? "/api/v1/assets/" + asset.id() + "/preview/content"
+                : null;
+        return new PreviewDescriptor(
+                "SPREADSHEET",
+                asset.mediaType(),
+                layoutUrl,
+                null,
+                false,
+                false,
+                spreadsheet
         );
     }
 
@@ -120,12 +147,13 @@ public class AssetPreviewService {
                     "/api/v1/assets/" + asset.id() + "/preview/content",
                     null,
                     false,
-                    false
+                    false,
+                    null
             );
         }
         TextPreview text = extractPoiText(path);
         return new PreviewDescriptor(
-                "TEXT", "text/plain", null, text.content(), text.truncated(), true
+                "TEXT", "text/plain", null, text.content(), text.truncated(), true, null
         );
     }
 
@@ -202,6 +230,14 @@ public class AssetPreviewService {
         };
     }
 
+    private static boolean isSpreadsheet(String extension) {
+        return isExcel(extension) || ".csv".equals(extension);
+    }
+
+    private static boolean isExcel(String extension) {
+        return ".xls".equals(extension) || ".xlsx".equals(extension);
+    }
+
     private static String extension(String name) {
         int index = name.lastIndexOf('.');
         return index < 0 ? "" : name.substring(index).toLowerCase(Locale.ROOT);
@@ -219,7 +255,8 @@ public class AssetPreviewService {
             String contentUrl,
             String text,
             boolean truncated,
-            boolean fallback
+            boolean fallback,
+            SpreadsheetPreviewReader.SpreadsheetPreview spreadsheet
     ) {
     }
 

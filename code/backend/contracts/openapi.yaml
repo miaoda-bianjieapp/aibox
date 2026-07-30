@@ -169,7 +169,7 @@ paths:
           schema: {type: string, format: uuid}
       responses:
         "200":
-          description: In-app preview descriptor or extracted document text
+          description: In-app media, PDF, structured spreadsheet, or extracted text preview
   /assets/{assetId}/preview/content:
     get:
       operationId: getAssetPreviewContent

@@ -213,6 +213,7 @@ class BackendApi {
       text: preview.text,
       truncated: preview.truncated,
       fallback: preview.fallback,
+      spreadsheet: preview.spreadsheet,
     );
   }
 
