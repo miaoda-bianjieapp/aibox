@@ -665,6 +665,7 @@ class AssetPreviewDescriptor {
     required this.contentUrl,
     required this.text,
     required this.truncated,
+    required this.fallback,
   });
 
   factory AssetPreviewDescriptor.fromJson(Map<String, dynamic> json) =>
@@ -674,6 +675,7 @@ class AssetPreviewDescriptor {
         contentUrl: json['contentUrl']?.toString(),
         text: json['text']?.toString(),
         truncated: json['truncated'] == true,
+        fallback: json['fallback'] == true,
       );
 
   final String kind;
@@ -681,6 +683,7 @@ class AssetPreviewDescriptor {
   final String? contentUrl;
   final String? text;
   final bool truncated;
+  final bool fallback;
 }
 
 class AccountSummary {

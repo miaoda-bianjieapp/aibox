@@ -22,9 +22,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 @Component
-public class PowerPointPreviewConverter {
+public class OfficePreviewConverter {
 
-    private static final Logger log = LoggerFactory.getLogger(PowerPointPreviewConverter.class);
+    private static final Logger log = LoggerFactory.getLogger(OfficePreviewConverter.class);
+    private static final String CACHE_VERSION = "v1";
     private static final Pattern SHA_256 = Pattern.compile("[0-9a-fA-F]{64}");
     private static final byte[] PDF_HEADER = {'%', 'P', 'D', 'F', '-'};
 
@@ -36,10 +37,17 @@ public class PowerPointPreviewConverter {
             new ConcurrentHashMap<>();
 
     @Autowired
-    public PowerPointPreviewConverter(
+    public OfficePreviewConverter(
             @Value("${yuanzuo.asset.storage-path}") String storagePath,
-            @Value("${yuanzuo.asset.powerpoint-preview.libreoffice-path:}") String libreOfficePath,
-            @Value("${yuanzuo.asset.powerpoint-preview.conversion-timeout-ms:120000}")
+            @Value(
+                    "${yuanzuo.asset.office-preview.libreoffice-path:"
+                            + "${yuanzuo.asset.powerpoint-preview.libreoffice-path:}}"
+            )
+            String libreOfficePath,
+            @Value(
+                    "${yuanzuo.asset.office-preview.conversion-timeout-ms:"
+                            + "${yuanzuo.asset.powerpoint-preview.conversion-timeout-ms:120000}}"
+            )
             long conversionTimeoutMillis
     ) {
         this(
@@ -50,7 +58,7 @@ public class PowerPointPreviewConverter {
         );
     }
 
-    PowerPointPreviewConverter(
+    OfficePreviewConverter(
             Path storageRoot,
             String executable,
             Duration timeout,
@@ -58,17 +66,22 @@ public class PowerPointPreviewConverter {
     ) {
         this.cacheRoot = storageRoot.toAbsolutePath().normalize()
                 .resolve(".preview-cache")
-                .resolve("powerpoint-pdf");
+                .resolve("office-pdf")
+                .resolve(CACHE_VERSION);
         this.executable = executable;
         this.timeout = timeout;
         this.processRunner = processRunner;
     }
 
     public Optional<Path> convert(Path source, String extension, String sha256) {
-        if (!isPowerPointExtension(extension) || !isSha256(sha256)) {
+        OfficeFormat format = OfficeFormat.fromExtension(extension);
+        if (format == null
+                || !isSha256(sha256)
+                || source == null
+                || !Files.isRegularFile(source)) {
             return Optional.empty();
         }
-        String cacheKey = sha256.toLowerCase(Locale.ROOT);
+        String cacheKey = format.cacheCode() + "-" + sha256.toLowerCase(Locale.ROOT);
         Path cached = cacheRoot.resolve(cacheKey + ".pdf").normalize();
         if (!cached.startsWith(cacheRoot)) return Optional.empty();
         if (isPdf(cached)) return Optional.of(cached);
@@ -85,7 +98,7 @@ public class PowerPointPreviewConverter {
         try {
             Optional<Path> result = isPdf(cached)
                     ? Optional.of(cached)
-                    : convertAndCache(source, extension, cached, cacheKey);
+                    : convertAndCache(source, format, cached, cacheKey);
             conversion.complete(result);
             return result;
         } catch (RuntimeException exception) {
@@ -98,7 +111,7 @@ public class PowerPointPreviewConverter {
 
     private Optional<Path> convertAndCache(
             Path source,
-            String extension,
+            OfficeFormat format,
             Path cached,
             String cacheKey
     ) {
@@ -107,7 +120,7 @@ public class PowerPointPreviewConverter {
         try {
             Files.createDirectories(cacheRoot);
             workspace = Files.createTempDirectory(cacheRoot, ".convert-");
-            Path input = workspace.resolve("presentation" + extension);
+            Path input = workspace.resolve("document" + format.extension());
             Path outputDirectory = workspace.resolve("output");
             Path profileDirectory = workspace.resolve("profile");
             Files.createDirectories(outputDirectory);
@@ -123,7 +136,7 @@ public class PowerPointPreviewConverter {
                     "--nofirststartwizard",
                     "-env:UserInstallation=" + profileDirectory.toUri(),
                     "--convert-to",
-                    "pdf:impress_pdf_Export",
+                    "pdf:" + format.pdfFilter(),
                     "--outdir",
                     outputDirectory.toString(),
                     input.toString()
@@ -132,20 +145,20 @@ public class PowerPointPreviewConverter {
                 return Optional.empty();
             }
 
-            Path generated = outputDirectory.resolve("presentation.pdf");
+            Path generated = outputDirectory.resolve("document.pdf");
             if (!isPdf(generated)) return Optional.empty();
             staged = Files.createTempFile(cacheRoot, cacheKey + "-", ".pdf.tmp");
             Files.copy(generated, staged, StandardCopyOption.REPLACE_EXISTING);
             moveIntoCache(staged, cached);
             return isPdf(cached) ? Optional.of(cached) : Optional.empty();
         } catch (IOException exception) {
-            log.warn("PowerPoint preview conversion is unavailable");
+            log.warn("Office preview conversion is unavailable");
             return Optional.empty();
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             return Optional.empty();
         } catch (RuntimeException exception) {
-            log.warn("PowerPoint preview conversion failed");
+            log.warn("Office preview conversion failed");
             return Optional.empty();
         } finally {
             deleteFile(staged);
@@ -178,10 +191,6 @@ public class PowerPointPreviewConverter {
         } catch (IOException exception) {
             return false;
         }
-    }
-
-    private static boolean isPowerPointExtension(String extension) {
-        return ".ppt".equals(extension) || ".pptx".equals(extension);
     }
 
     private static boolean isSha256(String value) {
@@ -222,6 +231,28 @@ public class PowerPointPreviewConverter {
         try {
             Files.deleteIfExists(path);
         } catch (IOException ignored) {
+        }
+    }
+
+    private record OfficeFormat(String extension, String pdfFilter) {
+
+        private static OfficeFormat fromExtension(String extension) {
+            String normalized = extension == null
+                    ? ""
+                    : extension.toLowerCase(Locale.ROOT);
+            return switch (normalized) {
+                case ".doc" -> new OfficeFormat(normalized, "writer_pdf_Export");
+                case ".docx" -> new OfficeFormat(normalized, "writer_pdf_Export");
+                case ".xls" -> new OfficeFormat(normalized, "calc_pdf_Export");
+                case ".xlsx" -> new OfficeFormat(normalized, "calc_pdf_Export");
+                case ".ppt" -> new OfficeFormat(normalized, "impress_pdf_Export");
+                case ".pptx" -> new OfficeFormat(normalized, "impress_pdf_Export");
+                default -> null;
+            };
+        }
+
+        private String cacheCode() {
+            return extension.substring(1);
         }
     }
 

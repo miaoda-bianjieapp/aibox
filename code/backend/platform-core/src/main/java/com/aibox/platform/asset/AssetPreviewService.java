@@ -25,14 +25,14 @@ public class AssetPreviewService {
     private static final int MAX_TEXT_PREVIEW_CHARACTERS = 2_000_000;
 
     private final AssetService assetService;
-    private final PowerPointPreviewConverter powerPointConverter;
+    private final OfficePreviewConverter officePreviewConverter;
 
     public AssetPreviewService(
             AssetService assetService,
-            PowerPointPreviewConverter powerPointConverter
+            OfficePreviewConverter officePreviewConverter
     ) {
         this.assetService = assetService;
-        this.powerPointConverter = powerPointConverter;
+        this.officePreviewConverter = officePreviewConverter;
     }
 
     public PreviewDescriptor preview(UUID assetId) {
@@ -41,9 +41,15 @@ public class AssetPreviewService {
         String extension = extension(asset.name());
         String contentUrl = "/api/v1/assets/" + asset.id() + "/content";
         return switch (asset.category()) {
-            case "IMAGE" -> new PreviewDescriptor("IMAGE", asset.mediaType(), contentUrl, null, false);
-            case "VIDEO" -> new PreviewDescriptor("VIDEO", asset.mediaType(), contentUrl, null, false);
-            case "AUDIO" -> new PreviewDescriptor("AUDIO", asset.mediaType(), contentUrl, null, false);
+            case "IMAGE" -> new PreviewDescriptor(
+                    "IMAGE", asset.mediaType(), contentUrl, null, false, false
+            );
+            case "VIDEO" -> new PreviewDescriptor(
+                    "VIDEO", asset.mediaType(), contentUrl, null, false, false
+            );
+            case "AUDIO" -> new PreviewDescriptor(
+                    "AUDIO", asset.mediaType(), contentUrl, null, false, false
+            );
             case "DOCUMENT" -> documentPreview(asset, stored.path(), extension, contentUrl);
             default -> throw new PlatformException(
                     "ASSET_PREVIEW_UNSUPPORTED", "This file cannot be previewed"
@@ -55,13 +61,13 @@ public class AssetPreviewService {
         AssetService.AssetStoredFile stored = assetService.openForPreview(assetId);
         AssetService.AssetView asset = stored.asset();
         String extension = extension(asset.name());
-        if (!isPowerPoint(extension)) {
+        if (!isOffice(extension)) {
             throw new PlatformException(
                     "ASSET_PREVIEW_CONTENT_UNSUPPORTED",
                     "This file does not have generated preview content"
             );
         }
-        Path converted = powerPointConverter
+        Path converted = officePreviewConverter
                 .convert(stored.path(), extension, asset.sha256())
                 .orElseThrow(() -> new PlatformException(
                         "ASSET_PREVIEW_CONTENT_UNAVAILABLE",
@@ -89,43 +95,38 @@ public class AssetPreviewService {
             String contentUrl
     ) {
         if (".pdf".equals(extension) || "application/pdf".equalsIgnoreCase(asset.mediaType())) {
-            return new PreviewDescriptor("PDF", "application/pdf", contentUrl, null, false);
-        }
-        if (isPowerPoint(extension)) {
-            return powerPointPreview(asset, path, extension);
+            return new PreviewDescriptor(
+                    "PDF", "application/pdf", contentUrl, null, false, false
+            );
         }
         if (isOffice(extension)) {
-            TextPreview text = extractOffice(path);
-            return new PreviewDescriptor("TEXT", "text/plain", null, text.content(), text.truncated());
+            return officePreview(asset, path, extension);
         }
         TextPreview text = readText(path);
-        return new PreviewDescriptor("TEXT", asset.mediaType(), null, text.content(), text.truncated());
+        return new PreviewDescriptor(
+                "TEXT", asset.mediaType(), null, text.content(), text.truncated(), false
+        );
     }
 
-    private PreviewDescriptor powerPointPreview(
+    private PreviewDescriptor officePreview(
             AssetService.AssetView asset,
             Path path,
             String extension
     ) {
-        if (powerPointConverter.convert(path, extension, asset.sha256()).isPresent()) {
+        if (officePreviewConverter.convert(path, extension, asset.sha256()).isPresent()) {
             return new PreviewDescriptor(
                     "PDF",
                     "application/pdf",
                     "/api/v1/assets/" + asset.id() + "/preview/content",
                     null,
+                    false,
                     false
             );
         }
-        TextPreview text = extractPowerPointText(path);
-        return new PreviewDescriptor("TEXT", "text/plain", null, text.content(), text.truncated());
-    }
-
-    private TextPreview extractOffice(Path path) {
-        return extractPoiText(path);
-    }
-
-    private TextPreview extractPowerPointText(Path path) {
-        return extractPoiText(path);
+        TextPreview text = extractPoiText(path);
+        return new PreviewDescriptor(
+                "TEXT", "text/plain", null, text.content(), text.truncated(), true
+        );
     }
 
     private TextPreview extractPoiText(Path path) {
@@ -196,13 +197,9 @@ public class AssetPreviewService {
 
     private static boolean isOffice(String extension) {
         return switch (extension) {
-            case ".doc", ".docx", ".xls", ".xlsx" -> true;
+            case ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx" -> true;
             default -> false;
         };
-    }
-
-    private static boolean isPowerPoint(String extension) {
-        return ".ppt".equals(extension) || ".pptx".equals(extension);
     }
 
     private static String extension(String name) {
@@ -221,7 +218,8 @@ public class AssetPreviewService {
             String mediaType,
             String contentUrl,
             String text,
-            boolean truncated
+            boolean truncated,
+            boolean fallback
     ) {
     }
 

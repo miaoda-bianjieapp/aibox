@@ -355,4 +355,25 @@ void main() {
     expect(artifact.assets.single.available, isFalse);
     expect(artifact.assets.single.status, 'DELETED');
   });
+
+  test('asset preview descriptor exposes Office text fallback state', () {
+    final preview = AssetPreviewDescriptor.fromJson({
+      'kind': 'TEXT',
+      'mediaType': 'text/plain',
+      'contentUrl': null,
+      'text': 'Extracted Office text',
+      'truncated': false,
+      'fallback': true,
+    });
+    final legacyPreview = AssetPreviewDescriptor.fromJson({
+      'kind': 'PDF',
+      'mediaType': 'application/pdf',
+      'contentUrl': '/api/v1/assets/asset-1/preview/content',
+      'text': null,
+      'truncated': false,
+    });
+
+    expect(preview.fallback, isTrue);
+    expect(legacyPreview.fallback, isFalse);
+  });
 }

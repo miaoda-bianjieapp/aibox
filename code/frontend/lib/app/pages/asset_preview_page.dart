@@ -54,7 +54,16 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
               future: _future,
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 16),
+                        Text('正在生成文件预览...'),
+                      ],
+                    ),
+                  );
                 }
                 if (snapshot.hasError) {
                   return _PreviewMessage(
@@ -115,6 +124,7 @@ class _PreviewBody extends StatelessWidget {
       'TEXT' => _TextPreview(
           text: descriptor.text ?? '',
           truncated: descriptor.truncated,
+          fallback: descriptor.fallback,
           initialLine: initialLine,
           endLine: endLine,
         ),
@@ -467,12 +477,14 @@ class _TextPreview extends StatefulWidget {
   const _TextPreview({
     required this.text,
     required this.truncated,
+    required this.fallback,
     required this.initialLine,
     required this.endLine,
   });
 
   final String text;
   final bool truncated;
+  final bool fallback;
   final int? initialLine;
   final int? endLine;
 
@@ -509,6 +521,7 @@ class _TextPreviewState extends State<_TextPreview> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
       children: [
+        if (widget.fallback) _buildFallbackNotice(),
         if (widget.truncated) _buildTruncatedNotice(),
         SelectableText(
           widget.text.isEmpty ? '文件没有可显示的文本内容。' : widget.text,
@@ -534,6 +547,7 @@ class _TextPreviewState extends State<_TextPreview> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.fallback) _buildFallbackNotice(),
           if (widget.truncated) _buildTruncatedNotice(),
           if (before.isNotEmpty)
             SelectableText(
@@ -589,6 +603,20 @@ class _TextPreviewState extends State<_TextPreview> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: const Text('文件较大，当前显示前 200 万个字符。'),
+    );
+  }
+
+  Widget _buildFallbackNotice() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E8),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Text(
+        '未能生成版式预览，当前展示提取文本；表格布局和图片可能不完整。',
+      ),
     );
   }
 
