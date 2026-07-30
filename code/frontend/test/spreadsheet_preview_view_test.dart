@@ -69,6 +69,38 @@ void main() {
     expect(find.text('列6'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('zooms the spreadsheet with controls and supports pinch scaling',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SpreadsheetPreviewView(preview: _widePreview()),
+        ),
+      ),
+    );
+
+    expect(find.text('100%'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('spreadsheet-zoom-in')),
+    );
+    await tester.pump();
+    expect(find.text('125%'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('spreadsheet-zoom-reset')),
+    );
+    await tester.pump();
+    expect(find.text('100%'), findsOneWidget);
+
+    final viewer = tester.widget<InteractiveViewer>(
+      find.byKey(const ValueKey<String>('spreadsheet-zoom-surface')),
+    );
+    expect(viewer.scaleEnabled, isTrue);
+    expect(viewer.minScale, 0.5);
+    expect(viewer.maxScale, 3);
+  });
 }
 
 SpreadsheetPreviewData _preview() => const SpreadsheetPreviewData(
