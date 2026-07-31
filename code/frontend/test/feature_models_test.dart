@@ -355,4 +355,62 @@ void main() {
     expect(artifact.assets.single.available, isFalse);
     expect(artifact.assets.single.status, 'DELETED');
   });
+
+  test('asset preview descriptor exposes Office text fallback state', () {
+    final preview = AssetPreviewDescriptor.fromJson({
+      'kind': 'TEXT',
+      'mediaType': 'text/plain',
+      'contentUrl': null,
+      'text': 'Extracted Office text',
+      'truncated': false,
+      'fallback': true,
+    });
+    final legacyPreview = AssetPreviewDescriptor.fromJson({
+      'kind': 'PDF',
+      'mediaType': 'application/pdf',
+      'contentUrl': '/api/v1/assets/asset-1/preview/content',
+      'text': null,
+      'truncated': false,
+    });
+
+    expect(preview.fallback, isTrue);
+    expect(legacyPreview.fallback, isFalse);
+  });
+
+  test('asset preview descriptor parses structured spreadsheet rows', () {
+    final preview = AssetPreviewDescriptor.fromJson({
+      'kind': 'SPREADSHEET',
+      'mediaType':
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'contentUrl': '/api/v1/assets/asset-1/preview/content',
+      'text': null,
+      'truncated': false,
+      'fallback': false,
+      'spreadsheet': {
+        'truncated': false,
+        'sheets': [
+          {
+            'name': '销售',
+            'headerRowNumber': 2,
+            'columns': ['地区', '销售额'],
+            'truncated': false,
+            'rows': [
+              {
+                'rowNumber': 4,
+                'cells': ['华东', '42'],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(preview.spreadsheet?.sheets.single.name, '销售');
+    expect(preview.spreadsheet?.sheets.single.headerRowNumber, 2);
+    expect(preview.spreadsheet?.sheets.single.rows.single.rowNumber, 4);
+    expect(
+      preview.spreadsheet?.sheets.single.rows.single.cells,
+      ['华东', '42'],
+    );
+  });
 }

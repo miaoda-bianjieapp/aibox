@@ -21,6 +21,19 @@ void main() {
     );
   });
 
+  test('Excel row locator maps to the spreadsheet sheet and rows', () {
+    const locator = {
+      'type': 'EXCEL_ROWS',
+      'sheetName': '销售',
+      'startRow': 12,
+      'endRow': 15,
+    };
+
+    expect(documentSourceInitialSheetName(locator), '销售');
+    expect(documentSourceInitialRow(locator), 12);
+    expect(documentSourceEndRow(locator), 15);
+  });
+
   testWidgets('document sources are collapsed until the user expands them',
       (tester) async {
     await tester.pumpWidget(

@@ -212,6 +212,8 @@ class BackendApi {
               : '${_serverOrigin()}$contentUrl',
       text: preview.text,
       truncated: preview.truncated,
+      fallback: preview.fallback,
+      spreadsheet: preview.spreadsheet,
     );
   }
 

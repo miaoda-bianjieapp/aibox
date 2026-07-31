@@ -105,6 +105,9 @@ class DocumentSourcePage extends StatelessWidget {
     final pageNumber = documentSourceInitialPage(locator);
     final startLine = _integer(locator['startLine']);
     final endLine = _integer(locator['endLine']);
+    final sheetName = documentSourceInitialSheetName(locator);
+    final startRow = documentSourceInitialRow(locator);
+    final endRow = documentSourceEndRow(locator);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => AssetPreviewPage(
@@ -113,6 +116,9 @@ class DocumentSourcePage extends StatelessWidget {
           initialPage: pageNumber,
           initialLine: startLine,
           endLine: endLine,
+          initialSheetName: sheetName,
+          initialRow: startRow,
+          endRow: endRow,
         ),
       ),
     );
@@ -124,6 +130,22 @@ int? documentSourceInitialPage(Map<String, dynamic> locator) {
     return _integer(locator['slideNumber']) ?? _integer(locator['pageNumber']);
   }
   return _integer(locator['pageNumber']);
+}
+
+String? documentSourceInitialSheetName(Map<String, dynamic> locator) {
+  if (locator['type']?.toString() != 'EXCEL_ROWS') return null;
+  final value = locator['sheetName']?.toString().trim();
+  return value == null || value.isEmpty ? null : value;
+}
+
+int? documentSourceInitialRow(Map<String, dynamic> locator) {
+  if (locator['type']?.toString() != 'EXCEL_ROWS') return null;
+  return _integer(locator['startRow']);
+}
+
+int? documentSourceEndRow(Map<String, dynamic> locator) {
+  if (locator['type']?.toString() != 'EXCEL_ROWS') return null;
+  return _integer(locator['endRow']);
 }
 
 class _SourceWarning extends StatelessWidget {

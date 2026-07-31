@@ -91,6 +91,20 @@ abstract final class NativeFilePicker {
         .toList();
   }
 
+  static Future<List<PickedLocalFile>> pickImages({
+    int maxFiles = 1,
+  }) async {
+    final result = await _channel.invokeListMethod<dynamic>(
+      'pickImages',
+      {'maxFiles': maxFiles.clamp(1, 10)},
+    );
+    if (result == null) return const [];
+    return result
+        .whereType<Map>()
+        .map((item) => _fromResult(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
   static PickedLocalFile _fromResult(Map<String, dynamic> result) {
     final path = result['path']?.toString();
     final sizeBytes = result['sizeBytes'] is num
@@ -163,6 +177,27 @@ abstract final class NativeFilePicker {
       },
     );
     return result == null ? null : SavedLocalFile.fromJson(result);
+  }
+
+  static Future<void> openFile({
+    required String filePath,
+    required String fileName,
+    required String mediaType,
+  }) async {
+    final opened = await _channel.invokeMethod<bool>(
+      'openFile',
+      {
+        'filePath': filePath,
+        'fileName': fileName,
+        'mediaType': mediaType,
+      },
+    );
+    if (opened != true) {
+      throw PlatformException(
+        code: 'FILE_OPEN_FAILED',
+        message: '无法打开文件',
+      );
+    }
   }
 
   static Future<void> cancelDirectorySave() {

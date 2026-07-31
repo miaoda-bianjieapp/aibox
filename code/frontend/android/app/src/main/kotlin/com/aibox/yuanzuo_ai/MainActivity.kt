@@ -1,17 +1,24 @@
 package com.aibox.yuanzuo_ai
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
+import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.InterruptedIOException
 import java.util.Locale
 import java.util.UUID
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -22,6 +29,7 @@ class MainActivity : FlutterActivity() {
     private val saveRequestCode = 9105
     private val directoryRequestCode = 9106
     private val pathSaveRequestCode = 9107
+    private val imagePickRequestCode = 9108
     private var pendingResult: MethodChannel.Result? = null
     private var pendingSaveBytes: ByteArray? = null
     private var pendingSaveFilePath: String? = null
@@ -43,6 +51,80 @@ class MainActivity : FlutterActivity() {
                 }
                 if (pendingResult != null) {
                     result.error("FILE_OPERATION_IN_PROGRESS", "A file operation is already in progress", null)
+                    return@setMethodCallHandler
+                }
+                if (call.method == "openFile") {
+                    val filePath = call.argument<String>("filePath")
+                    if (filePath.isNullOrBlank()) {
+                        result.error("SOURCE_FILE_INVALID", "文件缓存不可用", null)
+                        return@setMethodCallHandler
+                    }
+                    val fileName = call.argument<String>("fileName") ?: "document"
+                    val requestedMediaType =
+                        call.argument<String>("mediaType") ?: "application/octet-stream"
+                    try {
+                        val source = requireCachedSourceFile(filePath)
+                        val sharedFile = copyToExternalViewerCache(source, fileName)
+                        val contentUri = FileProvider.getUriForFile(
+                            this,
+                            "$packageName.file_provider",
+                            sharedFile,
+                        )
+                        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(
+                                contentUri,
+                                resolveViewMediaType(fileName, requestedMediaType),
+                            )
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            clipData = ClipData.newUri(contentResolver, fileName, contentUri)
+                        }
+                        val handlers = packageManager.queryIntentActivities(
+                            viewIntent,
+                            PackageManager.MATCH_DEFAULT_ONLY,
+                        )
+                        if (handlers.isEmpty()) {
+                            result.error(
+                                "FILE_VIEWER_UNAVAILABLE",
+                                "No application can open this file",
+                                null,
+                            )
+                            return@setMethodCallHandler
+                        }
+                        startActivity(Intent.createChooser(viewIntent, "选择打开方式"))
+                        result.success(true)
+                    } catch (exception: ActivityNotFoundException) {
+                        result.error(
+                            "FILE_VIEWER_UNAVAILABLE",
+                            "No application can open this file",
+                            null,
+                        )
+                    } catch (exception: SecurityException) {
+                        Log.e(
+                            fileLogTag,
+                            "External file open denied type=${exception.javaClass.simpleName}"
+                        )
+                        result.error(
+                            "FILE_OPEN_DENIED",
+                            "File access was denied",
+                            mapOf("cause" to exception.javaClass.simpleName),
+                        )
+                    } catch (exception: IllegalArgumentException) {
+                        result.error(
+                            "SOURCE_FILE_INVALID",
+                            "文件缓存不可用",
+                            mapOf("cause" to exception.javaClass.simpleName),
+                        )
+                    } catch (exception: Exception) {
+                        Log.e(
+                            fileLogTag,
+                            "External file open failed type=${exception.javaClass.simpleName}"
+                        )
+                        result.error(
+                            "FILE_OPEN_FAILED",
+                            "Unable to open file",
+                            mapOf("cause" to exception.javaClass.simpleName),
+                        )
+                    }
                     return@setMethodCallHandler
                 }
                 if (call.method == "saveFile") {
@@ -147,6 +229,39 @@ class MainActivity : FlutterActivity() {
                     startActivityForResult(intent, directoryRequestCode)
                     return@setMethodCallHandler
                 }
+                if (call.method == "pickImages") {
+                    pendingResult = result
+                    pendingMultiple = true
+                    pendingMaxFiles =
+                        (call.argument<Int>("maxFiles") ?: 1).coerceIn(1, 10)
+                    try {
+                        val request = PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                        )
+                        val intent = if (pendingMaxFiles == 1) {
+                            ActivityResultContracts.PickVisualMedia()
+                                .createIntent(this, request)
+                        } else {
+                            ActivityResultContracts.PickMultipleVisualMedia(pendingMaxFiles)
+                                .createIntent(this, request)
+                        }
+                        startActivityForResult(intent, imagePickRequestCode)
+                    } catch (exception: Exception) {
+                        pendingResult = null
+                        pendingMultiple = false
+                        pendingMaxFiles = 1
+                        Log.e(
+                            fileLogTag,
+                            "Photo picker launch failed type=${exception.javaClass.simpleName}"
+                        )
+                        result.error(
+                            "IMAGE_PICKER_UNAVAILABLE",
+                            "Unable to open the system photo picker",
+                            mapOf("cause" to exception.javaClass.simpleName),
+                        )
+                    }
+                    return@setMethodCallHandler
+                }
                 if (call.method != "pickFile" && call.method != "pickFiles") {
                     result.notImplemented()
                     return@setMethodCallHandler
@@ -173,12 +288,34 @@ class MainActivity : FlutterActivity() {
             && requestCode != saveRequestCode
             && requestCode != directoryRequestCode
             && requestCode != pathSaveRequestCode
+            && requestCode != imagePickRequestCode
         ) {
             super.onActivityResult(requestCode, resultCode, data)
             return
         }
         val result = pendingResult
         pendingResult = null
+        if (requestCode == imagePickRequestCode) {
+            val maxFiles = pendingMaxFiles
+            pendingMultiple = false
+            pendingMaxFiles = 1
+            if (resultCode != Activity.RESULT_OK || data == null) {
+                result?.success(null)
+                return
+            }
+            val uris = if (maxFiles == 1) {
+                listOfNotNull(
+                    ActivityResultContracts.PickVisualMedia()
+                        .parseResult(resultCode, data)
+                )
+            } else {
+                ActivityResultContracts.PickMultipleVisualMedia(maxFiles)
+                    .parseResult(resultCode, data)
+                    .take(maxFiles)
+            }
+            completePickedUris(result, uris, multiple = true)
+            return
+        }
         if (requestCode == directoryRequestCode) {
             val directoryUri = data?.data
             if (resultCode != Activity.RESULT_OK || directoryUri == null) {
@@ -275,6 +412,18 @@ class MainActivity : FlutterActivity() {
                 add(data.data!!)
             }
         }
+        if (uris.isEmpty()) {
+            result?.success(null)
+            return
+        }
+        completePickedUris(result, uris, multiple)
+    }
+
+    private fun completePickedUris(
+        result: MethodChannel.Result?,
+        uris: List<Uri>,
+        multiple: Boolean,
+    ) {
         if (uris.isEmpty()) {
             result?.success(null)
             return
@@ -396,18 +545,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun requireCachedSourceFile(filePath: String): File {
-        val source = File(filePath).canonicalFile
+        val source = File(filePath)
         val cacheRoots = buildList {
-            add(cacheDir.canonicalFile)
-            add(codeCacheDir.canonicalFile)
-            externalCacheDirs
-                .filterNotNull()
-                .mapTo(this) { it.canonicalFile }
+            add(cacheDir)
+            add(codeCacheDir)
+            add(filesDir)
+            externalCacheDirs.filterNotNull().forEach(::add)
         }
-        val insideCache = cacheRoots.any { root ->
-            source.path == root.path
-                || source.path.startsWith(root.path + File.separator)
-        }
+        val insideCache = cacheRoots.any { root -> isInsideDirectory(source, root) }
         if (!insideCache || !source.isFile) {
             Log.w(
                 fileLogTag,
@@ -416,6 +561,52 @@ class MainActivity : FlutterActivity() {
             throw IllegalArgumentException("Source file is outside the application cache")
         }
         return source
+    }
+
+    private fun isInsideDirectory(source: File, root: File): Boolean {
+        val sourcePaths = normalizedPaths(source)
+        val rootPaths = normalizedPaths(root)
+        return sourcePaths.any { sourcePath ->
+            rootPaths.any { rootPath ->
+                sourcePath == rootPath
+                    || sourcePath.startsWith(rootPath + File.separator)
+            }
+        }
+    }
+
+    private fun normalizedPaths(file: File): Set<String> {
+        return buildSet {
+            add(file.absoluteFile.normalize().path)
+            runCatching { file.canonicalFile.path }.getOrNull()?.let(::add)
+        }
+    }
+
+    private fun copyToExternalViewerCache(
+        source: File,
+        requestedName: String,
+    ): File {
+        val directory = File(cacheDir, externalViewerCacheDirectory).apply {
+            if (!exists() && !mkdirs()) {
+                throw IllegalStateException("External viewer cache cannot be created")
+            }
+        }
+        pruneExternalViewerCache(directory)
+        val safeName = normalizeSavedFileName(requestedName)
+        val sessionDirectory = File(directory, UUID.randomUUID().toString()).apply {
+            if (!mkdirs()) {
+                throw IllegalStateException("External viewer session cannot be created")
+            }
+        }
+        val target = File(sessionDirectory, safeName)
+        source.copyTo(target, overwrite = false)
+        return target
+    }
+
+    private fun pruneExternalViewerCache(directory: File) {
+        val expiry = System.currentTimeMillis() - externalViewerCacheLifetimeMillis
+        directory.listFiles()
+            ?.filter { file -> file.lastModified() < expiry }
+            ?.forEach { file -> runCatching { file.deleteRecursively() } }
     }
 
     private fun queryDisplayName(uri: Uri): String? {
@@ -430,6 +621,25 @@ class MainActivity : FlutterActivity() {
             val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (column < 0) null else cursor.getString(column)
         }
+    }
+
+    private fun resolveViewMediaType(
+        fileName: String,
+        requestedMediaType: String,
+    ): String {
+        val normalized = requestedMediaType.trim()
+        if (
+            normalized.isNotEmpty()
+            && normalized != "application/octet-stream"
+            && normalized != "*/*"
+        ) {
+            return normalized
+        }
+        val extension = fileName
+            .substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            ?: normalized.ifBlank { "application/octet-stream" }
     }
 
     private fun savedFileResult(
@@ -500,9 +710,14 @@ class MainActivity : FlutterActivity() {
         File(cacheDir, "picked-files").listFiles()?.forEach { file ->
             runCatching { file.delete() }
         }
+        File(cacheDir, externalViewerCacheDirectory)
+            .takeIf(File::exists)
+            ?.let(::pruneExternalViewerCache)
     }
 
     companion object {
         private const val fileLogTag = "YuanzuoFile"
+        private const val externalViewerCacheDirectory = "external-viewer"
+        private const val externalViewerCacheLifetimeMillis = 24 * 60 * 60 * 1000L
     }
 }

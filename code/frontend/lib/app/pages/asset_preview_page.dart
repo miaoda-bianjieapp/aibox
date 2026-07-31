@@ -2,13 +2,26 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/feature_models.dart';
 import '../network/backend_api.dart';
+import '../network/native_file_picker.dart';
 import '../theme/app_theme.dart';
+import '../widgets/spreadsheet_preview_view.dart';
+
+typedef AssetPreviewLoader = Future<AssetPreviewDescriptor> Function(
+  String assetId,
+);
+typedef AssetExternalFileDownloader = Future<File> Function(AssetView asset);
+typedef AssetExternalFileOpener = Future<void> Function(
+  File file,
+  AssetView asset,
+);
+typedef AssetExternalFileCleaner = Future<void> Function(File file);
 
 class AssetPreviewPage extends StatefulWidget {
   const AssetPreviewPage({
@@ -18,6 +31,13 @@ class AssetPreviewPage extends StatefulWidget {
     this.initialPage,
     this.initialLine,
     this.endLine,
+    this.initialSheetName,
+    this.initialRow,
+    this.endRow,
+    this.previewLoader,
+    this.externalFileDownloader,
+    this.externalFileOpener,
+    this.externalFileCleaner,
   });
 
   final BackendApi api;
@@ -25,6 +45,13 @@ class AssetPreviewPage extends StatefulWidget {
   final int? initialPage;
   final int? initialLine;
   final int? endLine;
+  final String? initialSheetName;
+  final int? initialRow;
+  final int? endRow;
+  final AssetPreviewLoader? previewLoader;
+  final AssetExternalFileDownloader? externalFileDownloader;
+  final AssetExternalFileOpener? externalFileOpener;
+  final AssetExternalFileCleaner? externalFileCleaner;
 
   @override
   State<AssetPreviewPage> createState() => _AssetPreviewPageState();
@@ -32,11 +59,23 @@ class AssetPreviewPage extends StatefulWidget {
 
 class _AssetPreviewPageState extends State<AssetPreviewPage> {
   late final Future<AssetPreviewDescriptor> _future;
+  final Set<File> _externalViewerFiles = {};
+  bool _openingExternalViewer = false;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.api.getAssetPreview(widget.asset.id);
+    _future = (widget.previewLoader ?? widget.api.getAssetPreview)(
+      widget.asset.id,
+    );
+  }
+
+  @override
+  void dispose() {
+    for (final file in _externalViewerFiles) {
+      unawaited(_cleanExternalViewerFile(file));
+    }
+    super.dispose();
   }
 
   @override
@@ -48,13 +87,38 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          IconButton(
+            key: const ValueKey<String>('asset-preview-open-external'),
+            onPressed: widget.asset.available && !_openingExternalViewer
+                ? _openWithSystemViewer
+                : null,
+            tooltip: '使用其他应用打开',
+            icon: _openingExternalViewer
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.open_in_new_rounded),
+          ),
+        ],
       ),
       body: widget.asset.available
           ? FutureBuilder<AssetPreviewDescriptor>(
               future: _future,
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 16),
+                        Text('正在生成文件预览...'),
+                      ],
+                    ),
+                  );
                 }
                 if (snapshot.hasError) {
                   return _PreviewMessage(
@@ -70,6 +134,9 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
                   initialPage: widget.initialPage,
                   initialLine: widget.initialLine,
                   endLine: widget.endLine,
+                  initialSheetName: widget.initialSheetName,
+                  initialRow: widget.initialRow,
+                  endRow: widget.endRow,
                 );
               },
             )
@@ -79,6 +146,52 @@ class _AssetPreviewPageState extends State<AssetPreviewPage> {
               message: '任务记录和文件信息仍然保留，需要继续修改时请重新上传文件。',
             ),
     );
+  }
+
+  Future<void> _openWithSystemViewer() async {
+    if (_openingExternalViewer || !widget.asset.available) return;
+    setState(() => _openingExternalViewer = true);
+    File? file;
+    var retainedForViewer = false;
+    try {
+      file = await (widget.externalFileDownloader?.call(widget.asset) ??
+          widget.api.downloadAssetToTemporaryFile(
+            widget.asset.id,
+            fileName: widget.asset.name,
+          ));
+      final opener = widget.externalFileOpener;
+      if (opener == null) {
+        await NativeFilePicker.openFile(
+          filePath: file.path,
+          fileName: widget.asset.name,
+          mediaType: widget.asset.mediaType,
+        );
+      } else {
+        await opener(file, widget.asset);
+      }
+      _externalViewerFiles.add(file);
+      retainedForViewer = true;
+    } catch (exception) {
+      if (file != null && !retainedForViewer) {
+        await _cleanExternalViewerFile(file);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_externalOpenErrorMessage(exception))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _openingExternalViewer = false);
+    }
+  }
+
+  Future<void> _cleanExternalViewerFile(File file) async {
+    final cleaner = widget.externalFileCleaner;
+    if (cleaner != null) {
+      await cleaner(file);
+      return;
+    }
+    await _deletePreviewFile(file);
   }
 }
 
@@ -90,6 +203,9 @@ class _PreviewBody extends StatelessWidget {
     required this.initialPage,
     required this.initialLine,
     required this.endLine,
+    required this.initialSheetName,
+    required this.initialRow,
+    required this.endRow,
   });
 
   final AssetPreviewDescriptor descriptor;
@@ -98,6 +214,9 @@ class _PreviewBody extends StatelessWidget {
   final int? initialPage;
   final int? initialLine;
   final int? endLine;
+  final String? initialSheetName;
+  final int? initialRow;
+  final int? endRow;
 
   @override
   Widget build(BuildContext context) {
@@ -112,9 +231,26 @@ class _PreviewBody extends StatelessWidget {
           fileName: _pdfFileName(asset.name),
           initialPage: initialPage,
         ),
+      'SPREADSHEET' when descriptor.spreadsheet != null =>
+        SpreadsheetPreviewView(
+          preview: descriptor.spreadsheet!,
+          initialSheetName: initialSheetName,
+          initialRow: initialRow,
+          endRow: endRow,
+          layoutUnavailable: descriptor.fallback,
+          layoutPreview: url == null
+              ? null
+              : _PdfPreview(
+                  api: api,
+                  contentUrl: url,
+                  fileName: _pdfFileName(asset.name),
+                  initialPage: initialPage,
+                ),
+        ),
       'TEXT' => _TextPreview(
           text: descriptor.text ?? '',
           truncated: descriptor.truncated,
+          fallback: descriptor.fallback,
           initialLine: initialLine,
           endLine: endLine,
         ),
@@ -467,12 +603,14 @@ class _TextPreview extends StatefulWidget {
   const _TextPreview({
     required this.text,
     required this.truncated,
+    required this.fallback,
     required this.initialLine,
     required this.endLine,
   });
 
   final String text;
   final bool truncated;
+  final bool fallback;
   final int? initialLine;
   final int? endLine;
 
@@ -509,6 +647,7 @@ class _TextPreviewState extends State<_TextPreview> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
       children: [
+        if (widget.fallback) _buildFallbackNotice(),
         if (widget.truncated) _buildTruncatedNotice(),
         SelectableText(
           widget.text.isEmpty ? '文件没有可显示的文本内容。' : widget.text,
@@ -534,6 +673,7 @@ class _TextPreviewState extends State<_TextPreview> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.fallback) _buildFallbackNotice(),
           if (widget.truncated) _buildTruncatedNotice(),
           if (before.isNotEmpty)
             SelectableText(
@@ -589,6 +729,20 @@ class _TextPreviewState extends State<_TextPreview> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: const Text('文件较大，当前显示前 200 万个字符。'),
+    );
+  }
+
+  Widget _buildFallbackNotice() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E8),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Text(
+        '未能生成版式预览，当前展示提取文本；表格布局和图片可能不完整。',
+      ),
     );
   }
 
@@ -658,4 +812,16 @@ String _pdfFileName(String originalName) {
       ? originalName
       : originalName.substring(0, extensionIndex);
   return '${baseName.isEmpty ? 'preview' : baseName}.pdf';
+}
+
+String _externalOpenErrorMessage(Object exception) {
+  if (exception is PlatformException) {
+    return switch (exception.code) {
+      'FILE_VIEWER_UNAVAILABLE' => '手机上没有可打开此文件的应用',
+      'SOURCE_FILE_INVALID' => '文件缓存不可用，请重新打开预览后重试',
+      'FILE_OPEN_DENIED' => '系统拒绝共享该文件，请重试',
+      _ => exception.message ?? '无法使用其他应用打开文件',
+    };
+  }
+  return exception.toString().replaceFirst('ApiException: ', '');
 }

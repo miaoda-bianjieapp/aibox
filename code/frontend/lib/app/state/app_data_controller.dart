@@ -74,24 +74,86 @@ class AppDataController extends ChangeNotifier {
     final file = await NativeFilePicker.pick(mimeTypes: mimeTypes);
     if (file == null) return null;
     try {
-      if (!_matchesMimeType(file.mediaType, mimeTypes)) {
-        throw const ApiException('文件类型不符合当前功能要求');
-      }
-      final normalizedName = file.name.toLowerCase();
-      if (allowedExtensions.isNotEmpty &&
-          !allowedExtensions
-              .map((value) => value.toLowerCase())
-              .any(normalizedName.endsWith)) {
-        throw ApiException('仅支持 ${allowedExtensions.join('、')} 格式');
-      }
-      if (maxSizeBytes != null && file.sizeBytes > maxSizeBytes) {
-        throw ApiException('单个文件不能超过 ${_formatMegabytes(maxSizeBytes)} MB');
-      }
+      _validatePickedFile(
+        file,
+        mimeTypes: mimeTypes,
+        allowedExtensions: allowedExtensions,
+        maxSizeBytes: maxSizeBytes,
+      );
       final asset = await api.uploadAsset(file);
       await refresh();
       return asset;
     } finally {
       await file.cleanup();
+    }
+  }
+
+  Future<List<AssetView>> pickImagesAndUpload({
+    int maxFiles = 1,
+    List<String> mimeTypes = const ['image/*'],
+    List<String> allowedExtensions = const [],
+    int? maxSizeBytes,
+    int? maxTotalSizeBytes,
+  }) async {
+    final files = await NativeFilePicker.pickImages(maxFiles: maxFiles);
+    if (files.isEmpty) return const [];
+    final uploaded = <AssetView>[];
+    try {
+      for (final file in files) {
+        _validatePickedFile(
+          file,
+          mimeTypes: mimeTypes,
+          allowedExtensions: allowedExtensions,
+          maxSizeBytes: maxSizeBytes,
+        );
+      }
+      final selectedBytes =
+          files.fold<int>(0, (sum, file) => sum + file.sizeBytes);
+      if (maxTotalSizeBytes != null && selectedBytes > maxTotalSizeBytes) {
+        throw ApiException(
+          '所选图片合计不能超过 ${_formatMegabytes(maxTotalSizeBytes)} MB',
+        );
+      }
+      for (final file in files) {
+        uploaded.add(await api.uploadAsset(file));
+      }
+      await refresh();
+      return List.unmodifiable(uploaded);
+    } catch (_) {
+      if (uploaded.isNotEmpty) {
+        try {
+          await api.deleteAssets(uploaded.map((asset) => asset.id));
+        } catch (_) {
+          // A refresh below exposes any asset that could not be rolled back.
+        }
+        await refresh();
+      }
+      rethrow;
+    } finally {
+      await Future.wait(files.map((file) => file.cleanup()));
+    }
+  }
+
+  void _validatePickedFile(
+    PickedLocalFile file, {
+    required List<String> mimeTypes,
+    required List<String> allowedExtensions,
+    required int? maxSizeBytes,
+  }) {
+    if (!_matchesMimeType(file.mediaType, mimeTypes)) {
+      throw const ApiException('文件类型不符合当前功能要求');
+    }
+    final normalizedName = file.name.toLowerCase();
+    if (allowedExtensions.isNotEmpty &&
+        !allowedExtensions
+            .map((value) => value.toLowerCase())
+            .any(normalizedName.endsWith)) {
+      throw ApiException('仅支持 ${allowedExtensions.join('、')} 格式');
+    }
+    if (maxSizeBytes != null && file.sizeBytes > maxSizeBytes) {
+      throw ApiException(
+        '单个文件不能超过 ${_formatMegabytes(maxSizeBytes)} MB',
+      );
     }
   }
 
