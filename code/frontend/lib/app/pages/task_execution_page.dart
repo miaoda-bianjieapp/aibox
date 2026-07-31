@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import '../models/run_output_models.dart';
 import '../network/task_execution_result.dart';
 import '../theme/app_theme.dart';
-import '../widgets/markdown_output_view.dart';
+import '../widgets/streaming_output_view.dart';
 
 class TaskExecutionController extends ChangeNotifier {
   TaskExecutionController({
@@ -27,6 +27,7 @@ class TaskExecutionController extends ChangeNotifier {
   bool _cancelling = false;
   bool _cancelled = false;
   bool _loadingSnapshot = false;
+  bool _contentStreamingStarted = false;
   Timer? _snapshotTimer;
 
   String get status => _status;
@@ -37,6 +38,7 @@ class TaskExecutionController extends ChangeNotifier {
   bool get cancelling => _cancelling;
   bool get cancelled => _cancelled;
   bool get running => _result == null && _error == null && !_cancelled;
+  bool get contentStreamingStarted => _contentStreamingStarted;
 
   void updateStatus(String value) {
     if (!running || value == _status) return;
@@ -61,8 +63,24 @@ class TaskExecutionController extends ChangeNotifier {
     if (current != null &&
         current.lastSequence == snapshot.lastSequence &&
         current.status == snapshot.status &&
-        current.content == snapshot.content) {
+        current.content == snapshot.content &&
+        current.updateType == snapshot.updateType) {
       return;
+    }
+    switch (snapshot.updateType) {
+      case RunOutputUpdateType.started:
+        _contentStreamingStarted = false;
+      case RunOutputUpdateType.append:
+        _contentStreamingStarted = true;
+      case RunOutputUpdateType.snapshot:
+        if (_isRenderableOutput(snapshot) && snapshot.content.isNotEmpty) {
+          _contentStreamingStarted = true;
+        }
+      case RunOutputUpdateType.replace:
+      case RunOutputUpdateType.completed:
+      case RunOutputUpdateType.failed:
+      case RunOutputUpdateType.partial:
+        break;
     }
     _output = snapshot;
     notifyListeners();
@@ -78,6 +96,7 @@ class TaskExecutionController extends ChangeNotifier {
 
   void fail(String message) {
     _stopSnapshotPolling();
+    _status = '生成失败';
     _error = message;
     _cancelling = false;
     notifyListeners();
@@ -134,6 +153,10 @@ class TaskExecutionController extends ChangeNotifier {
   }
 }
 
+bool _isRenderableOutput(RunOutputSnapshot snapshot) {
+  return snapshot.format == 'markdown' || snapshot.format == 'plain_text';
+}
+
 class TaskExecutionPage extends StatefulWidget {
   const TaskExecutionPage({
     super.key,
@@ -153,27 +176,24 @@ class TaskExecutionPage extends StatefulWidget {
 }
 
 class _TaskExecutionPageState extends State<TaskExecutionPage> {
-  static const double _bottomThreshold = 40;
-
   bool _completionHandled = false;
-  bool _followOutput = true;
-  bool _userScrolling = false;
-  String? _lastOutputContent;
-  int? _lastOutputSequence;
+  bool _playbackCompleted = false;
   final ScrollController _scrollController = ScrollController();
-  final GlobalKey _bottomAnchorKey = GlobalKey();
+  late final StreamingScrollFollowController _scrollFollowController;
 
   @override
   void initState() {
     super.initState();
+    _scrollFollowController = StreamingScrollFollowController(
+      scrollController: _scrollController,
+    );
     widget.controller.addListener(_onControllerChanged);
-    _scrollController.addListener(_restoreFollowingAtBottom);
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
-    _scrollController.removeListener(_restoreFollowingAtBottom);
+    _scrollFollowController.dispose();
     _scrollController.dispose();
     widget.controller.dispose();
     super.dispose();
@@ -181,20 +201,20 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
 
   void _onControllerChanged() {
     final output = widget.controller.output;
-    final outputChanged = output != null &&
-        (output.content != _lastOutputContent ||
-            output.lastSequence != _lastOutputSequence);
-    if (output != null) {
-      _lastOutputContent = output.content;
-      _lastOutputSequence = output.lastSequence;
-    }
-    if (!_userScrolling && !_followOutput && _isAtBottom()) {
-      _followOutput = true;
-    }
     if (mounted) setState(() {});
-    if (outputChanged && _followOutput) {
-      _scheduleScrollToBottom();
-    }
+    final result = widget.controller.result;
+    if (result == null || _completionHandled) return;
+    if (output?.content.isNotEmpty == true) return;
+    _playbackCompleted = true;
+    _handleCompletion();
+  }
+
+  void _handlePlaybackCompleted() {
+    if (_playbackCompleted) return;
+    setState(() => _playbackCompleted = true);
+  }
+
+  void _handleCompletion() {
     final result = widget.controller.result;
     if (result == null || _completionHandled) return;
     _completionHandled = true;
@@ -208,69 +228,7 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
         Navigator.of(context).pop();
       }
     });
-  }
-
-  bool _handleScrollNotification(ScrollNotification notification) {
-    if (notification.metrics.axis != Axis.vertical) return false;
-
-    if (notification is ScrollStartNotification &&
-        notification.dragDetails != null) {
-      setState(() {
-        _userScrolling = true;
-        _followOutput = false;
-      });
-    }
-
-    if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null &&
-        !_userScrolling) {
-      setState(() {
-        _userScrolling = true;
-        _followOutput = false;
-      });
-    }
-    if (notification is ScrollUpdateNotification && !_userScrolling) {
-      _restoreFollowingAtBottom();
-    }
-    if (notification is ScrollEndNotification) {
-      _userScrolling = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _restoreFollowingAtBottom();
-      });
-    }
-    return false;
-  }
-
-  bool _isAtBottom() {
-    if (!_scrollController.hasClients) return true;
-    return _scrollController.position.extentAfter <= _bottomThreshold;
-  }
-
-  void _restoreFollowingAtBottom() {
-    if (_userScrolling || !_scrollController.hasClients) return;
-    final atBottom = _isAtBottom();
-    if (atBottom && !_followOutput) {
-      setState(() {
-        _followOutput = true;
-      });
-    }
-  }
-
-  void _scheduleScrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_followOutput || _userScrolling) return;
-      final anchorContext = _bottomAnchorKey.currentContext;
-      if (anchorContext == null) return;
-      unawaited(Scrollable.ensureVisible(
-        anchorContext,
-        alignment: 1,
-        duration: Duration.zero,
-      ).then((_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _restoreFollowingAtBottom();
-        });
-      }));
-    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   Future<void> _copyAll(String text) async {
@@ -290,6 +248,8 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
             (output.format == 'markdown' || output.format == 'plain_text')
         ? output
         : null;
+    final showTopStatus =
+        !controller.contentStreamingStarted || controller.error != null;
     return PopScope(
       canPop: !controller.running,
       child: Scaffold(
@@ -312,57 +272,73 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
               ),
           ],
         ),
+        bottomNavigationBar: _ExecutionActionBar(
+          controller: controller,
+          playbackCompleted:
+              _playbackCompleted || output?.content.isNotEmpty != true,
+          onReturn: () => Navigator.of(context).pop(),
+        ),
         body: SafeArea(
           child: NotificationListener<ScrollNotification>(
-            onNotification: _handleScrollNotification,
+            onNotification: _scrollFollowController.handleNotification,
             child: SingleChildScrollView(
               key: const ValueKey('task-execution-scroll-view'),
               controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                18,
+                20,
+                output?.content.isNotEmpty == true ? 0 : 24,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      if (controller.running)
-                        const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else
-                        Icon(
-                          controller.error == null
-                              ? Icons.check_circle_outline_rounded
-                              : Icons.error_outline_rounded,
-                          size: 20,
-                          color: controller.error == null
-                              ? AppColors.accent
-                              : AppColors.danger,
-                        ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          controller.status,
-                          style: TextStyle(
+                  if (showTopStatus) ...[
+                    Row(
+                      children: [
+                        if (controller.running)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          Icon(
+                            controller.error == null
+                                ? Icons.check_circle_outline_rounded
+                                : Icons.error_outline_rounded,
+                            size: 20,
                             color: controller.error == null
                                 ? AppColors.accent
                                 : AppColors.danger,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
+                          ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            controller.status,
+                            style: TextStyle(
+                              color: controller.error == null
+                                  ? AppColors.accent
+                                  : AppColors.danger,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  const Divider(height: 1),
-                  const SizedBox(height: 18),
-                  if (controller.error != null)
-                    _ExecutionError(message: controller.error!)
-                  else if (output?.content.isNotEmpty == true)
-                    _buildOutput(output!, controller.running)
-                  else
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    const Divider(height: 1),
+                    const SizedBox(height: 18),
+                  ],
+                  if (controller.error != null) ...[
+                    _ExecutionError(message: controller.error!),
+                    if (output?.content.isNotEmpty == true)
+                      const SizedBox(height: 18),
+                  ],
+                  if (output?.content.isNotEmpty == true)
+                    _buildOutput(output!)
+                  else if (controller.error == null)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 72),
                       child: Column(
@@ -382,25 +358,6 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
                         ],
                       ),
                     ),
-                  const SizedBox(height: 24),
-                  if (controller.running)
-                    OutlinedButton.icon(
-                      onPressed:
-                          controller.runId == null || controller.cancelling
-                              ? null
-                              : controller.cancel,
-                      icon: const Icon(Icons.stop_circle_outlined),
-                      label: Text(
-                        controller.cancelling ? '正在取消' : '停止生成',
-                      ),
-                    )
-                  else if (controller.result == null)
-                    FilledButton.icon(
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.tune_rounded),
-                      label: const Text('返回修改'),
-                    ),
-                  SizedBox(key: _bottomAnchorKey, height: 1),
                 ],
               ),
             ),
@@ -410,19 +367,89 @@ class _TaskExecutionPageState extends State<TaskExecutionPage> {
     );
   }
 
-  Widget _buildOutput(RunOutputSnapshot output, bool streaming) {
-    if (output.format == 'plain_text') {
-      return SelectableText(
-        output.content,
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: AppColors.ink,
-              height: 1.55,
-            ),
+  Widget _buildOutput(RunOutputSnapshot output) {
+    final result = widget.controller.result;
+    final phase = result == null
+        ? widget.controller.error == null
+            ? StreamingOutputPhase.streaming
+            : StreamingOutputPhase.failed
+        : result.runStatus == 'PARTIAL'
+            ? StreamingOutputPhase.partial
+            : StreamingOutputPhase.succeeded;
+    return StreamingOutputView(
+      snapshot: output,
+      phase: phase,
+      stopRequested:
+          widget.controller.cancelling || widget.controller.cancelled,
+      onPlaybackCompleted: _handlePlaybackCompleted,
+      onSettled: _handleCompletion,
+      onContentChanged: _scrollFollowController.contentChanged,
+    );
+  }
+}
+
+class _ExecutionActionBar extends StatelessWidget {
+  const _ExecutionActionBar({
+    required this.controller,
+    required this.playbackCompleted,
+    required this.onReturn,
+  });
+
+  final TaskExecutionController controller;
+  final bool playbackCompleted;
+  final VoidCallback onReturn;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget action;
+    if (controller.running) {
+      action = OutlinedButton.icon(
+        key: const ValueKey('task-execution-stop-action'),
+        onPressed: controller.runId == null || controller.cancelling
+            ? null
+            : controller.cancel,
+        icon: const Icon(Icons.stop_circle_outlined),
+        label: Text(controller.cancelling ? '正在取消' : '停止生成'),
+      );
+    } else if (controller.result == null) {
+      action = FilledButton.icon(
+        key: const ValueKey('task-execution-return-action'),
+        onPressed: onReturn,
+        icon: const Icon(Icons.tune_rounded),
+        label: const Text('返回修改'),
+      );
+    } else if (!playbackCompleted) {
+      action = OutlinedButton.icon(
+        key: const ValueKey('task-execution-settling-action'),
+        onPressed: null,
+        icon: const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        label: const Text('正在完成'),
+      );
+    } else {
+      action = OutlinedButton.icon(
+        key: const ValueKey('task-execution-complete-action'),
+        onPressed: null,
+        icon: const Icon(Icons.check_rounded),
+        label: const Text('生成完成'),
       );
     }
-    return MarkdownOutputView(
-      markdown: output.content,
-      streaming: streaming,
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        key: const ValueKey('task-execution-action-bar'),
+        height: 68,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: const BoxDecoration(
+          color: AppColors.paper,
+          border: Border(top: BorderSide(color: AppColors.line)),
+        ),
+        child: action,
+      ),
     );
   }
 }

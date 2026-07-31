@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/feature_models.dart';
+import '../models/run_output_models.dart';
 import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/markdown_output_view.dart';
+import '../widgets/streaming_output_view.dart';
 import 'document_source_page.dart';
 import 'task_history_page.dart';
 
@@ -32,18 +34,23 @@ class DocumentQaPage extends StatefulWidget {
 class _DocumentQaPageState extends State<DocumentQaPage> {
   final TextEditingController _questionController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  late final StreamingScrollFollowController _scrollFollowController;
   final List<AssetView> _setupAssets = [];
   TaskDetail? _detail;
   String? _taskId;
   String? _selectedBundleCode;
   String? _status;
   String? _error;
-  String? _streamingAnswer;
+  RunOutputSnapshot? _streamingOutput;
   String? _pendingQuestion;
   String? _runningRunId;
+  Completer<void>? _streamingSettled;
+  StreamingOutputPhase _streamingPhase = StreamingOutputPhase.streaming;
   bool _loading = true;
   bool _uploading = false;
   bool _sending = false;
+  bool _streamContentStarted = false;
+  bool _stopRequested = false;
 
   List<ModelBundle> get _bundles => widget.feature.modelBundles;
   Map<String, dynamic> get _documentOptions =>
@@ -93,6 +100,9 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
   @override
   void initState() {
     super.initState();
+    _scrollFollowController = StreamingScrollFollowController(
+      scrollController: _scrollController,
+    );
     _taskId = widget.taskId;
     _selectedBundleCode = _bundles.firstOrNull?.code;
     unawaited(_initialize());
@@ -100,7 +110,12 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
 
   @override
   void dispose() {
+    final streamingSettled = _streamingSettled;
+    if (streamingSettled != null && !streamingSettled.isCompleted) {
+      streamingSettled.complete();
+    }
     _questionController.dispose();
+    _scrollFollowController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -268,21 +283,30 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
                   !_sending &&
                   (_pendingQuestion == null || _pendingQuestion!.isEmpty)
               ? const _ConversationEmpty()
-              : ListView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
-                  children: [
-                    ...artifacts.map(_buildTurn),
-                    if (_pendingQuestion != null)
-                      _UserMessage(text: _pendingQuestion!),
-                    if (_sending)
-                      _AssistantMessage(
-                        markdown: _streamingAnswer ?? '',
-                        streaming: true,
-                        citations: const [],
-                        onCitation: (_) {},
-                      ),
-                  ],
+              : NotificationListener<ScrollNotification>(
+                  onNotification: _scrollFollowController.handleNotification,
+                  child: ListView(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+                    children: [
+                      ...artifacts.map(_buildTurn),
+                      if (_pendingQuestion != null)
+                        _UserMessage(text: _pendingQuestion!),
+                      if (_streamingOutput?.content.isNotEmpty == true)
+                        _AssistantMessage(
+                          key: const ValueKey('document-qa-streaming-answer'),
+                          markdown: '',
+                          citations: const [],
+                          onCitation: (_) {},
+                          streamingSnapshot: _streamingOutput,
+                          streamingPhase: _streamingPhase,
+                          stopRequested: _stopRequested,
+                          onStreamingSettled: _notifyStreamingSettled,
+                          onStreamingContentChanged:
+                              _scrollFollowController.contentChanged,
+                        ),
+                    ],
+                  ),
                 ),
         ),
         _Composer(
@@ -447,14 +471,18 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
     setState(() {
       _sending = true;
       _pendingQuestion = question;
-      _streamingAnswer = '';
+      _streamingOutput = null;
+      _streamingPhase = StreamingOutputPhase.streaming;
+      _streamingSettled = Completer<void>();
+      _streamContentStarted = false;
+      _stopRequested = false;
       _status = '正在准备文档';
       _error = null;
     });
     _questionController.clear();
-    _scrollToBottom();
+    _scrollToBottom(force: true);
     try {
-      await widget.data.api.executeFeature(
+      final result = await widget.data.api.executeFeature(
         feature: widget.feature,
         taskTitle: _detail?.task.title ?? widget.feature.title,
         projectId: _detail?.task.projectId,
@@ -469,27 +497,40 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
         },
         inputAssetIds: assets.map((asset) => asset.id).toList(),
         onStatus: (value) {
-          if (mounted) setState(() => _status = value);
+          if (mounted && !_streamContentStarted) {
+            setState(() => _status = value);
+          }
         },
         onRunCreated: (runId) {
           if (mounted) setState(() => _runningRunId = runId);
         },
         onOutput: (snapshot) {
           if (!mounted || snapshot.channel != 'main') return;
-          setState(() => _streamingAnswer = snapshot.content);
-          _scrollToBottom();
+          _acceptStreamingOutput(snapshot);
         },
       );
+      if (!mounted) return;
+      setState(() {
+        _streamingPhase = result.runStatus == 'PARTIAL'
+            ? StreamingOutputPhase.partial
+            : StreamingOutputPhase.succeeded;
+        _status = null;
+      });
+      await _waitForStreamingSettlement();
+      if (!mounted) return;
       await _loadTask();
-      await widget.data.refresh();
       if (!mounted) return;
       setState(() {
         _sending = false;
         _pendingQuestion = null;
-        _streamingAnswer = null;
+        _streamingOutput = null;
+        _streamingSettled = null;
+        _streamContentStarted = false;
+        _stopRequested = false;
         _runningRunId = null;
         _status = null;
       });
+      await widget.data.refresh();
     } catch (exception) {
       if (!mounted) return;
       if (_questionController.text.trim().isEmpty) {
@@ -500,8 +541,10 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
       }
       setState(() {
         _sending = false;
-        _pendingQuestion = null;
-        _streamingAnswer = null;
+        _streamingPhase = StreamingOutputPhase.failed;
+        _streamingSettled = null;
+        _streamContentStarted = false;
+        _stopRequested = false;
         _runningRunId = null;
         _status = null;
         _error = _message(exception);
@@ -509,13 +552,56 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
     }
   }
 
+  void _acceptStreamingOutput(RunOutputSnapshot snapshot) {
+    if (_stopRequested) return;
+    var contentStarted = _streamContentStarted;
+    switch (snapshot.updateType) {
+      case RunOutputUpdateType.started:
+        contentStarted = false;
+      case RunOutputUpdateType.append:
+        contentStarted = true;
+      case RunOutputUpdateType.snapshot:
+        if (_isRenderableStreamingOutput(snapshot) &&
+            snapshot.content.isNotEmpty) {
+          contentStarted = true;
+        }
+      case RunOutputUpdateType.replace:
+      case RunOutputUpdateType.completed:
+      case RunOutputUpdateType.failed:
+      case RunOutputUpdateType.partial:
+        break;
+    }
+    setState(() {
+      _streamingOutput = snapshot;
+      _streamContentStarted = contentStarted;
+      if (contentStarted) _status = null;
+    });
+  }
+
+  Future<void> _waitForStreamingSettlement() async {
+    final completer = _streamingSettled;
+    if (_streamingOutput?.content.isEmpty != false || completer == null) {
+      return;
+    }
+    await completer.future;
+  }
+
+  void _notifyStreamingSettled() {
+    final completer = _streamingSettled;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+  }
+
   Future<void> _cancelQuestion() async {
     final runId = _runningRunId;
-    if (runId == null) return;
+    if (runId == null || _stopRequested) return;
+    setState(() {
+      _stopRequested = true;
+      _status = '正在取消任务';
+    });
     try {
       await widget.data.api.cancelRun(runId);
-      if (!mounted) return;
-      setState(() => _status = '正在取消任务');
     } catch (exception) {
       if (mounted) setState(() => _error = _message(exception));
     }
@@ -827,15 +913,12 @@ class _DocumentQaPageState extends State<DocumentQaPage> {
     if (mounted) await _loadTask();
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-      );
-    });
+  void _scrollToBottom({bool force = false}) {
+    if (force) {
+      _scrollFollowController.forceFollow();
+    } else {
+      _scrollFollowController.contentChanged();
+    }
   }
 }
 
@@ -950,16 +1033,25 @@ class _UserMessage extends StatelessWidget {
 
 class _AssistantMessage extends StatelessWidget {
   const _AssistantMessage({
+    super.key,
     required this.markdown,
     required this.citations,
     required this.onCitation,
-    this.streaming = false,
+    this.streamingSnapshot,
+    this.streamingPhase = StreamingOutputPhase.streaming,
+    this.stopRequested = false,
+    this.onStreamingSettled,
+    this.onStreamingContentChanged,
   });
 
   final String markdown;
   final List<_DocumentCitationView> citations;
   final ValueChanged<_DocumentCitationView> onCitation;
-  final bool streaming;
+  final RunOutputSnapshot? streamingSnapshot;
+  final StreamingOutputPhase streamingPhase;
+  final bool stopRequested;
+  final VoidCallback? onStreamingSettled;
+  final VoidCallback? onStreamingContentChanged;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -980,18 +1072,14 @@ class _AssistantMessage extends StatelessWidget {
                 ),
                 const SizedBox(width: 9),
                 Expanded(
-                  child: streaming && markdown.isEmpty
-                      ? const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 2),
-                          child: Text(
-                            '正在解析文档并检索来源...',
-                            style: TextStyle(color: AppColors.muted),
-                          ),
-                        )
-                      : MarkdownOutputView(
-                          markdown: markdown,
-                          streaming: streaming,
-                        ),
+                  child: DocumentQaAnswerView(
+                    markdown: markdown,
+                    streamingSnapshot: streamingSnapshot,
+                    streamingPhase: streamingPhase,
+                    stopRequested: stopRequested,
+                    onStreamingSettled: onStreamingSettled,
+                    onStreamingContentChanged: onStreamingContentChanged,
+                  ),
                 ),
               ],
             ),
@@ -1027,6 +1115,40 @@ class _AssistantMessage extends StatelessWidget {
           ],
         ),
       );
+}
+
+class DocumentQaAnswerView extends StatelessWidget {
+  const DocumentQaAnswerView({
+    super.key,
+    required this.markdown,
+    this.streamingSnapshot,
+    this.streamingPhase = StreamingOutputPhase.streaming,
+    this.stopRequested = false,
+    this.onStreamingSettled,
+    this.onStreamingContentChanged,
+  });
+
+  final String markdown;
+  final RunOutputSnapshot? streamingSnapshot;
+  final StreamingOutputPhase streamingPhase;
+  final bool stopRequested;
+  final VoidCallback? onStreamingSettled;
+  final VoidCallback? onStreamingContentChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = streamingSnapshot;
+    if (snapshot != null) {
+      return StreamingOutputView(
+        snapshot: snapshot,
+        phase: streamingPhase,
+        stopRequested: stopRequested,
+        onSettled: onStreamingSettled,
+        onContentChanged: onStreamingContentChanged,
+      );
+    }
+    return MarkdownOutputView(markdown: markdown);
+  }
 }
 
 class DocumentSourcesDisclosure extends StatefulWidget {
@@ -1393,6 +1515,10 @@ bool _sameModels(Map<String, String> left, Map<String, String> right) {
     if (right[entry.key] != entry.value) return false;
   }
   return true;
+}
+
+bool _isRenderableStreamingOutput(RunOutputSnapshot snapshot) {
+  return snapshot.format == 'markdown' || snapshot.format == 'plain_text';
 }
 
 String _taskTitle(List<AssetView> assets) {
