@@ -1,5 +1,7 @@
 package com.aibox.provider.openai;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aibox.feature.spi.ImageExpansionRequest;
 import com.aibox.feature.spi.ImageGenerationRequest;
 import com.aibox.feature.spi.ImagePreservationMode;
@@ -30,11 +32,14 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenAiCompatibleTextProviderTest {
+
+    private static final ObjectMapper TEST_MAPPER = new ObjectMapper();
 
     @Test
     void streamsOpenAiCompatibleTextDeltasAndCollectsFinalResponse() throws IOException {
@@ -93,9 +98,95 @@ class OpenAiCompatibleTextProviderTest {
             assertEquals(3, result.inputTokens());
             assertEquals(2, result.outputTokens());
             assertTrue(capturedBody.get().contains("\"stream\":true"));
+            assertTrue(capturedBody.get().contains("\"max_tokens\":100"));
+            assertFalse(capturedBody.get().contains("\"max_output_tokens\""));
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void textGenerationUsesDeploymentMaxTokensParameter() throws IOException {
+        AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            capturedBody.set(TEST_MAPPER.readTree(exchange.getRequestBody()));
+            byte[] response = """
+                    {
+                      "id":"chat-1",
+                      "model":"test-model",
+                      "choices":[{"message":{"role":"assistant","content":"OK"}}]
+                    }
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("test-provider", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "test-text",
+                    "test-provider",
+                    "test-model",
+                    ModelCapability.TEXT_GENERATION,
+                    Map.of("maxTokensParameter", "max_output_tokens")
+            );
+
+            provider.generateText(
+                    target,
+                    new TextGenerationRequest(
+                            UUID.randomUUID(), UUID.randomUUID(), "text.default", "test-text",
+                            "system", "user", 100, 0.5, Map.of()
+                    )
+            );
+
+            assertEquals(100, capturedBody.get().path("max_output_tokens").asInt());
+            assertFalse(capturedBody.get().has("max_tokens"));
+            assertEquals(0.5, capturedBody.get().path("temperature").asDouble());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void textGenerationRejectsUnsupportedMaxTokensParameter() {
+        ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+        configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+        configuration.setBaseUrl("http://127.0.0.1:1");
+        configuration.setApiKey("test-key");
+        ModelProviderProperties properties = new ModelProviderProperties();
+        properties.setProviders(Map.of("test-provider", configuration));
+        OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+        ModelCallTarget target = new ModelCallTarget(
+                "test-text",
+                "test-provider",
+                "test-model",
+                ModelCapability.TEXT_GENERATION,
+                Map.of("maxTokensParameter", "unexpected_parameter")
+        );
+
+        ModelProviderException exception = assertThrows(
+                ModelProviderException.class,
+                () -> provider.generateText(
+                        target,
+                        new TextGenerationRequest(
+                                UUID.randomUUID(), UUID.randomUUID(),
+                                "text.default", "test-text",
+                                "system", "user", 100, 0.5, Map.of()
+                        )
+                )
+        );
+
+        assertEquals("PROVIDER_CONFIG_INVALID", exception.code());
+        assertFalse(exception.retryable());
     }
 
     @Test

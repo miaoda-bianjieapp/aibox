@@ -43,6 +43,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Component
@@ -84,7 +85,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     public TextGenerationResponse generateText(ModelCallTarget target, TextGenerationRequest request) {
         ProviderContext provider = requireProvider(target);
         Map<String, Object> body = chatBody(
-                target.providerModel(), request.systemPrompt(), request.userPrompt(),
+                target, request.systemPrompt(), request.userPrompt(),
                 request.maxOutputTokens(), request.temperature()
         );
         return execute(() -> parseTextResponse(
@@ -101,7 +102,7 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     ) {
         ProviderContext provider = requireProvider(target);
         Map<String, Object> body = chatBody(
-                target.providerModel(), request.systemPrompt(), request.userPrompt(),
+                target, request.systemPrompt(), request.userPrompt(),
                 request.maxOutputTokens(), request.temperature()
         );
         body.put("stream", true);
@@ -165,7 +166,12 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                 Map.of("role", "system", "content", request.systemPrompt()),
                 Map.of("role", "user", "content", content)
         ));
-        addGenerationOptions(body, request.maxOutputTokens(), request.temperature());
+        addGenerationOptions(
+                body,
+                target,
+                request.maxOutputTokens(),
+                request.temperature()
+        );
         body.put("stream", false);
         return execute(() -> parseTextResponse(
                 postJson(provider, provider.config().getChatPath(), request.runId().toString(), body),
@@ -817,26 +823,44 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     }
 
     private static Map<String, Object> chatBody(
-            String model,
+            ModelCallTarget target,
             String systemPrompt,
             String userPrompt,
             Integer maxOutputTokens,
             Double temperature
     ) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", model);
+        body.put("model", target.providerModel());
         body.put("messages", List.of(
                 Map.of("role", "system", "content", systemPrompt),
                 Map.of("role", "user", "content", userPrompt)
         ));
-        addGenerationOptions(body, maxOutputTokens, temperature);
+        addGenerationOptions(body, target, maxOutputTokens, temperature);
         body.put("stream", false);
         return body;
     }
 
-    private static void addGenerationOptions(Map<String, Object> body, Integer maxTokens, Double temperature) {
-        if (maxTokens != null) body.put("max_tokens", maxTokens);
+    private static void addGenerationOptions(
+            Map<String, Object> body,
+            ModelCallTarget target,
+            Integer maxTokens,
+            Double temperature
+    ) {
+        if (maxTokens != null) body.put(maxTokensParameter(target), maxTokens);
         if (temperature != null) body.put("temperature", temperature);
+    }
+
+    private static String maxTokensParameter(ModelCallTarget target) {
+        String configured = setting(target, "maxTokensParameter", "max_tokens").trim();
+        if (Set.of("max_tokens", "max_completion_tokens", "max_output_tokens")
+                .contains(configured)) {
+            return configured;
+        }
+        throw new ModelProviderException(
+                "PROVIDER_CONFIG_INVALID",
+                "Unsupported maxTokensParameter for deployment " + target.deploymentCode(),
+                false
+        );
     }
 
     private static void addImageOutputOptions(
