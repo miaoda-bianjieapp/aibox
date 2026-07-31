@@ -2,6 +2,7 @@ package com.aibox.api;
 
 import com.aibox.platform.execution.RunEventPublisher;
 import com.aibox.platform.execution.RunOutputService;
+import jakarta.annotation.PreDestroy;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -15,6 +16,10 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.LongFunction;
 import java.util.function.Supplier;
 
@@ -23,16 +28,35 @@ import java.util.function.Supplier;
 public class SseRunEventPublisher implements RunEventPublisher {
 
     private static final long TIMEOUT_MILLIS = 30L * 60L * 1_000L;
+    private static final long HEARTBEAT_INTERVAL_SECONDS = 15L;
 
     private final Map<UUID, CopyOnWriteArrayList<Subscriber>> subscribers = new ConcurrentHashMap<>();
     private final LongFunction<SseEmitter> emitterFactory;
+    private final ScheduledExecutorService heartbeatExecutor;
+    private final ScheduledFuture<?> heartbeatTask;
 
     public SseRunEventPublisher() {
-        this(SseEmitter::new);
+        this(SseEmitter::new, createHeartbeatExecutor());
     }
 
     SseRunEventPublisher(LongFunction<SseEmitter> emitterFactory) {
+        this(emitterFactory, null);
+    }
+
+    SseRunEventPublisher(
+            LongFunction<SseEmitter> emitterFactory,
+            ScheduledExecutorService heartbeatExecutor
+    ) {
         this.emitterFactory = emitterFactory;
+        this.heartbeatExecutor = heartbeatExecutor;
+        this.heartbeatTask = heartbeatExecutor == null
+                ? null
+                : heartbeatExecutor.scheduleAtFixedRate(
+                        this::publishHeartbeats,
+                        HEARTBEAT_INTERVAL_SECONDS,
+                        HEARTBEAT_INTERVAL_SECONDS,
+                        TimeUnit.SECONDS
+                );
     }
 
     public SseEmitter subscribe(
@@ -106,6 +130,21 @@ public class SseRunEventPublisher implements RunEventPublisher {
         subscriber.emitter.send(SseEmitter.event()
                 .name("connected")
                 .data(Map.of("runId", runId, "status", currentStatus)));
+    }
+
+    void publishHeartbeats() {
+        subscribers.forEach((runId, runSubscribers) -> {
+            for (Subscriber subscriber : runSubscribers) {
+                try {
+                    synchronized (subscriber.monitor) {
+                        if (subscriber.replaying) continue;
+                        subscriber.emitter.send(SseEmitter.event().comment("ping"));
+                    }
+                } catch (IOException | IllegalStateException exception) {
+                    fail(runId, subscriber, exception);
+                }
+            }
+        });
     }
 
     private void sendReplayEvent(
@@ -190,6 +229,20 @@ public class SseRunEventPublisher implements RunEventPublisher {
         if (runSubscribers.isEmpty()) {
             subscribers.remove(runId, runSubscribers);
         }
+    }
+
+    @PreDestroy
+    void shutdownHeartbeat() {
+        if (heartbeatTask != null) heartbeatTask.cancel(false);
+        if (heartbeatExecutor != null) heartbeatExecutor.shutdownNow();
+    }
+
+    private static ScheduledExecutorService createHeartbeatExecutor() {
+        return Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "run-sse-heartbeat");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     private static final class Subscriber {

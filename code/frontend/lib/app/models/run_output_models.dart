@@ -1,3 +1,23 @@
+enum RunOutputUpdateType {
+  snapshot,
+  started,
+  append,
+  replace,
+  completed,
+  failed,
+  partial,
+}
+
+RunOutputUpdateType _updateType(String value) => switch (value) {
+      'started' => RunOutputUpdateType.started,
+      'append' => RunOutputUpdateType.append,
+      'replace' => RunOutputUpdateType.replace,
+      'completed' => RunOutputUpdateType.completed,
+      'failed' => RunOutputUpdateType.failed,
+      'partial' => RunOutputUpdateType.partial,
+      _ => RunOutputUpdateType.snapshot,
+    };
+
 class RunOutputSnapshot {
   const RunOutputSnapshot({
     required this.runId,
@@ -7,6 +27,7 @@ class RunOutputSnapshot {
     required this.status,
     required this.lastSequence,
     required this.updatedAt,
+    this.updateType = RunOutputUpdateType.snapshot,
   });
 
   factory RunOutputSnapshot.fromJson(Map<String, dynamic> json) {
@@ -20,6 +41,7 @@ class RunOutputSnapshot {
       updatedAt:
           DateTime.tryParse(json['updatedAt']?.toString() ?? '')?.toLocal() ??
               DateTime.fromMillisecondsSinceEpoch(0),
+      updateType: RunOutputUpdateType.snapshot,
     );
   }
 
@@ -30,6 +52,7 @@ class RunOutputSnapshot {
   final String status;
   final int lastSequence;
   final DateTime updatedAt;
+  final RunOutputUpdateType updateType;
 
   bool get isTerminal =>
       status == 'COMPLETED' || status == 'FAILED' || status == 'PARTIAL';
@@ -117,6 +140,7 @@ class RunOutputAccumulator {
       status: status,
       lastSequence: event.sequence,
       updatedAt: DateTime.now(),
+      updateType: _updateType(event.type),
     );
     _snapshots[event.channel] = snapshot;
     if (event.eventId > _lastEventId) _lastEventId = event.eventId;

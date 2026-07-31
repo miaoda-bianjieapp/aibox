@@ -508,6 +508,7 @@ class BackendApi {
             runId: runId,
             feature: feature,
             artifact: ArtifactView.fromJson(artifacts.first),
+            runStatus: status,
           );
         }
         if (status == 'FAILED' ||
