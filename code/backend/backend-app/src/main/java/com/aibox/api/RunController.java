@@ -2,10 +2,12 @@ package com.aibox.api;
 
 import com.aibox.platform.task.TaskApplicationService;
 import com.aibox.platform.execution.RunOutputService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -75,8 +77,11 @@ public class RunController {
     @GetMapping("/runs/{runId}/events")
     public SseEmitter events(
             @PathVariable UUID runId,
-            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
+            HttpServletResponse response
     ) {
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-cache");
+        response.setHeader("X-Accel-Buffering", "no");
         taskService.getRun(runId);
         long replayAfter = parseEventId(lastEventId);
         return eventPublisher.subscribe(

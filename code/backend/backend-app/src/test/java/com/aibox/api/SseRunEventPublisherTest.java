@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,6 +44,27 @@ class SseRunEventPublisherTest {
 
         assertEquals(List.of(1L, 2L), scenario.emitter().outputEventIds());
         assertNull(scenario.emitter().error());
+    }
+
+    @Test
+    void sendsHeartbeatCommentsWithoutCreatingOutputEvents() {
+        AtomicReference<RecordingSseEmitter> emitter = new AtomicReference<>();
+        SseRunEventPublisher publisher = new SseRunEventPublisher(timeout -> {
+            RecordingSseEmitter value = new RecordingSseEmitter();
+            emitter.set(value);
+            return value;
+        });
+
+        publisher.subscribe(
+                UUID.randomUUID(),
+                0,
+                () -> "RUNNING",
+                ignored -> List.of()
+        );
+        publisher.publishHeartbeats();
+
+        assertEquals(1, emitter.get().heartbeatCount());
+        assertTrue(emitter.get().outputEventIds().isEmpty());
     }
 
     private static RunOutputService.RunOutputEventView replayEvent(
@@ -141,6 +163,7 @@ class SseRunEventPublisherTest {
 
     private static final class RecordingSseEmitter extends SseEmitter {
         private final List<Map<String, Object>> payloads = new CopyOnWriteArrayList<>();
+        private final AtomicInteger heartbeatCount = new AtomicInteger();
         private volatile Throwable error;
 
         @Override
@@ -150,6 +173,8 @@ class SseRunEventPublisherTest {
                     Map<String, Object> payload = new java.util.LinkedHashMap<>();
                     map.forEach((key, value) -> payload.put(key.toString(), value));
                     payloads.add(Map.copyOf(payload));
+                } else if (item.getData().toString().contains("ping")) {
+                    heartbeatCount.incrementAndGet();
                 }
             }
         }
@@ -178,6 +203,10 @@ class SseRunEventPublisherTest {
 
         private Throwable error() {
             return error;
+        }
+
+        private int heartbeatCount() {
+            return heartbeatCount.get();
         }
     }
 }
