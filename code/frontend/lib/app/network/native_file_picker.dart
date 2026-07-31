@@ -179,6 +179,27 @@ abstract final class NativeFilePicker {
     return result == null ? null : SavedLocalFile.fromJson(result);
   }
 
+  static Future<void> openFile({
+    required String filePath,
+    required String fileName,
+    required String mediaType,
+  }) async {
+    final opened = await _channel.invokeMethod<bool>(
+      'openFile',
+      {
+        'filePath': filePath,
+        'fileName': fileName,
+        'mediaType': mediaType,
+      },
+    );
+    if (opened != true) {
+      throw PlatformException(
+        code: 'FILE_OPEN_FAILED',
+        message: '无法打开文件',
+      );
+    }
+  }
+
   static Future<void> cancelDirectorySave() {
     return _channel.invokeMethod<void>('cancelSaveFileToDirectory');
   }

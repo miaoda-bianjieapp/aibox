@@ -38,6 +38,7 @@ void main() {
             'uri': 'content://picked/report.pdf',
             'sizeBytes': 2048,
           },
+        'openFile' => true,
         'cancelSaveFileToDirectory' => null,
         _ => null,
       };
@@ -104,5 +105,22 @@ void main() {
     await NativeFilePicker.cancelDirectorySave();
 
     expect(capturedCall?.method, 'cancelSaveFileToDirectory');
+  });
+
+  test('opens a cached file with the Android system viewer', () async {
+    await NativeFilePicker.openFile(
+      filePath: '/cache/report.docx',
+      fileName: 'report.docx',
+      mediaType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+
+    expect(capturedCall?.method, 'openFile');
+    expect(capturedCall?.arguments, {
+      'filePath': '/cache/report.docx',
+      'fileName': 'report.docx',
+      'mediaType':
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
   });
 }
