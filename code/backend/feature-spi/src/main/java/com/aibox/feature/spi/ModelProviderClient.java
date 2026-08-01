@@ -36,6 +36,14 @@ public interface ModelProviderClient {
         throw unsupported(target);
     }
 
+    default AudioEnhancementResponse enhanceAudio(
+            ModelCallTarget target,
+            AudioEnhancementRequest request,
+            ModelAsset asset
+    ) {
+        throw unsupported(target);
+    }
+
     default ImageGenerationResponse generateImage(
             ModelCallTarget target,
             ImageGenerationRequest request,

@@ -1,5 +1,7 @@
 package com.aibox.platform.provider;
 
+import com.aibox.feature.spi.AudioEnhancementRequest;
+import com.aibox.feature.spi.AudioEnhancementResponse;
 import com.aibox.feature.spi.AudioTranscriptionRequest;
 import com.aibox.feature.spi.AudioTranscriptionResponse;
 import com.aibox.feature.spi.DocumentCitation;
@@ -159,6 +161,23 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
                         request.inputAssetId().toString(), request.language(), request.prompt(),
                         Boolean.toString(request.speakerDiarization()), request.timestampMode().name()),
                 () -> selected.provider().transcribeAudio(selected.target(), request, asset),
+                response -> new InvocationOutcome(response.model(), response.providerRequestId(),
+                        response.inputUnits(), response.outputUnits())
+        );
+    }
+
+    @Override
+    public AudioEnhancementResponse enhanceAudio(AudioEnhancementRequest request) {
+        ProviderTarget selected = requireProvider(
+                ModelCapability.AUDIO_ENHANCEMENT, request.modelAlias(), request.deploymentCode()
+        );
+        ModelAsset asset = assetService.readForModel(request.inputAssetId());
+        return invoke(
+                request.tenantId(), request.runId(), ModelCapability.AUDIO_ENHANCEMENT, request.modelAlias(),
+                selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
+                        request.inputAssetId().toString(),
+                        Boolean.toString(request.keepBackgroundMusic()), request.format()),
+                () -> selected.provider().enhanceAudio(selected.target(), request, asset),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputUnits(), response.outputUnits())
         );

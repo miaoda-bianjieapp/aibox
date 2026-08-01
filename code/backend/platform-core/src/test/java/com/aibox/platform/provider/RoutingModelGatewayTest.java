@@ -1,5 +1,7 @@
 package com.aibox.platform.provider;
 
+import com.aibox.feature.spi.AudioEnhancementRequest;
+import com.aibox.feature.spi.AudioEnhancementResponse;
 import com.aibox.feature.spi.ModelProviderClient;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
@@ -194,6 +196,68 @@ class RoutingModelGatewayTest {
         assertThat(speech.audio().content()).isNotEmpty();
         assertThat(video.videos()).hasSize(1);
         verify(repository, times(4)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
+    void routesAudioEnhancementWithTheOwnedInputAsset() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.AUDIO_ENHANCEMENT,
+                "audio.enhancement.default",
+                "cleanvoice-studio-sound-audio"
+        )).thenReturn(List.of(target(
+                "cleanvoice-studio-sound-audio",
+                ModelCapability.AUDIO_ENHANCEMENT
+        )));
+        UUID assetId = UUID.randomUUID();
+        ModelAsset input = new ModelAsset(assetId, "meeting.wav", "audio/wav", new byte[]{1, 2});
+        AssetService assetService = mock(AssetService.class);
+        when(assetService.readForModel(assetId)).thenReturn(input);
+        AtomicReference<ModelAsset> capturedAsset = new AtomicReference<>();
+        ModelProviderClient provider = new TestProvider() {
+            @Override
+            public AudioEnhancementResponse enhanceAudio(
+                    ModelCallTarget target,
+                    AudioEnhancementRequest request,
+                    ModelAsset asset
+            ) {
+                capturedAsset.set(asset);
+                return new AudioEnhancementResponse(
+                        new GeneratedAudio("meeting-enhanced.mp3", "audio/mpeg", new byte[]{3}),
+                        "test",
+                        "studio-sound",
+                        "edit-1",
+                        null,
+                        null
+                );
+            }
+        };
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(provider),
+                repository,
+                assetService,
+                mock(DocumentKnowledgeService.class),
+                routingService,
+                Clock.fixed(Instant.parse("2026-08-01T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        AudioEnhancementResponse response = gateway.enhanceAudio(new AudioEnhancementRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "audio.enhancement.default",
+                "cleanvoice-studio-sound-audio",
+                assetId,
+                false,
+                "mp3",
+                Map.of()
+        ));
+
+        assertThat(capturedAsset.get()).isEqualTo(input);
+        assertThat(response.audio().content()).containsExactly(3);
+        verify(assetService).readForModel(assetId);
+        verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
     }
 
     @Test
