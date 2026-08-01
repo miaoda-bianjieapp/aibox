@@ -1,0 +1,28 @@
+featureCode: audio.transcription
+workspaceCode: audio
+version: 5
+displayName: 音频转写
+description: 将单个预录音频转换为带可选说话人和分段时间戳的可读逐字稿，并可生成摘要或会议纪要。
+status: INTERNAL
+executionMode: ASYNC
+resultType: transcript
+rendererKey: transcript
+requiredCapabilities:
+  - AUDIO_TRANSCRIPTION
+  - TEXT_GENERATION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxInputFiles: 1
+  maxInputFileBytes: 209715200
+  supportedDurationTargetSeconds: 7200
+  maxProfessionalTerms: 200
+  maxProfessionalTermsCharacters: 4000
+modelAliases:
+  audio: audio.transcription.default
+  text: text.audio-transcription-postprocess
+taskTitleFromAssets:
+  field: audioFile
+  template: "{name} 转写"

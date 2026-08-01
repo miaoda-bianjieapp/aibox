@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "text",
+    "segments",
+    "detectedLanguage",
+    "speakerDiarization",
+    "timestampMode",
+    "postProcess"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/segment"
+      }
+    },
+    "detectedLanguage": {
+      "type": ["string", "null"]
+    },
+    "speakerDiarization": {
+      "type": "boolean"
+    },
+    "timestampMode": {
+      "type": "string",
+      "enum": ["segment", "none"]
+    },
+    "postProcess": {
+      "type": "string",
+      "enum": ["none", "summary", "meeting_minutes"]
+    },
+    "supplement": {
+      "$ref": "#/$defs/supplement"
+    }
+  },
+  "$defs": {
+    "segment": {
+      "type": "object",
+      "required": ["startMs", "endMs", "text"],
+      "properties": {
+        "startMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "speaker": {
+          "type": ["string", "null"]
+        },
+        "confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "supplement": {
+      "type": "object",
+      "required": ["type", "status", "format"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["summary", "meeting_minutes"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["SUCCEEDED", "FAILED"]
+        },
+        "format": {
+          "const": "markdown"
+        },
+        "text": {
+          "type": "string"
+        },
+        "errorCode": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

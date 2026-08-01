@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "audioFile",
+    "language",
+    "speakerDiarization",
+    "timestampMode",
+    "postProcess"
+  ],
+  "properties": {
+    "audioFile": {
+      "type": "string",
+      "format": "uuid",
+      "title": "音频文件",
+      "description": "每次转写一个预录音频，建议时长不超过 2 小时。"
+    },
+    "language": {
+      "type": "string",
+      "const": "auto",
+      "default": "auto",
+      "title": "识别语言"
+    },
+    "speakerDiarization": {
+      "type": "boolean",
+      "default": false,
+      "title": "区分说话人",
+      "description": "用于多人对话，自动将不同发言者标记为说话人 A、B、C；单人朗读、角色配音或音质较差时可能误分。"
+    },
+    "timestampMode": {
+      "type": "string",
+      "enum": ["segment", "none"],
+      "default": "segment",
+      "title": "时间戳",
+      "description": "按发言段显示开始时间，或隐藏时间信息。"
+    },
+    "postProcess": {
+      "type": "string",
+      "enum": ["none", "summary", "meeting_minutes"],
+      "default": "none",
+      "title": "附加结果",
+      "description": "逐字稿始终生成；选择会议纪要时，明显不是会议的内容会自动改为摘要。"
+    },
+    "professionalTerms": {
+      "type": "string",
+      "maxLength": 4000,
+      "title": "专业词提示",
+      "description": "可选。使用逗号、分号或换行分隔人名、产品名和专业术语。"
+    }
+  },
+  "additionalProperties": false
+}

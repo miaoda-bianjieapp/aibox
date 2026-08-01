@@ -133,6 +133,9 @@ class FeatureDetail extends FeatureEntry {
   Map<String, dynamic> fieldOptions(String field) =>
       _map(_map(uiSchema['fieldOptions'])[field]);
 
+  Map<String, dynamic> modelSelectorOptions(String capability) =>
+      _map(_map(uiSchema['modelSelectors'])[capability]);
+
   Map<String, dynamic> fieldHelp(
     String field,
     Map<String, Object?> values,

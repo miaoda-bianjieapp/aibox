@@ -616,41 +616,26 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     FeatureDetail feature,
     ModelPolicy policy,
   ) {
-    final selectedCode = _selectedModels[policy.capability];
+    final selectedCode =
+        _selectedModels[policy.capability] ?? policy.defaultModelCode;
     final selected =
         policy.options.where((item) => item.code == selectedCode).firstOrNull;
+    final selectorOptions = feature.modelSelectorOptions(policy.capability);
+    final configuredLabel = selectorOptions['label']?.toString().trim();
     return [
       const SizedBox(height: 15),
-      _FieldLabel(_modelCapabilityLabel(policy.capability)),
-      DropdownButtonFormField<String>(
+      _FieldLabel(configuredLabel?.isNotEmpty == true
+          ? configuredLabel!
+          : _modelCapabilityLabel(policy.capability)),
+      TaskModelSelector(
         key: ValueKey(
           '${policy.capability}:$selectedCode:$_modelSelectorEpoch',
         ),
-        value: selectedCode,
-        isExpanded: true,
-        items: policy.options
-            .map((option) => DropdownMenuItem<String>(
-                  value: option.code,
-                  child: Row(children: [
-                    Expanded(
-                      child: Text(
-                        option.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    _ModelSourceBadge(option.sourceLabel),
-                  ]),
-                ))
-            .toList(),
-        onChanged: _submitting
-            ? null
-            : (value) {
-                if (value != null) {
-                  unawaited(_selectModel(feature, policy, value));
-                }
-              },
+        policy: policy,
+        selectedCode: selectedCode,
+        options: selectorOptions,
+        enabled: !_submitting,
+        onSelected: (value) => unawaited(_selectModel(feature, policy, value)),
       ),
       if (selected != null) ...[
         const SizedBox(height: 6),
@@ -1940,8 +1925,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final rawConfig = feature.config['taskTitleFromAssets'];
     if (rawConfig is! Map) return;
     final config = Map<String, dynamic>.from(rawConfig);
+    final field = config['field']?.toString();
     final baselineField = config['baselineField']?.toString();
     final comparisonField = config['comparisonField']?.toString();
+    final source = field == null ? null : _assetsByField[field]?.firstOrNull;
     final baseline = baselineField == null
         ? null
         : _assetsByField[baselineField]?.firstOrNull;
@@ -1949,7 +1936,10 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ? const <AssetView>[]
         : _assetsByField[comparisonField] ?? const <AssetView>[];
     String? title;
-    if (baseline != null) {
+    if (source != null) {
+      title = (config['template']?.toString() ?? '{name}')
+          .replaceAll('{name}', _assetBaseName(source.name));
+    } else if (baseline != null) {
       title = (config['baselineTemplate']?.toString() ?? '{name} 多文档对比')
           .replaceAll('{name}', _assetBaseName(baseline.name));
     } else if (comparisons.isNotEmpty) {
@@ -1961,6 +1951,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     if (title == null || title.trim().isEmpty) {
       title = widget.request.entry.title;
     }
+    title = String.fromCharCodes(title.runes.take(240));
     _nameController.value = TextEditingValue(
       text: title,
       selection: TextSelection.collapsed(offset: title.length),
@@ -2276,6 +2267,105 @@ List<String> _stringListOption(Map<String, dynamic> options, String key,
 int? _integerOption(Map<String, dynamic> options, String key) {
   final value = options[key];
   return value is num ? value.toInt() : int.tryParse(value?.toString() ?? '');
+}
+
+class TaskModelSelector extends StatelessWidget {
+  const TaskModelSelector({
+    super.key,
+    required this.policy,
+    required this.selectedCode,
+    required this.options,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final ModelPolicy policy;
+  final String selectedCode;
+  final Map<String, dynamic> options;
+  final bool enabled;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    if (options['widget'] == 'segmented' && policy.options.length <= 4) {
+      final showSelectedIcon = options['showSelectedIcon'] != false;
+      final labelMaxLines =
+          _integerOption(options, 'labelMaxLines')?.clamp(1, 2) ?? 1;
+      final compact = options['compact'] == true;
+      return SizedBox(
+        width: double.infinity,
+        child: SegmentedButton<String>(
+          key: ValueKey(
+            'task-model-selector-${policy.capability}-segmented',
+          ),
+          segments: policy.options.map((option) {
+            final label = Text(
+              option.displayName,
+              maxLines: labelMaxLines,
+              overflow: labelMaxLines > 1
+                  ? TextOverflow.ellipsis
+                  : TextOverflow.visible,
+              softWrap: labelMaxLines > 1,
+              textAlign: TextAlign.center,
+            );
+            return ButtonSegment<String>(
+              value: option.code,
+              label: labelMaxLines == 1
+                  ? FittedBox(fit: BoxFit.scaleDown, child: label)
+                  : label,
+            );
+          }).toList(),
+          selected: {selectedCode},
+          showSelectedIcon: showSelectedIcon,
+          onSelectionChanged:
+              enabled ? (selection) => onSelected(selection.first) : null,
+          style: ButtonStyle(
+            textStyle: const WidgetStatePropertyAll(
+              TextStyle(fontSize: 12),
+            ),
+            minimumSize:
+                compact ? const WidgetStatePropertyAll(Size(0, 44)) : null,
+            padding: compact
+                ? const WidgetStatePropertyAll(
+                    EdgeInsets.symmetric(horizontal: 5, vertical: 10),
+                  )
+                : null,
+            visualDensity: compact ? VisualDensity.compact : null,
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return DropdownButtonFormField<String>(
+      key: ValueKey('task-model-selector-${policy.capability}-dropdown'),
+      value: selectedCode,
+      isExpanded: true,
+      items: policy.options
+          .map((option) => DropdownMenuItem<String>(
+                value: option.code,
+                child: Row(children: [
+                  Expanded(
+                    child: Text(
+                      option.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _ModelSourceBadge(option.sourceLabel),
+                ]),
+              ))
+          .toList(),
+      onChanged: enabled
+          ? (value) {
+              if (value != null) onSelected(value);
+            }
+          : null,
+    );
+  }
 }
 
 String _formatBytes(int bytes) {

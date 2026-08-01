@@ -110,4 +110,57 @@ void main() {
     expect(find.byTooltip('下载文件'), findsOneWidget);
     expect(find.text('contract-en.docx'), findsOneWidget);
   });
+
+  testWidgets('transcript artifacts show speakers timestamps and supplement',
+      (tester) async {
+    final artifact = ArtifactView(
+      id: 'artifact-transcript',
+      taskId: 'task-transcript',
+      runId: 'run-transcript',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'transcript',
+      title: '产品会议转写',
+      mimeType: 'application/vnd.yuanzuo.transcript+json',
+      content: const {
+        'text': '欢迎参加会议。',
+        'timestampMode': 'segment',
+        'speakerDiarization': true,
+        'postProcess': 'summary',
+        'segments': [
+          {
+            'startMs': 61000,
+            'endMs': 65000,
+            'speaker': 'A',
+            'text': '欢迎参加会议。',
+          }
+        ],
+        'supplement': {
+          'type': 'summary',
+          'status': 'SUCCEEDED',
+          'format': 'markdown',
+          'text': '核心摘要内容',
+        },
+      },
+      metadata: const {},
+      createdAt: DateTime(2026, 7, 31, 17),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: ArtifactResultPage(
+        artifact: artifact,
+        rendererKey: 'transcript',
+      ),
+    ));
+
+    expect(find.text('01:01'), findsOneWidget);
+    expect(find.text('说话人 A'), findsOneWidget);
+    expect(find.text('逐字稿'), findsOneWidget);
+    expect(find.text('摘要'), findsOneWidget);
+
+    await tester.tap(find.text('摘要'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('核心摘要内容'), findsOneWidget);
+  });
 }

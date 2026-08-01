@@ -208,32 +208,174 @@ class _ArtifactBody extends StatelessWidget {
   }
 }
 
-class _TranscriptRenderer extends StatelessWidget {
+class _TranscriptRenderer extends StatefulWidget {
   const _TranscriptRenderer({required this.content});
   final Map<String, dynamic> content;
+
+  @override
+  State<_TranscriptRenderer> createState() => _TranscriptRendererState();
+}
+
+class _TranscriptRendererState extends State<_TranscriptRenderer> {
+  var _showSupplement = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = widget.content;
+    final supplement = content['supplement'] is Map
+        ? Map<String, dynamic>.from(content['supplement'] as Map)
+        : null;
+    final hasSupplement = supplement != null;
+    final supplementLabel =
+        supplement?['type'] == 'meeting_minutes' ? '会议纪要' : '摘要';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (hasSupplement) ...[
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<bool>(
+              segments: [
+                const ButtonSegment(value: false, label: Text('逐字稿')),
+                ButtonSegment(value: true, label: Text(supplementLabel)),
+              ],
+              selected: {_showSupplement},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) =>
+                  setState(() => _showSupplement = selection.first),
+              style: ButtonStyle(
+                shape: WidgetStatePropertyAll(RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                )),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        if (_showSupplement && hasSupplement)
+          _TranscriptSupplement(supplement: supplement)
+        else
+          _TranscriptSegments(content: content),
+      ],
+    );
+  }
+}
+
+class _TranscriptSegments extends StatelessWidget {
+  const _TranscriptSegments({required this.content});
+  final Map<String, dynamic> content;
+
   @override
   Widget build(BuildContext context) {
     final segments = content['segments'];
     if (segments is! List || segments.isEmpty) {
       return SelectableText(content['text']?.toString() ?? '没有转写内容');
     }
+    final showTimestamps = content['timestampMode'] != 'none';
+    final showSpeakers = content['speakerDiarization'] == true;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: segments.whereType<Map>().map((segment) {
         final value = Map<String, dynamic>.from(segment);
+        final speaker = value['speaker']?.toString().trim();
         return Padding(
-          padding: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.only(bottom: 16),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            SizedBox(
-              width: 56,
-              child: Text(value['startLabel']?.toString() ?? '',
-                  style: const TextStyle(color: AppColors.muted, fontSize: 11)),
-            ),
+            if (showTimestamps)
+              SizedBox(
+                width: 52,
+                child: Text(
+                  _transcriptTimestamp(value),
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
             Expanded(child: SelectableText(value['text']?.toString() ?? '')),
+            if (showSpeakers && speaker?.isNotEmpty == true) ...[
+              const SizedBox(width: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 88),
+                child: Text(
+                  '说话人 $speaker',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ]),
         );
       }).toList(),
     );
   }
+}
+
+class _TranscriptSupplement extends StatelessWidget {
+  const _TranscriptSupplement({required this.supplement});
+  final Map<String, dynamic> supplement;
+
+  @override
+  Widget build(BuildContext context) {
+    if (supplement['status'] == 'FAILED') {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.danger.withOpacity(0.08),
+          border: Border.all(color: AppColors.danger.withOpacity(0.3)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Text('逐字稿已生成，但附加结果生成失败。请从历史记录继续生成新版本。'),
+      );
+    }
+    final text = supplement['text']?.toString() ?? '';
+    if (text.trim().isEmpty) return const Text('没有附加结果');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: text));
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('当前内容已复制')),
+                );
+              }
+            },
+            tooltip: '复制当前内容',
+            icon: const Icon(Icons.copy_all_outlined),
+          ),
+        ),
+        MarkdownOutputView(markdown: text),
+      ],
+    );
+  }
+}
+
+String _transcriptTimestamp(Map<String, dynamic> segment) {
+  final raw = segment['startMs'];
+  if (raw is num) return _formatTranscriptMilliseconds(raw.toInt());
+  final parsed = int.tryParse(raw?.toString() ?? '');
+  if (parsed != null) return _formatTranscriptMilliseconds(parsed);
+  return segment['startLabel']?.toString() ?? '';
+}
+
+String _formatTranscriptMilliseconds(int milliseconds) {
+  final totalSeconds = milliseconds.clamp(0, 359999999) ~/ 1000;
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  String twoDigits(int value) => value.toString().padLeft(2, '0');
+  return hours > 0
+      ? '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}'
+      : '${twoDigits(minutes)}:${twoDigits(seconds)}';
 }
 
 class _ImageRenderer extends StatelessWidget {

@@ -2,6 +2,7 @@ package com.aibox.provider.assemblyai;
 
 import com.aibox.feature.spi.AudioTranscriptionRequest;
 import com.aibox.feature.spi.AudioTranscriptionResponse;
+import com.aibox.feature.spi.AudioTimestampMode;
 import com.aibox.feature.spi.ModelAsset;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
@@ -104,6 +105,310 @@ class AssemblyAiModelProviderTest {
             assertEquals(
                     List.of("Yuanzuo AI", "ECG"),
                     MAPPER.convertValue(submittedBody[0].path("keyterms_prompt"), List.class)
+            );
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void mapsSpeakerUtterancesAndDetectedLanguageToStandardSegments() throws IOException {
+        JsonNode[] submittedBody = new JsonNode[1];
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v2/upload", exchange ->
+                respond(exchange, 200, "{\"upload_url\":\"https://cdn.assemblyai.test/audio\"}"));
+        server.createContext("/v2/transcript", exchange -> {
+            if ("POST".equals(exchange.getRequestMethod())) {
+                submittedBody[0] = MAPPER.readTree(exchange.getRequestBody());
+            }
+            respond(exchange, 200, """
+                    {
+                      "id":"transcript-segments",
+                      "status":"completed",
+                      "text":"欢迎参加会议。我们开始吧。",
+                      "language_code":"zh",
+                      "speech_model_used":"universal-3-5-pro",
+                      "audio_duration":8.4,
+                      "utterances":[
+                        {
+                          "speaker":"A",
+                          "start":0,
+                          "end":3200,
+                          "confidence":0.98,
+                          "text":"欢迎参加会议。"
+                        },
+                        {
+                          "speaker":"B",
+                          "start":3400,
+                          "end":8100,
+                          "confidence":0.95,
+                          "text":"我们开始吧。"
+                        }
+                      ]
+                    }
+                    """);
+        });
+        server.start();
+        try {
+            AudioTranscriptionResponse response = provider(server).transcribeAudio(
+                    target("universal-3-5-pro", Map.of()),
+                    new AudioTranscriptionRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "audio.transcription.default",
+                            "assemblyai-universal-3-5-pro-audio",
+                            UUID.randomUUID(),
+                            "auto",
+                            "元作 AI",
+                            true,
+                            AudioTimestampMode.SEGMENT,
+                            Map.of("keyterms", List.of("元作 AI"))
+                    ),
+                    new ModelAsset(UUID.randomUUID(), "meeting.m4a", "audio/mp4", new byte[]{1, 2, 3})
+            );
+
+            assertTrue(submittedBody[0].path("speaker_labels").asBoolean());
+            assertFalse(submittedBody[0].has("advanced_speaker_segmentation"));
+            assertEquals(
+                    1,
+                    submittedBody[0].path("speaker_options").path("min_speakers_expected").asInt()
+            );
+            assertEquals(
+                    6,
+                    submittedBody[0].path("speaker_options").path("max_speakers_expected").asInt()
+            );
+            assertEquals("zh", response.detectedLanguage());
+            assertEquals(8.4, response.audioDurationSeconds());
+            assertEquals(2, response.segments().size());
+            assertEquals("A", response.segments().get(0).speaker());
+            assertEquals(0L, response.segments().get(0).startMs());
+            assertEquals(3200L, response.segments().get(0).endMs());
+            assertEquals("欢迎参加会议。", response.segments().get(0).text());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void normalizesSpokenDomainDotsWithoutChangingRegularChineseWords() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v2/upload", exchange ->
+                respond(exchange, 200, "{\"upload_url\":\"https://cdn.assemblyai.test/audio\"}"));
+        server.createContext("/v2/transcript", exchange -> respond(exchange, 200, """
+                {
+                  "id":"transcript-domain",
+                  "status":"completed",
+                  "text":"Please visit LibriVox \u70b9 org, or www \u70b9 example \u70b9 com. \u8fd9\u6709\u4e00\u70b9\u5e2e\u52a9\u3002",
+                  "speech_model_used":"universal-3-5-pro",
+                  "utterances":[
+                    {
+                      "speaker":"A",
+                      "start":0,
+                      "end":5000,
+                      "confidence":0.98,
+                      "text":"Please visit LibriVox \u70b9 org, or www \u70b9 example \u70b9 com. \u8fd9\u6709\u4e00\u70b9\u5e2e\u52a9\u3002"
+                    }
+                  ]
+                }
+                """));
+        server.start();
+        try {
+            AudioTranscriptionResponse response = provider(server).transcribeAudio(
+                    target("universal-3-5-pro", Map.of()),
+                    new AudioTranscriptionRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "audio.transcription.default",
+                            "assemblyai-universal-3-5-pro-audio",
+                            UUID.randomUUID(),
+                            "auto",
+                            null,
+                            true,
+                            AudioTimestampMode.SEGMENT,
+                            Map.of()
+                    ),
+                    new ModelAsset(UUID.randomUUID(), "website.m4a", "audio/mp4", new byte[]{1})
+            );
+
+            assertEquals(
+                    "Please visit LibriVox.org, or www.example.com. \u8fd9\u6709\u4e00\u70b9\u5e2e\u52a9\u3002",
+                    response.text()
+            );
+            assertEquals(
+                    "Please visit LibriVox.org, or www.example.com. \u8fd9\u6709\u4e00\u70b9\u5e2e\u52a9\u3002",
+                    response.segments().get(0).text()
+            );
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void cleansChineseSpacingAndFillersWhileUsingWordLevelSegments() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v2/upload", exchange ->
+                respond(exchange, 200, "{\"upload_url\":\"https://cdn.assemblyai.test/audio\"}"));
+        server.createContext("/v2/transcript", exchange -> respond(exchange, 200, """
+                {
+                  "id":"transcript-readable",
+                  "status":"completed",
+                  "text":"\u55ef\uff0c \u6211 \u4eec \u8ba8 \u8bba \u4fc3 \u9500\u3002 \u5443\uff0c \u4e0b \u4e00 \u9879\u3002",
+                  "language_code":"zh",
+                  "speech_model_used":"universal-3-5-pro",
+                  "utterances":[
+                    {
+                      "speaker":"A",
+                      "start":0,
+                      "end":70000,
+                      "confidence":0.95,
+                      "text":"\u55ef\uff0c \u6211 \u4eec \u8ba8 \u8bba \u4fc3 \u9500\u3002 \u5443\uff0c \u4e0b \u4e00 \u9879\u3002"
+                    }
+                  ],
+                  "words":[
+                    {"speaker":"A","start":0,"end":400,"confidence":0.90,"text":"\u55ef"},
+                    {"speaker":"A","start":1000,"end":1200,"confidence":0.98,"text":"\u6211"},
+                    {"speaker":"A","start":1200,"end":1400,"confidence":0.98,"text":"\u4eec"},
+                    {"speaker":"A","start":1400,"end":1700,"confidence":0.97,"text":"\u8ba8"},
+                    {"speaker":"A","start":1700,"end":2000,"confidence":0.97,"text":"\u8bba"},
+                    {"speaker":"A","start":2000,"end":2300,"confidence":0.97,"text":"\u4fc3"},
+                    {"speaker":"A","start":2300,"end":2800,"confidence":0.97,"text":"\u9500\u3002"},
+                    {"speaker":"A","start":35000,"end":35400,"confidence":0.90,"text":"\u5443"},
+                    {"speaker":"A","start":36000,"end":36300,"confidence":0.98,"text":"\u4e0b"},
+                    {"speaker":"A","start":36300,"end":36600,"confidence":0.98,"text":"\u4e00"},
+                    {"speaker":"A","start":36600,"end":37200,"confidence":0.98,"text":"\u9879\u3002"}
+                  ]
+                }
+                """));
+        server.start();
+        try {
+            AudioTranscriptionResponse response = provider(server).transcribeAudio(
+                    target("universal-3-5-pro", Map.of()),
+                    new AudioTranscriptionRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "audio.transcription.default",
+                            "assemblyai-universal-3-5-pro-audio",
+                            UUID.randomUUID(),
+                            "auto",
+                            null,
+                            true,
+                            AudioTimestampMode.SEGMENT,
+                            Map.of()
+                    ),
+                    new ModelAsset(UUID.randomUUID(), "meeting.flac", "audio/flac", new byte[]{1})
+            );
+
+            assertEquals("\u6211\u4eec\u8ba8\u8bba\u4fc3\u9500\u3002\n\u4e0b\u4e00\u9879\u3002", response.text());
+            assertEquals(2, response.segments().size());
+            assertEquals("\u6211\u4eec\u8ba8\u8bba\u4fc3\u9500\u3002", response.segments().get(0).text());
+            assertEquals(1000L, response.segments().get(0).startMs());
+            assertEquals(2800L, response.segments().get(0).endMs());
+            assertEquals("\u4e0b\u4e00\u9879\u3002", response.segments().get(1).text());
+            assertEquals(36000L, response.segments().get(1).startMs());
+            assertEquals(37200L, response.segments().get(1).endMs());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void removesLeadingAhButPreservesSemanticSentenceFinalAh() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v2/upload", exchange ->
+                respond(exchange, 200, "{\"upload_url\":\"https://cdn.assemblyai.test/audio\"}"));
+        server.createContext("/v2/transcript", exchange -> respond(exchange, 200, """
+                {
+                  "id":"transcript-semantic-ah",
+                  "status":"completed",
+                  "text":"\u554a\uff0c \u6211 \u4eec \u5f00 \u59cb\u3002 \u771f \u597d \u554a\uff01",
+                  "language_code":"zh",
+                  "speech_model_used":"universal-3-5-pro",
+                  "words":[
+                    {"speaker":"A","start":0,"end":300,"confidence":0.90,"text":"\u554a"},
+                    {"speaker":"A","start":500,"end":700,"confidence":0.98,"text":"\u6211"},
+                    {"speaker":"A","start":700,"end":900,"confidence":0.98,"text":"\u4eec"},
+                    {"speaker":"A","start":900,"end":1100,"confidence":0.98,"text":"\u5f00"},
+                    {"speaker":"A","start":1100,"end":1400,"confidence":0.98,"text":"\u59cb\u3002"},
+                    {"speaker":"A","start":2000,"end":2200,"confidence":0.98,"text":"\u771f"},
+                    {"speaker":"A","start":2200,"end":2400,"confidence":0.98,"text":"\u597d"},
+                    {"speaker":"A","start":2400,"end":2700,"confidence":0.98,"text":"\u554a\uff01"}
+                  ]
+                }
+                """));
+        server.start();
+        try {
+            AudioTranscriptionResponse response = provider(server).transcribeAudio(
+                    target("universal-3-5-pro", Map.of()),
+                    new AudioTranscriptionRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "audio.transcription.default",
+                            "assemblyai-universal-3-5-pro-audio",
+                            UUID.randomUUID(),
+                            "auto",
+                            null,
+                            false,
+                            AudioTimestampMode.SEGMENT,
+                            Map.of()
+                    ),
+                    new ModelAsset(UUID.randomUUID(), "speech.flac", "audio/flac", new byte[]{1})
+            );
+
+            assertEquals("\u6211\u4eec\u5f00\u59cb\u3002\n\u771f\u597d\u554a\uff01", response.text());
+            assertEquals(2, response.segments().size());
+            assertEquals("\u771f\u597d\u554a\uff01", response.segments().get(1).text());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void preservesSemanticSentenceFinalAhWhenOnlyUtterancesAreAvailable() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v2/upload", exchange ->
+                respond(exchange, 200, "{\"upload_url\":\"https://cdn.assemblyai.test/audio\"}"));
+        server.createContext("/v2/transcript", exchange -> respond(exchange, 200, """
+                {
+                  "id":"transcript-utterance-ah",
+                  "status":"completed",
+                  "text":"\u554a\uff0c \u6211 \u4eec \u5f00 \u59cb\u3002 \u771f \u597d \u554a\uff01",
+                  "language_code":"zh",
+                  "speech_model_used":"universal-3-5-pro",
+                  "utterances":[
+                    {
+                      "speaker":"A",
+                      "start":0,
+                      "end":5000,
+                      "confidence":0.96,
+                      "text":"\u554a\uff0c \u6211 \u4eec \u5f00 \u59cb\u3002 \u771f \u597d \u554a\uff01"
+                    }
+                  ]
+                }
+                """));
+        server.start();
+        try {
+            AudioTranscriptionResponse response = provider(server).transcribeAudio(
+                    target("universal-3-5-pro", Map.of()),
+                    new AudioTranscriptionRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "audio.transcription.default",
+                            "assemblyai-universal-3-5-pro-audio",
+                            UUID.randomUUID(),
+                            "auto",
+                            null,
+                            true,
+                            AudioTimestampMode.SEGMENT,
+                            Map.of()
+                    ),
+                    new ModelAsset(UUID.randomUUID(), "speech.flac", "audio/flac", new byte[]{1})
+            );
+
+            assertEquals("\u6211\u4eec\u5f00\u59cb\u3002\u771f\u597d\u554a\uff01", response.text());
+            assertEquals(1, response.segments().size());
+            assertEquals(
+                    "\u6211\u4eec\u5f00\u59cb\u3002\u771f\u597d\u554a\uff01",
+                    response.segments().get(0).text()
             );
         } finally {
             server.stop(0);
