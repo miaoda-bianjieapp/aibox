@@ -95,6 +95,12 @@ yuanzuo:
         speech-path: /audio/speech
         video-path: /videos/generations
 
+      # AssemblyAI 官方预录音转写接口。异步上传、提交和轮询由 Provider Adapter 封装。
+      assemblyai-official:
+        protocol: assemblyai
+        base-url: https://api.assemblyai.com
+        api-key: CHANGE_ME_ASSEMBLYAI_API_KEY
+
 logging:
   pattern:
     level: "%5p [trace=%X{traceId:-}]"

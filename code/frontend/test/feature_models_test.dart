@@ -139,6 +139,40 @@ void main() {
     expect(policy.shouldShowSelector, isTrue);
   });
 
+  test('feature detail exposes model selector presentation options', () {
+    final feature = FeatureDetail.fromJson({
+      'code': 'audio.transcription',
+      'displayName': '音频转写',
+      'description': '',
+      'version': 4,
+      'resultType': 'transcript',
+      'rendererKey': 'transcript',
+      'executionMode': 'ASYNC',
+      'inputSchema': const <String, Object?>{},
+      'uiSchema': {
+        'modelSelectors': {
+          'TEXT_GENERATION': {
+            'label': '摘要/会议纪要模型',
+            'widget': 'dropdown',
+          },
+        },
+      },
+      'outputSchema': const <String, Object?>{},
+      'config': const <String, Object?>{},
+      'modelPolicies': const <Object?>[],
+    });
+
+    expect(
+      feature.modelSelectorOptions('TEXT_GENERATION'),
+      containsPair('widget', 'dropdown'),
+    );
+    expect(
+      feature.modelSelectorOptions('TEXT_GENERATION')['label'],
+      '摘要/会议纪要模型',
+    );
+    expect(feature.modelSelectorOptions('VISION'), isEmpty);
+  });
+
   test('model option exposes its reference image limit', () {
     final option = ModelOption.fromJson({
       'code': 'gpt-image-2',

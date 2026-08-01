@@ -156,7 +156,8 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
         return invoke(
                 request.tenantId(), request.runId(), ModelCapability.AUDIO_TRANSCRIPTION, request.modelAlias(),
                 selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
-                        request.inputAssetId().toString(), request.language(), request.prompt()),
+                        request.inputAssetId().toString(), request.language(), request.prompt(),
+                        Boolean.toString(request.speakerDiarization()), request.timestampMode().name()),
                 () -> selected.provider().transcribeAudio(selected.target(), request, asset),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputUnits(), response.outputUnits())
