@@ -99,17 +99,19 @@ class CleanvoiceModelProviderTest {
             assertEquals("studio-sound", response.model());
             assertEquals("edit-1", response.providerRequestId());
 
-            JsonNode config = submittedBody[0].path("config");
+            JsonNode inputPayload = submittedBody[0].path("input");
+            JsonNode config = inputPayload.path("config");
+            assertFalse(submittedBody[0].has("config"));
             assertTrue(config.path("remove_noise").asBoolean());
             assertTrue(config.path("studio_sound").asBoolean());
             assertTrue(config.path("normalize").asBoolean());
             assertTrue(config.path("keep_music").asBoolean());
             assertEquals(-16.0, config.path("target_lufs").asDouble());
             assertEquals("mp3", config.path("export_format").asText());
-            assertFalse(config.path("nightly").asBoolean(true));
+            assertFalse(config.has("nightly"));
             assertEquals(
                     baseUrl + "/signed-upload",
-                    submittedBody[0].path("input").path("files").get(0).asText()
+                    inputPayload.path("files").get(0).asText()
             );
         } finally {
             server.stop(0);

@@ -233,11 +233,10 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
         config.put("keep_music", request.keepBackgroundMusic());
         config.put("target_lufs", doubleSetting(target, "targetLufs", -16.0, -24.0, -8.0));
         config.put("export_format", outputFormat(target, request.format()));
-        config.put("nightly", false);
-        return Map.of(
-                "input", Map.of("files", List.of(uploadedFileUrl)),
+        return Map.of("input", Map.of(
+                "files", List.of(uploadedFileUrl),
                 "config", Map.copyOf(config)
-        );
+        ));
     }
 
     private static JsonNode awaitCompletion(
