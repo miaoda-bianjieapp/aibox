@@ -100,6 +100,10 @@ yuanzuo:
         protocol: assemblyai
         base-url: https://api.assemblyai.com
         api-key: CHANGE_ME_ASSEMBLYAI_API_KEY
+      cleanvoice-official:
+        protocol: cleanvoice
+        base-url: https://api.cleanvoice.ai
+        api-key: CHANGE_ME_CLEANVOICE_API_KEY
 
 logging:
   pattern:

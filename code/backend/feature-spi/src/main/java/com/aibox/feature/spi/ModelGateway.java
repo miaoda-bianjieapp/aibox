@@ -35,6 +35,10 @@ public interface ModelGateway {
         throw unsupported(ModelCapability.AUDIO_TRANSCRIPTION);
     }
 
+    default AudioEnhancementResponse enhanceAudio(AudioEnhancementRequest request) {
+        throw unsupported(ModelCapability.AUDIO_ENHANCEMENT);
+    }
+
     default ImageGenerationResponse generateImage(ImageGenerationRequest request) {
         throw unsupported(ModelCapability.IMAGE_GENERATION);
     }

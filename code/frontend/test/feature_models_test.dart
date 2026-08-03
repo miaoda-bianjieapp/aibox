@@ -139,6 +139,27 @@ void main() {
     expect(policy.shouldShowSelector, isTrue);
   });
 
+  test('audio enhancement policy exposes its model selector', () {
+    final policy = ModelPolicy.fromJson({
+      'capability': 'AUDIO_ENHANCEMENT',
+      'defaultModelCode': 'cleanvoice-studio-sound-audio',
+      'allowUserSelection': true,
+      'options': [
+        {
+          'code': 'cleanvoice-studio-sound-audio',
+          'displayName': 'Cleanvoice Studio Sound',
+          'description': '官方稳定版音频增强模型',
+          'isDefault': true,
+          'sourceType': 'OFFICIAL',
+          'sourceName': 'Cleanvoice 官方',
+        },
+      ],
+    });
+
+    expect(policy.shouldShowSelector, isTrue);
+    expect(policy.options.single.code, 'cleanvoice-studio-sound-audio');
+  });
+
   test('feature detail exposes model selector presentation options', () {
     final feature = FeatureDetail.fromJson({
       'code': 'audio.transcription',
