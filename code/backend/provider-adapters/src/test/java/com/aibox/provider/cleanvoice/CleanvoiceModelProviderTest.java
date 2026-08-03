@@ -35,7 +35,10 @@ class CleanvoiceModelProviderTest {
     void uploadsCreatesStableEditPollsAndDownloadsEnhancedAudio() throws IOException {
         byte[] input = "noisy-audio".getBytes(StandardCharsets.UTF_8);
         byte[] output = "clean-audio".getBytes(StandardCharsets.UTF_8);
+        String signedUploadQuery =
+                "X-Amz-Credential=test%2F20260803%2Fregion%2Fs3%2Faws4_request";
         JsonNode[] submittedBody = new JsonNode[1];
+        String[] uploadedRawQuery = new String[1];
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         server.createContext("/v2/upload", exchange -> {
@@ -43,11 +46,13 @@ class CleanvoiceModelProviderTest {
             assertEquals("test-key", exchange.getRequestHeaders().getFirst("X-API-Key"));
             assertTrue(URLDecoder.decode(exchange.getRequestURI().getRawQuery(), StandardCharsets.UTF_8)
                     .contains("filename=meeting room.wav"));
-            respond(exchange, 200, "{\"signedUrl\":\"" + baseUrl + "/signed-upload?token=test\"}");
+            respond(exchange, 200, "{\"signedUrl\":\"" + baseUrl + "/signed-upload?"
+                    + signedUploadQuery + "\"}");
         });
         server.createContext("/signed-upload", exchange -> {
             assertEquals("PUT", exchange.getRequestMethod());
             assertEquals("audio/wav", exchange.getRequestHeaders().getFirst("Content-Type"));
+            uploadedRawQuery[0] = exchange.getRequestURI().getRawQuery();
             assertArrayEquals(input, exchange.getRequestBody().readAllBytes());
             respond(exchange, 200, "");
         });
@@ -98,6 +103,7 @@ class CleanvoiceModelProviderTest {
             assertEquals("cleanvoice-official", response.provider());
             assertEquals("studio-sound", response.model());
             assertEquals("edit-1", response.providerRequestId());
+            assertEquals(signedUploadQuery, uploadedRawQuery[0]);
 
             JsonNode inputPayload = submittedBody[0].path("input");
             JsonNode config = inputPayload.path("config");

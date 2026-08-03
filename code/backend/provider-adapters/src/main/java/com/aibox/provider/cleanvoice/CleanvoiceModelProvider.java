@@ -153,7 +153,7 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
     private void uploadAsset(String signedUrl, ModelAsset asset) {
         execute(() -> {
             transferClient.put()
-                    .uri(signedUrl)
+                    .uri(URI.create(signedUrl))
                     .contentType(mediaType(asset.mediaType(), MediaType.APPLICATION_OCTET_STREAM))
                     .body(asset.content())
                     .retrieve()
@@ -203,7 +203,7 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
 
     private DownloadedAudio downloadOnce(String url, String requestedFormat, ModelAsset source) {
         ResponseEntity<byte[]> response = execute(() -> transferClient.get()
-                .uri(url)
+                .uri(URI.create(url))
                 .retrieve()
                 .toEntity(byte[].class));
         byte[] content = response.getBody();
