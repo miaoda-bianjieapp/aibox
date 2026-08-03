@@ -2405,6 +2405,7 @@ String _modelCapabilityLabel(String capability) => switch (capability) {
       'TEXT_GENERATION' => '文本模型',
       'VISION' => '视觉理解模型',
       'AUDIO_TRANSCRIPTION' => '音频转写模型',
+      'AUDIO_ENHANCEMENT' => '音频增强模型',
       'IMAGE_GENERATION' => '图片生成模型',
       'TEXT_TO_SPEECH' => '语音生成模型',
       'VIDEO_GENERATION' => '视频生成模型',
