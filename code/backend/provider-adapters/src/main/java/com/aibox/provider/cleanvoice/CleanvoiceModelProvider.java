@@ -39,8 +39,22 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
     private static final int DEFAULT_POLL_INTERVAL_MILLIS = 10_000;
     private static final int DEFAULT_POLL_TIMEOUT_SECONDS = 1_200;
     private static final int DEFAULT_MAX_INPUT_BYTES = 200 * 1024 * 1024;
+    private static final int DEFAULT_DOWNLOAD_RETRY_ATTEMPTS = 3;
+    private static final int DEFAULT_DOWNLOAD_RETRY_DELAY_MILLIS = 1_000;
     private static final Set<String> WAITING_STATUSES =
-            Set.of("PENDING", "STARTED", "PROGRESS", "QUEUED", "PROCESSING");
+            Set.of(
+                    "PENDING",
+                    "STARTED",
+                    "PROGRESS",
+                    "QUEUED",
+                    "PROCESSING",
+                    "PREPROCESSING",
+                    "CLASSIFICATION",
+                    "EDITING",
+                    "POSTPROCESSING",
+                    "EXPORT",
+                    "RETRY"
+            );
     private static final Set<String> OUTPUT_FORMATS = Set.of("auto", "mp3", "wav", "flac", "m4a");
 
     private final Map<String, ProviderContext> providers;
@@ -93,7 +107,7 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
         ProviderContext provider = requireProvider(target);
         validateInput(target, asset);
 
-        JsonNode upload = execute(() -> provider.client().get()
+        JsonNode upload = execute(() -> provider.client().post()
                 .uri(builder -> builder.path(UPLOAD_PATH)
                         .queryParam("filename", safeFileName(asset.fileName()))
                         .build())
@@ -114,6 +128,9 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
                 .body(JsonNode.class));
         String taskId = text(submission, "task_id");
         if (isBlank(taskId)) {
+            taskId = text(submission, "id");
+        }
+        if (isBlank(taskId)) {
             throw invalidResponse("Cleanvoice edit response has no task_id");
         }
 
@@ -122,7 +139,7 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
         if (isBlank(downloadUrl)) {
             throw invalidResponse("Cleanvoice completed edit has no download_url");
         }
-        DownloadedAudio downloaded = download(downloadUrl, request.format(), asset);
+        DownloadedAudio downloaded = download(target, downloadUrl, request.format(), asset);
         return new AudioEnhancementResponse(
                 new GeneratedAudio(downloaded.fileName(), downloaded.mediaType(), downloaded.content()),
                 provider.code(),
@@ -145,7 +162,46 @@ public final class CleanvoiceModelProvider implements ModelProviderClient {
         });
     }
 
-    private DownloadedAudio download(String url, String requestedFormat, ModelAsset source) {
+    private DownloadedAudio download(
+            ModelCallTarget target,
+            String url,
+            String requestedFormat,
+            ModelAsset source
+    ) {
+        int attempts = intSetting(
+                target,
+                "downloadRetryAttempts",
+                DEFAULT_DOWNLOAD_RETRY_ATTEMPTS,
+                1,
+                10
+        );
+        int delayMillis = intSetting(
+                target,
+                "downloadRetryDelayMillis",
+                DEFAULT_DOWNLOAD_RETRY_DELAY_MILLIS,
+                0,
+                60_000
+        );
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                return downloadOnce(url, requestedFormat, source);
+            } catch (ModelProviderException exception) {
+                if (!exception.retryable()) throw exception;
+                if (attempt == attempts) {
+                    throw new ModelProviderException(
+                            "PROVIDER_AUDIO_DOWNLOAD_FAILED",
+                            "Cleanvoice completed the edit but the enhanced audio could not be downloaded",
+                            false,
+                            exception
+                    );
+                }
+                sleep(delayMillis);
+            }
+        }
+        throw new IllegalStateException("Download retry loop did not return");
+    }
+
+    private DownloadedAudio downloadOnce(String url, String requestedFormat, ModelAsset source) {
         ResponseEntity<byte[]> response = execute(() -> transferClient.get()
                 .uri(url)
                 .retrieve()

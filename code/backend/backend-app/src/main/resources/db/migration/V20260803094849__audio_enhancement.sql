@@ -1,0 +1,181 @@
+insert into feature_definition (
+    id,
+    workspace_id,
+    code,
+    display_name,
+    description,
+    status,
+    current_version,
+    result_type,
+    renderer_key,
+    execution_mode,
+    sort_order,
+    created_at,
+    updated_at
+)
+select
+    '21a1ba85-3c64-42ae-8210-61ab13d2a8e4',
+    workspace.id,
+    'audio.enhancement',
+    '人声降噪',
+    '对单个音频执行降噪、去回声、响度平衡和人声清晰化，输出可播放下载的增强音频。',
+    'INTERNAL',
+    1,
+    'audio',
+    'audio',
+    'ASYNC',
+    20,
+    now(),
+    now()
+from workspace
+where workspace.code = 'audio';
+
+insert into feature_version (
+    id,
+    feature_id,
+    version,
+    input_schema_json,
+    ui_schema_json,
+    output_schema_json,
+    config_json,
+    created_at
+) values (
+    '4687a2b9-e0d9-449c-961e-42a741300684',
+    '21a1ba85-3c64-42ae-8210-61ab13d2a8e4',
+    1,
+    $json$
+    {
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["audioFile","keepBackgroundMusic"],
+      "properties":{
+        "audioFile":{
+          "type":"string",
+          "format":"uuid",
+          "title":"音频文件",
+          "description":"选择一个需要降噪、去回声和人声清晰化的音频。"
+        },
+        "keepBackgroundMusic":{
+          "type":"boolean",
+          "default":false,
+          "title":"保留背景音乐",
+          "description":"适合带配乐的访谈、播客或口播；关闭时更侧重纯人声清理。"
+        }
+      },
+      "additionalProperties":false
+    }
+    $json$::jsonb,
+    $json$
+    {
+      "order":["audioFile","keepBackgroundMusic"],
+      "widgets":{
+        "audioFile":"audio",
+        "keepBackgroundMusic":"switch"
+      },
+      "fieldOptions":{
+        "audioFile":{
+          "acceptedMimeTypes":[
+            "audio/mpeg",
+            "audio/mp3",
+            "audio/aac",
+            "audio/mp4",
+            "audio/x-m4a",
+            "audio/wav",
+            "audio/x-wav",
+            "audio/flac",
+            "audio/x-flac",
+            "audio/ogg",
+            "application/ogg",
+            "application/octet-stream"
+          ],
+          "allowedExtensions":[".mp3",".aac",".m4a",".wav",".flac",".ogg"],
+          "maxItems":1,
+          "maxFileSizeBytes":209715200,
+          "maxTotalSizeBytes":209715200,
+          "allowAssetLibrarySelection":true,
+          "uploadLabel":"选择并上传音频"
+        }
+      },
+      "fieldHelp":{
+        "audioFile":{
+          "text":"支持 MP3、AAC、M4A、WAV、FLAC 和 OGG，单文件不超过 200 MB。"
+        },
+        "keepBackgroundMusic":{
+          "text":"开启后会尽量保留背景音乐，同时继续处理人声和环境噪声。"
+        }
+      },
+      "feeNotice":"人声降噪会调用付费音频处理服务。点击“开始降噪”即表示确认本次调用。",
+      "submitLabel":"开始降噪",
+      "revisionSubmitLabel":"重新处理并生成新版本"
+    }
+    $json$::jsonb,
+    $json$
+    {
+      "$schema":"https://json-schema.org/draft/2020-12/schema",
+      "type":"object",
+      "required":["assetId","name"],
+      "properties":{
+        "assetId":{
+          "type":"string",
+          "format":"uuid"
+        },
+        "name":{
+          "type":"string",
+          "minLength":1,
+          "maxLength":500
+        }
+      },
+      "additionalProperties":false
+    }
+    $json$::jsonb,
+    $json$
+    {
+      "modelAliases":{
+        "AUDIO_ENHANCEMENT":"audio.enhancement.default"
+      },
+      "maxInputFiles":1,
+      "maxInputFileBytes":209715200,
+      "outputFormat":"auto",
+      "taskTitleFromAssets":{
+        "field":"audioFile",
+        "template":"{name} 人声降噪"
+      },
+      "capabilities":["AUDIO_ENHANCEMENT"]
+    }
+    $json$::jsonb,
+    now()
+);
+
+insert into feature_model_policy (
+    id,
+    feature_code,
+    capability,
+    default_deployment_code,
+    allow_user_selection,
+    created_at,
+    updated_at
+) values (
+    '9137ad4c-64b2-49ac-b463-ebeb8606f115',
+    'audio.enhancement',
+    'AUDIO_ENHANCEMENT',
+    'cleanvoice-studio-sound-audio',
+    false,
+    now(),
+    now()
+);
+
+insert into feature_model_option (
+    policy_id,
+    deployment_code,
+    display_name,
+    description,
+    sort_order,
+    enabled
+) values (
+    '9137ad4c-64b2-49ac-b463-ebeb8606f115',
+    'cleanvoice-studio-sound-audio',
+    'Cleanvoice Studio Sound',
+    '官方稳定版，提供降噪、去回声、响度归一化和人声清晰化。',
+    10,
+    true
+);

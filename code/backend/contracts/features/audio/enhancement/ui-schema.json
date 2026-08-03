@@ -1,0 +1,42 @@
+{
+  "order": ["audioFile", "keepBackgroundMusic"],
+  "widgets": {
+    "audioFile": "audio",
+    "keepBackgroundMusic": "switch"
+  },
+  "fieldOptions": {
+    "audioFile": {
+      "acceptedMimeTypes": [
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/aac",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/flac",
+        "audio/x-flac",
+        "audio/ogg",
+        "application/ogg",
+        "application/octet-stream"
+      ],
+      "allowedExtensions": [".mp3", ".aac", ".m4a", ".wav", ".flac", ".ogg"],
+      "maxItems": 1,
+      "maxFileSizeBytes": 209715200,
+      "maxTotalSizeBytes": 209715200,
+      "allowAssetLibrarySelection": true,
+      "uploadLabel": "选择并上传音频"
+    }
+  },
+  "fieldHelp": {
+    "audioFile": {
+      "text": "支持 MP3、AAC、M4A、WAV、FLAC 和 OGG，单文件不超过 200 MB。"
+    },
+    "keepBackgroundMusic": {
+      "text": "开启后会尽量保留背景音乐，同时继续处理人声和环境噪声。"
+    }
+  },
+  "feeNotice": "人声降噪会调用付费音频处理服务。点击“开始降噪”即表示确认本次调用。",
+  "submitLabel": "开始降噪",
+  "revisionSubmitLabel": "重新处理并生成新版本"
+}

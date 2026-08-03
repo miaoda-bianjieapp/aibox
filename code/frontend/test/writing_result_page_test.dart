@@ -163,4 +163,47 @@ void main() {
 
     expect(find.text('核心摘要内容'), findsOneWidget);
   });
+
+  testWidgets('audio artifacts use the generic preview and download actions',
+      (tester) async {
+    final artifact = ArtifactView(
+      id: 'artifact-audio',
+      taskId: 'task-audio',
+      runId: 'run-audio',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'audio',
+      title: '采访录音 人声降噪',
+      mimeType: 'audio/mpeg',
+      content: const {
+        'assetId': 'enhanced-audio',
+        'name': 'interview-enhanced.mp3',
+      },
+      metadata: const {},
+      assets: [
+        AssetView(
+          id: 'enhanced-audio',
+          name: 'interview-enhanced.mp3',
+          mediaType: 'audio/mpeg',
+          sizeBytes: 4096,
+          createdAt: DateTime(2026, 8, 3, 9, 48),
+          origin: 'MODEL_OUTPUT',
+          category: 'AUDIO',
+        ),
+      ],
+      createdAt: DateTime(2026, 8, 3, 9, 48),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: ArtifactResultPage(
+        artifact: artifact,
+        rendererKey: 'audio',
+      ),
+    ));
+
+    expect(find.text('音频成果'), findsOneWidget);
+    expect(find.text('interview-enhanced.mp3'), findsOneWidget);
+    expect(find.text('打开预览'), findsOneWidget);
+    expect(find.text('下载'), findsOneWidget);
+  });
 }

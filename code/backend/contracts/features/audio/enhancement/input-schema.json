@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["audioFile", "keepBackgroundMusic"],
+  "properties": {
+    "audioFile": {
+      "type": "string",
+      "format": "uuid",
+      "title": "音频文件",
+      "description": "选择一个需要降噪、去回声和人声清晰化的音频。"
+    },
+    "keepBackgroundMusic": {
+      "type": "boolean",
+      "default": false,
+      "title": "保留背景音乐",
+      "description": "适合带配乐的访谈、播客或口播；关闭时更侧重纯人声清理。"
+    }
+  },
+  "additionalProperties": false
+}

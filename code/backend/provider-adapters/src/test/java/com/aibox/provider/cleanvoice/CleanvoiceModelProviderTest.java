@@ -39,6 +39,7 @@ class CleanvoiceModelProviderTest {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         server.createContext("/v2/upload", exchange -> {
+            assertEquals("POST", exchange.getRequestMethod());
             assertEquals("test-key", exchange.getRequestHeaders().getFirst("X-API-Key"));
             assertTrue(URLDecoder.decode(exchange.getRequestURI().getRawQuery(), StandardCharsets.UTF_8)
                     .contains("filename=meeting room.wav"));
@@ -53,7 +54,7 @@ class CleanvoiceModelProviderTest {
         server.createContext("/v2/edits", exchange -> {
             assertEquals("test-key", exchange.getRequestHeaders().getFirst("X-API-Key"));
             submittedBody[0] = MAPPER.readTree(exchange.getRequestBody());
-            respond(exchange, 200, "{\"task_id\":\"edit-1\"}");
+            respond(exchange, 200, "{\"id\":\"edit-1\"}");
         });
         server.createContext("/v2/edits/edit-1", exchange -> respond(exchange, 200, """
                 {
@@ -230,6 +231,58 @@ class CleanvoiceModelProviderTest {
             assertEquals("PROVIDER_SUBMISSION_UNCERTAIN", uncertain.code());
             assertFalse(uncertain.retryable());
             assertEquals(1, submissions.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void retriesTheCompletedEditDownloadWithoutSubmittingAnotherPaidEdit() throws IOException {
+        AtomicInteger submissions = new AtomicInteger();
+        AtomicInteger downloads = new AtomicInteger();
+        byte[] output = new byte[]{7, 8, 9};
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        server.createContext("/v2/upload", exchange ->
+                respond(exchange, 200, "{\"signedUrl\":\"" + baseUrl + "/signed-upload?token=test\"}"));
+        server.createContext("/signed-upload", exchange -> respond(exchange, 200, ""));
+        server.createContext("/v2/edits", exchange -> {
+            submissions.incrementAndGet();
+            respond(exchange, 200, "{\"task_id\":\"edit-download\"}");
+        });
+        server.createContext("/v2/edits/edit-download", exchange -> respond(exchange, 200, """
+                {
+                  "status":"SUCCESS",
+                  "result":{"download_url":"%s/download/retry.mp3"}
+                }
+                """.formatted(baseUrl)));
+        server.createContext("/download/retry.mp3", exchange -> {
+            if (downloads.getAndIncrement() == 0) {
+                respond(exchange, 503, "{\"error\":\"temporarily unavailable\"}");
+                return;
+            }
+            exchange.getResponseHeaders().set("Content-Type", "audio/mpeg");
+            exchange.sendResponseHeaders(200, output.length);
+            exchange.getResponseBody().write(output);
+            exchange.close();
+        });
+        server.start();
+        try {
+            AudioEnhancementResponse response = provider(baseUrl).enhanceAudio(
+                    target(Map.of(
+                            "initialPollDelayMillis", 0,
+                            "pollIntervalMillis", 1,
+                            "pollTimeoutSeconds", 2,
+                            "downloadRetryAttempts", 2,
+                            "downloadRetryDelayMillis", 1
+                    )),
+                    request(),
+                    audio()
+            );
+
+            assertArrayEquals(output, response.audio().content());
+            assertEquals(1, submissions.get());
+            assertEquals(2, downloads.get());
         } finally {
             server.stop(0);
         }

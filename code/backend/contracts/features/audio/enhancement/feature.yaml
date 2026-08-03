@@ -1,0 +1,22 @@
+featureCode: audio.enhancement
+workspaceCode: audio
+version: 1
+displayName: 人声降噪
+description: 对单个音频执行降噪、去回声、响度平衡和人声清晰化，输出可播放下载的增强音频。
+status: INTERNAL
+executionMode: ASYNC
+resultType: audio
+rendererKey: audio
+requiredCapabilities:
+  - AUDIO_ENHANCEMENT
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxInputFiles: 1
+  maxInputFileBytes: 209715200
+modelAlias: audio.enhancement.default
+taskTitleFromAssets:
+  field: audioFile
+  template: "{name} 人声降噪"
