@@ -1,0 +1,19 @@
+featureCode: audio.text_to_speech
+workspaceCode: audio
+version: 2
+displayName: 文字转语音
+description: 将不超过 500 字的中文文字合成为可播放、下载和历史回看的 WAV 音频。
+status: INTERNAL
+executionMode: ASYNC
+resultType: audio
+rendererKey: audio
+requiredCapabilities:
+  - TEXT_TO_SPEECH
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxInputFiles: 0
+  maxTextCharacters: 500
+modelAlias: speech.default

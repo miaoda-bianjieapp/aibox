@@ -11,6 +11,8 @@ import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
+import com.aibox.feature.spi.TextToSpeechRequest;
+import com.aibox.feature.spi.TextToSpeechResponse;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
@@ -34,6 +36,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -186,6 +190,148 @@ class OpenAiCompatibleTextProviderTest {
         );
 
         assertEquals("PROVIDER_CONFIG_INVALID", exception.code());
+        assertFalse(exception.retryable());
+    }
+
+    @Test
+    void unifiedTtsUsesApiKeyHeaderAndVoiceIdPayload() throws IOException {
+        AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedAuthorization = new AtomicReference<>();
+        AtomicReference<String> capturedApiKey = new AtomicReference<>();
+        AtomicReference<String> capturedContentLength = new AtomicReference<>();
+        AtomicReference<String> capturedTransferEncoding = new AtomicReference<>();
+        AtomicReference<String> capturedProtocol = new AtomicReference<>();
+        AtomicReference<String> capturedUpgrade = new AtomicReference<>();
+        AtomicReference<String> capturedConnection = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/audio/speech", exchange -> {
+            capturedAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            capturedApiKey.set(exchange.getRequestHeaders().getFirst("X-API-Key"));
+            capturedContentLength.set(exchange.getRequestHeaders().getFirst("Content-Length"));
+            capturedTransferEncoding.set(exchange.getRequestHeaders().getFirst("Transfer-Encoding"));
+            capturedProtocol.set(exchange.getProtocol());
+            capturedUpgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
+            capturedConnection.set(exchange.getRequestHeaders().getFirst("Connection"));
+            capturedBody.set(TEST_MAPPER.readTree(exchange.getRequestBody()));
+            byte[] response = new byte[]{'R', 'I', 'F', 'F', 1, 2, 3, 4, 'W', 'A', 'V', 'E'};
+            exchange.getResponseHeaders().set("Content-Type", "audio/wav");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration =
+                    new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setApiKeyHeader("X-API-Key");
+            configuration.setApiKeyPrefix("");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("openai2api-tts-relay", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "openai2api-gpt-sovits-v2-tts",
+                    "openai2api-tts-relay",
+                    "gpt-sovits-v2",
+                    ModelCapability.TEXT_TO_SPEECH,
+                    Map.of(
+                            "speechProtocol", "unified-tts",
+                            "defaultLanguage", "zh",
+                            "defaultEndUserId", "codex-test",
+                            "voiceMap", Map.of(
+                                    "gentle_female",
+                                    "voice_4cb4da6d4aaa4e48aab7_v4"
+                            )
+                    )
+            );
+
+            TextToSpeechResponse response = provider.synthesizeSpeech(
+                    target,
+                    new TextToSpeechRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "speech.default",
+                            "openai2api-gpt-sovits-v2-tts",
+                            "你好，这是测试。",
+                            "gentle_female",
+                            1.0,
+                            "wav",
+                            Map.of()
+                    )
+            );
+
+            assertEquals("test-key", capturedApiKey.get());
+            assertEquals(null, capturedAuthorization.get());
+            assertNotNull(capturedContentLength.get());
+            assertNull(capturedTransferEncoding.get());
+            assertEquals("HTTP/1.1", capturedProtocol.get());
+            assertNull(capturedUpgrade.get());
+            assertNull(capturedConnection.get());
+            assertEquals("gpt-sovits-v2", capturedBody.get().path("model").asText());
+            assertEquals("你好，这是测试。", capturedBody.get().path("input").asText());
+            assertEquals(
+                    "voice_4cb4da6d4aaa4e48aab7_v4",
+                    capturedBody.get().path("voice_id").asText()
+            );
+            assertEquals("zh", capturedBody.get().path("language").asText());
+            assertEquals("codex-test", capturedBody.get().path("end_user_id").asText());
+            assertEquals("wav", capturedBody.get().path("response_format").asText());
+            assertEquals("audio/wav", response.audio().mediaType());
+            assertTrue(Arrays.equals(
+                    new byte[]{'R', 'I', 'F', 'F', 1, 2, 3, 4, 'W', 'A', 'V', 'E'},
+                    response.audio().content()
+            ));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void unifiedTtsRejectsUnknownBusinessVoiceWithoutRetrying() {
+        ModelProviderProperties.Provider configuration =
+                new ModelProviderProperties.Provider();
+        configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+        configuration.setBaseUrl("http://127.0.0.1:1");
+        configuration.setApiKey("test-key");
+        ModelProviderProperties properties = new ModelProviderProperties();
+        properties.setProviders(Map.of("openai2api-tts-relay", configuration));
+        OpenAiCompatibleTextProvider provider =
+                new OpenAiCompatibleTextProvider(properties);
+        ModelCallTarget target = new ModelCallTarget(
+                "openai2api-gpt-sovits-v2-tts",
+                "openai2api-tts-relay",
+                "gpt-sovits-v2",
+                ModelCapability.TEXT_TO_SPEECH,
+                Map.of(
+                        "speechProtocol", "unified-tts",
+                        "voiceMap", Map.of(
+                                "gentle_female",
+                                "voice_4cb4da6d4aaa4e48aab7_v4"
+                        )
+                )
+        );
+
+        ModelProviderException exception = assertThrows(
+                ModelProviderException.class,
+                () -> provider.synthesizeSpeech(
+                        target,
+                        new TextToSpeechRequest(
+                                UUID.randomUUID(),
+                                UUID.randomUUID(),
+                                "speech.default",
+                                "openai2api-gpt-sovits-v2-tts",
+                                "你好",
+                                "unknown_voice",
+                                1.0,
+                                "wav",
+                                Map.of()
+                        )
+                )
+        );
+
+        assertEquals("PROVIDER_VOICE_UNSUPPORTED", exception.code());
         assertFalse(exception.retryable());
     }
 

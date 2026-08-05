@@ -129,7 +129,8 @@ public class ModelCatalogService {
                 option.getDeploymentCode().equals(policy.getDefaultDeploymentCode()),
                 provider.getProviderKind().name(),
                 provider.getDisplayName(),
-                publicMaxReferenceImages(deployment)
+                publicMaxReferenceImages(deployment),
+                publicParameterOptions(deployment)
         );
     }
 
@@ -153,6 +154,31 @@ public class ModelCatalogService {
         return null;
     }
 
+    private static Map<String, List<String>> publicParameterOptions(
+            ModelDeploymentEntity deployment
+    ) {
+        Map<String, Object> config = deployment.getConfig();
+        if (config == null || !(config.get("parameterOptions") instanceof Map<?, ?> configured)) {
+            return Map.of();
+        }
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        configured.forEach((rawField, rawOptions) -> {
+            String field = rawField == null ? "" : rawField.toString().trim();
+            if (field.isEmpty() || field.length() > 120 || !(rawOptions instanceof List<?> options)) {
+                return;
+            }
+            List<String> values = options.stream()
+                    .filter(Objects::nonNull)
+                    .map(Object::toString)
+                    .map(String::trim)
+                    .filter(value -> !value.isEmpty() && value.length() <= 120)
+                    .distinct()
+                    .limit(50)
+                    .toList();
+            if (!values.isEmpty()) result.put(field, values);
+        });
+        return result.isEmpty() ? Map.of() : Map.copyOf(result);
+    }
     private String resolvePolicy(FeatureModelPolicyEntity policy, String requestedDeploymentCode) {
         String selected = requestedDeploymentCode == null || requestedDeploymentCode.isBlank()
                 ? policy.getDefaultDeploymentCode()
@@ -208,7 +234,8 @@ public class ModelCatalogService {
             boolean isDefault,
             String sourceType,
             String sourceName,
-            Integer maxReferenceImages
+            Integer maxReferenceImages,
+            Map<String, List<String>> parameterOptions
     ) {
     }
 

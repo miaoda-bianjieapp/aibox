@@ -60,6 +60,45 @@ public class PostgresJobQueue {
     }
 
     @Transactional
+    public LeaseRenewal renewLease(JobLease lease, String workerId, Duration leaseDuration) {
+        Instant now = clock.instant();
+        int updated = jdbcTemplate.update("""
+                update job
+                set locked_until = ?, updated_at = ?
+                where id = ?
+                  and status = 'RUNNING'
+                  and locked_by = ?
+                  and attempts = ?
+                  and exists (
+                      select 1
+                      from task_run
+                      where task_run.id = job.run_id
+                        and task_run.status <> 'CANCELLED'
+                  )
+                """,
+                Timestamp.from(now.plus(leaseDuration)),
+                Timestamp.from(now),
+                lease.jobId(),
+                workerId,
+                lease.attempts()
+        );
+        if (updated == 1) return LeaseRenewal.RENEWED;
+        Boolean cancelled = jdbcTemplate.queryForObject("""
+                select exists (
+                    select 1
+                    from job
+                    join task_run on task_run.id = job.run_id
+                    where job.id = ?
+                      and job.status = 'RUNNING'
+                      and job.locked_by = ?
+                      and job.attempts = ?
+                      and task_run.status = 'CANCELLED'
+                )
+                """, Boolean.class, lease.jobId(), workerId, lease.attempts());
+        return Boolean.TRUE.equals(cancelled) ? LeaseRenewal.RUN_CANCELLED : LeaseRenewal.LOST;
+    }
+
+    @Transactional
     public List<UUID> recoverExpiredLeases() {
         Instant now = clock.instant();
         Timestamp nowTimestamp = Timestamp.from(now);
@@ -105,6 +144,14 @@ public class PostgresJobQueue {
                 """, Timestamp.from(clock.instant()), jobId);
     }
 
+    public void markSucceeded(JobLease lease, String workerId) {
+        jdbcTemplate.update("""
+                update job
+                set status = 'SUCCEEDED', locked_by = null, locked_until = null, updated_at = ?
+                where id = ? and status = 'RUNNING' and locked_by = ? and attempts = ?
+                """, Timestamp.from(clock.instant()), lease.jobId(), workerId, lease.attempts());
+    }
+
     public void markCancelled(UUID jobId) {
         jdbcTemplate.update("""
                 update job
@@ -114,30 +161,72 @@ public class PostgresJobQueue {
                 """, Timestamp.from(clock.instant()), jobId);
     }
 
+    public void markCancelled(JobLease lease, String workerId) {
+        jdbcTemplate.update("""
+                update job
+                set status = 'CANCELLED', locked_by = null, locked_until = null,
+                    last_error = null, updated_at = ?
+                where id = ? and status = 'RUNNING' and locked_by = ? and attempts = ?
+                """, Timestamp.from(clock.instant()), lease.jobId(), workerId, lease.attempts());
+    }
+
     public void markFailed(JobLease lease, String error, boolean retryable) {
+        markFailed(lease, null, error, retryable);
+    }
+
+    public void markFailed(JobLease lease, String workerId, String error, boolean retryable) {
         Instant now = clock.instant();
         Timestamp nowTimestamp = Timestamp.from(now);
+        String ownershipClause = workerId == null
+                ? ""
+                : " and status = 'RUNNING' and locked_by = ? and attempts = ?";
         if (retryable && lease.attempts() < lease.maxAttempts()) {
             long delaySeconds = Math.min(30L, 1L << lease.attempts());
-            jdbcTemplate.update("""
+            String sql = """
                     update job
                     set status = 'QUEUED', available_at = ?, locked_by = null, locked_until = null,
                         last_error = ?, updated_at = ?
                     where id = ?
-                    """,
-                    Timestamp.from(now.plusSeconds(delaySeconds)),
-                    abbreviate(error),
-                    nowTimestamp,
-                    lease.jobId()
-            );
+                    """ + ownershipClause;
+            if (workerId == null) {
+                jdbcTemplate.update(
+                        sql,
+                        Timestamp.from(now.plusSeconds(delaySeconds)),
+                        abbreviate(error),
+                        nowTimestamp,
+                        lease.jobId()
+                );
+            } else {
+                jdbcTemplate.update(
+                        sql,
+                        Timestamp.from(now.plusSeconds(delaySeconds)),
+                        abbreviate(error),
+                        nowTimestamp,
+                        lease.jobId(),
+                        workerId,
+                        lease.attempts()
+                );
+            }
             return;
         }
-        jdbcTemplate.update("""
+        String sql = """
                 update job
                 set status = 'FAILED', locked_by = null, locked_until = null,
                     last_error = ?, updated_at = ?
                 where id = ?
-                """, abbreviate(error), nowTimestamp, lease.jobId());
+                """ + ownershipClause;
+        if (workerId == null) {
+            jdbcTemplate.update(sql, abbreviate(error), nowTimestamp, lease.jobId());
+        } else {
+            jdbcTemplate.update(
+                    sql,
+                    abbreviate(error),
+                    nowTimestamp,
+                    lease.jobId(),
+                    workerId,
+                    lease.attempts()
+            );
+        }
     }
 
     private JobLease mapLease(ResultSet resultSet, int rowNumber) throws SQLException {
@@ -157,5 +246,11 @@ public class PostgresJobQueue {
     }
 
     public record JobLease(UUID jobId, UUID runId, int attempts, int maxAttempts) {
+    }
+
+    public enum LeaseRenewal {
+        RENEWED,
+        RUN_CANCELLED,
+        LOST
     }
 }

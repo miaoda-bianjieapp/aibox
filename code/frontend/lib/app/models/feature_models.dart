@@ -204,6 +204,55 @@ class FeatureDetail extends FeatureEntry {
         .where((option) => option.code == deploymentCode)
         .firstOrNull;
   }
+
+  List<String> enumValuesFor(
+    String field,
+    Map<String, String> selectedModels,
+  ) {
+    final values = _stringList(_map(properties[field])['enum']);
+    if (values.isEmpty) return values;
+    Set<String>? allowed;
+    for (final policy in modelPolicies) {
+      final deployment =
+          selectedModels[policy.capability] ?? policy.defaultModelCode;
+      final constrained =
+          modelOption(policy.capability, deployment)?.allowedValues(field) ??
+              const <String>[];
+      if (constrained.isEmpty) continue;
+      allowed = allowed == null
+          ? constrained.toSet()
+          : allowed.intersection(constrained.toSet());
+    }
+    return allowed == null ? values : values.where(allowed.contains).toList();
+  }
+
+  String? normalizedEnumValue(
+    String field,
+    Map<String, String> selectedModels,
+    Object? requested,
+  ) {
+    final values = enumValuesFor(field, selectedModels);
+    final selected = requested?.toString();
+    if (selected != null && values.contains(selected)) return selected;
+    return values.firstOrNull;
+  }
+
+  Map<String, Object?> normalizedEnumValues(
+    Map<String, String> selectedModels,
+    Map<String, Object?> currentValues,
+  ) {
+    final normalized = Map<String, Object?>.from(currentValues);
+    for (final field in fieldOrder) {
+      final schema = _map(properties[field]);
+      if (schema['enum'] is! List) continue;
+      normalized[field] = normalizedEnumValue(
+        field,
+        selectedModels,
+        currentValues[field],
+      );
+    }
+    return normalized;
+  }
 }
 
 class ModelSelectionGroup {
@@ -287,6 +336,7 @@ class ModelOption {
     required this.sourceType,
     required this.sourceName,
     required this.maxReferenceImages,
+    this.parameterOptions = const {},
   });
 
   factory ModelOption.fromJson(Map<String, dynamic> json) => ModelOption(
@@ -299,6 +349,7 @@ class ModelOption {
         maxReferenceImages: json['maxReferenceImages'] == null
             ? null
             : _integer(json, 'maxReferenceImages'),
+        parameterOptions: _stringListMap(json['parameterOptions']),
       );
 
   final String code;
@@ -308,8 +359,11 @@ class ModelOption {
   final String sourceType;
   final String sourceName;
   final int? maxReferenceImages;
+  final Map<String, List<String>> parameterOptions;
 
   String get sourceLabel => sourceType == 'RELAY' ? '中转' : '官方';
+  List<String> allowedValues(String field) =>
+      parameterOptions[field] ?? const <String>[];
   bool get supportsReferenceImages =>
       maxReferenceImages == null || maxReferenceImages! > 0;
 }
@@ -831,6 +885,22 @@ Map<String, String> _stringMap(Object? value) => value is Map
         .where((entry) => entry.key != null && entry.value != null)
         .map((entry) => MapEntry(entry.key.toString(), entry.value.toString())))
     : <String, String>{};
+
+Map<String, List<String>> _stringListMap(Object? value) {
+  if (value is! Map) return const {};
+  final result = <String, List<String>>{};
+  for (final entry in value.entries) {
+    final field = entry.key?.toString().trim() ?? '';
+    if (field.isEmpty || entry.value is! List) continue;
+    final options = (entry.value as List)
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toSet()
+        .toList();
+    if (options.isNotEmpty) result[field] = List.unmodifiable(options);
+  }
+  return result.isEmpty ? const {} : Map.unmodifiable(result);
+}
 
 List<ModelPolicy> _modelPolicies(Map<String, dynamic> json) {
   final policies =

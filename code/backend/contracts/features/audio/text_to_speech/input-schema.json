@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "text",
+    "voice",
+    "speed",
+    "emotion"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "title": "输入文字",
+      "description": "输入需要合成为语音的中文内容，最多 500 字。"
+    },
+    "voice": {
+      "type": "string",
+      "enum": [
+        "science_female",
+        "gentle_female"
+      ],
+      "default": "gentle_female",
+      "title": "声音"
+    },
+    "speed": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 2,
+      "multipleOf": 0.05,
+      "default": 1,
+      "title": "语速",
+      "description": "拖动滑块调整语速，范围为 0.5× 到 2.0×。"
+    },
+    "emotion": {
+      "type": "string",
+      "enum": [
+        "natural"
+      ],
+      "default": "natural",
+      "title": "情绪"
+    }
+  },
+  "additionalProperties": false
+}

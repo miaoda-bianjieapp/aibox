@@ -375,16 +375,24 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       final initial = revisionText?.trim().isNotEmpty == true
           ? revisionText
           : widget.request.initialParameters[field] ?? schema['default'];
-      if (_isAssetField(schema, feature.widgetFor(field) ?? 'text')) {
+      final widgetType = feature.widgetFor(field) ?? 'text';
+      if (_isAssetField(schema, widgetType)) {
         continue;
       }
-      if (schema['type'] == 'boolean') {
+      if (widgetType == 'slider') {
+        _values[field] = _sliderConfig(
+          schema,
+          feature.fieldOptions(field),
+          initial,
+        ).value;
+      } else if (schema['type'] == 'boolean') {
         _values[field] = initial == true;
       } else if (schema['enum'] is List) {
-        final options =
-            (schema['enum'] as List).map((value) => value.toString()).toList();
-        _values[field] =
-            initial?.toString() ?? (options.isEmpty ? null : options.first);
+        _values[field] = feature.normalizedEnumValue(
+          field,
+          _selectedModels,
+          initial,
+        );
       } else {
         _controllers[field] =
             TextEditingController(text: initial?.toString() ?? '');
@@ -683,7 +691,17 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       }
       if (!mounted) return;
     }
-    setState(() => _selectedModels[policy.capability] = code);
+    setState(() {
+      _selectedModels[policy.capability] = code;
+      _normalizeModelConstrainedValues(feature);
+    });
+  }
+
+  void _normalizeModelConstrainedValues(FeatureDetail feature) {
+    final normalized = feature.normalizedEnumValues(_selectedModels, _values);
+    _values
+      ..clear()
+      ..addAll(normalized);
   }
 
   List<Widget> _buildFields(FeatureDetail feature) {
@@ -704,11 +722,17 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         revisionReferenceAdded = true;
       }
       if (widgetType == 'hidden') continue;
-      fields
-        ..add(const SizedBox(height: 15))
-        ..add(_FieldLabel(schema['title']?.toString() ?? field,
-            required: feature.requiredFields.contains(field)))
-        ..add(_buildField(feature, field, schema, widgetType));
+      fields.add(const SizedBox(height: 15));
+      if (widgetType == 'slider') {
+        fields.add(_buildField(feature, field, schema, widgetType));
+      } else {
+        fields
+          ..add(_FieldLabel(
+            schema['title']?.toString() ?? field,
+            required: feature.requiredFields.contains(field),
+          ))
+          ..add(_buildField(feature, field, schema, widgetType));
+      }
       final promptError = _promptAssistErrors[field];
       if (promptError != null) {
         fields
@@ -812,6 +836,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     if (_isAssetField(schema, widgetType)) {
       return _buildAssetField(feature, field, schema, widgetType);
     }
+    if (widgetType == 'slider') {
+      return _buildSliderField(feature, field, schema);
+    }
     if (schema['type'] == 'boolean') {
       return SwitchListTile.adaptive(
         contentPadding: EdgeInsets.zero,
@@ -824,7 +851,16 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
     final options = schema['enum'];
     if (options is List) {
-      final values = options.map((item) => item.toString()).toList();
+      final values = feature.enumValuesFor(field, _selectedModels);
+      if (values.isEmpty) {
+        return InputDecorator(
+          decoration: const InputDecoration(enabled: false),
+          child: const Text(
+            '当前模型没有可用选项',
+            style: TextStyle(color: AppColors.muted),
+          ),
+        );
+      }
       if (widgetType == 'segmented' && values.length <= 4) {
         final fieldOptions = feature.fieldOptions(field);
         final showSelectedIcon = fieldOptions['showSelectedIcon'] != false;
@@ -945,6 +981,67 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
               label: Text(optimizing ? '优化中' : '优化提示词'),
             ),
           ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSliderField(
+    FeatureDetail feature,
+    String field,
+    Map<String, dynamic> schema,
+  ) {
+    final options = feature.fieldOptions(field);
+    final config = _sliderConfig(schema, options, _values[field]);
+    final required = feature.requiredFields.contains(field);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _FieldLabel(
+                schema['title']?.toString() ?? field,
+                required: required,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 7),
+              child: Text(
+                config.displayValue,
+                key: ValueKey('task-slider-value-$field'),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 5,
+            activeTrackColor: AppColors.accent,
+            inactiveTrackColor: AppColors.line,
+            thumbColor: AppColors.accent,
+            overlayColor: AppColors.accent.withOpacity(0.12),
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
+          ),
+          child: Slider(
+            key: ValueKey('task-slider-$field'),
+            value: config.value,
+            min: config.minimum,
+            max: config.maximum,
+            divisions: config.divisions,
+            semanticFormatterCallback: (_) => config.displayValue,
+            onChanged: _submitting
+                ? null
+                : (value) => setState(() {
+                      _values[field] =
+                          _sliderConfig(schema, options, value).value;
+                    }),
+          ),
         ),
       ],
     );
@@ -1775,7 +1872,9 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     if (field == modeField && _referenceInputsDisabledByModel(feature)) {
       return revisionReference['disabledValue']?.toString() ?? 'NONE';
     }
-    if (schema['type'] == 'boolean' || schema['enum'] is List) {
+    if (feature.widgetFor(field) == 'slider' ||
+        schema['type'] == 'boolean' ||
+        schema['enum'] is List) {
       return _values[field];
     }
     final raw = _controllers[field]?.text.trim() ?? '';
@@ -1866,7 +1965,14 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         final schema =
             Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
         final defaultValue = schema['default'];
-        if (schema['type'] == 'boolean') {
+        final widgetType = feature.widgetFor(field) ?? 'text';
+        if (widgetType == 'slider') {
+          _values[field] = _sliderConfig(
+            schema,
+            feature.fieldOptions(field),
+            defaultValue,
+          ).value;
+        } else if (schema['type'] == 'boolean') {
           _values[field] = defaultValue == true;
         } else if (schema['enum'] is List) {
           final options = (schema['enum'] as List)
@@ -2267,6 +2373,93 @@ List<String> _stringListOption(Map<String, dynamic> options, String key,
 int? _integerOption(Map<String, dynamic> options, String key) {
   final value = options[key];
   return value is num ? value.toInt() : int.tryParse(value?.toString() ?? '');
+}
+
+double? _doubleOption(Map<String, dynamic> options, String key) {
+  final value = options[key];
+  return value is num
+      ? value.toDouble()
+      : double.tryParse(value?.toString() ?? '');
+}
+
+_TaskSliderConfig _sliderConfig(
+  Map<String, dynamic> schema,
+  Map<String, dynamic> options,
+  Object? requested,
+) {
+  final minimum =
+      _doubleOption(schema, 'minimum') ?? _doubleOption(options, 'min') ?? 0;
+  final configuredMaximum =
+      _doubleOption(schema, 'maximum') ?? _doubleOption(options, 'max') ?? 1;
+  final maximum = configuredMaximum > minimum ? configuredMaximum : minimum + 1;
+  final configuredStep = _doubleOption(options, 'step') ??
+      _doubleOption(schema, 'multipleOf') ??
+      (maximum - minimum) / 100;
+  final step = configuredStep > 0 ? configuredStep : (maximum - minimum) / 100;
+  final legacyValues = options['legacyValues'];
+  Object? resolved = requested;
+  if (requested is String && legacyValues is Map) {
+    resolved = legacyValues[requested] ?? requested;
+  }
+  final fallback = _doubleOption(schema, 'default') ?? minimum;
+  final parsed = resolved is num
+      ? resolved.toDouble()
+      : double.tryParse(resolved?.toString() ?? '') ?? fallback;
+  final divisions = ((maximum - minimum) / step).round().clamp(1, 1000);
+  final clamped = parsed.clamp(minimum, maximum).toDouble();
+  final snappedIndex = ((clamped - minimum) / step).round();
+  final snapped =
+      (minimum + snappedIndex * step).clamp(minimum, maximum).toDouble();
+  final value = double.parse(snapped.toStringAsFixed(8));
+  final decimalPlaces =
+      (_integerOption(options, 'decimalPlaces') ?? 2).clamp(0, 6);
+  final minimumFractionDigits =
+      (_integerOption(options, 'minimumFractionDigits') ?? 0)
+          .clamp(0, decimalPlaces);
+  final suffix = options['suffix']?.toString() ?? '';
+  return _TaskSliderConfig(
+    minimum: minimum,
+    maximum: maximum,
+    value: value,
+    divisions: divisions,
+    decimalPlaces: decimalPlaces,
+    minimumFractionDigits: minimumFractionDigits,
+    suffix: suffix,
+  );
+}
+
+class _TaskSliderConfig {
+  const _TaskSliderConfig({
+    required this.minimum,
+    required this.maximum,
+    required this.value,
+    required this.divisions,
+    required this.decimalPlaces,
+    required this.minimumFractionDigits,
+    required this.suffix,
+  });
+
+  final double minimum;
+  final double maximum;
+  final double value;
+  final int divisions;
+  final int decimalPlaces;
+  final int minimumFractionDigits;
+  final String suffix;
+
+  String get displayValue {
+    var formatted = value.toStringAsFixed(decimalPlaces);
+    if (formatted.contains('.')) {
+      while (formatted.endsWith('0') &&
+          formatted.length - formatted.indexOf('.') - 1 >
+              minimumFractionDigits) {
+        formatted = formatted.substring(0, formatted.length - 1);
+      }
+      if (formatted.endsWith('.'))
+        formatted = formatted.substring(0, formatted.length - 1);
+    }
+    return '$formatted$suffix';
+  }
 }
 
 class TaskModelSelector extends StatelessWidget {

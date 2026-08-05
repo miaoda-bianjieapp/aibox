@@ -1,0 +1,56 @@
+{
+  "order": [
+    "text",
+    "voice",
+    "speed",
+    "emotion"
+  ],
+  "widgets": {
+    "text": "textarea",
+    "voice": "dropdown",
+    "speed": "slider",
+    "emotion": "segmented"
+  },
+  "enumLabels": {
+    "voice": {
+      "science_female": "科普视频女声",
+      "gentle_female": "温柔女声"
+    },
+    "emotion": {
+      "natural": "自然"
+    }
+  },
+  "fieldOptions": {
+    "speed": {
+      "step": 0.05,
+      "suffix": "×",
+      "decimalPlaces": 2,
+      "minimumFractionDigits": 1,
+      "legacyValues": {
+        "slow": 0.75,
+        "normal": 1,
+        "fast": 1.25,
+        "very_fast": 1.5
+      }
+    },
+    "emotion": {
+      "showSelectedIcon": false,
+      "compact": true,
+      "labelMaxLines": 1
+    }
+  },
+  "fieldHelp": {
+    "text": {
+      "text": "最多输入 500 字，每次生成一段 WAV 音频。"
+    },
+    "emotion": {
+      "text": "首版仅支持自然情绪。"
+    },
+    "speed": {
+      "text": "可在 0.5× 到 2.0× 之间调整语速。"
+    }
+  },
+  "feeNotice": "文字转语音会调用付费语音模型。点击“开始生成”即表示确认本次调用。",
+  "submitLabel": "开始生成",
+  "revisionSubmitLabel": "重新生成并保存新版本"
+}

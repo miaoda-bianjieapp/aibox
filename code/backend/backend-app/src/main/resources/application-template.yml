@@ -63,6 +63,8 @@ yuanzuo:
   worker:
     enabled: true
     poll-delay-ms: 500
+    max-concurrency: 20
+    lease-seconds: 300
   model:
     providers:
       # 该中转站的模型和路由数据由 Flyway 创建。
@@ -104,6 +106,14 @@ yuanzuo:
         protocol: cleanvoice
         base-url: https://api.cleanvoice.ai
         api-key: CHANGE_ME_CLEANVOICE_API_KEY
+      # openai2api.com 是自建统一 TTS 中转服务，仅用于中文语音联调。
+      openai2api-tts-relay:
+        protocol: openai-compatible
+        base-url: http://openai2api.com:8765
+        api-key: CHANGE_ME_OPENAI2API_TTS_KEY
+        api-key-header: X-API-Key
+        api-key-prefix: ""
+        speech-path: /v1/audio/speech
 
 logging:
   pattern:

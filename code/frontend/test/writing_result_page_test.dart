@@ -206,4 +206,54 @@ void main() {
     expect(find.text('打开预览'), findsOneWidget);
     expect(find.text('下载'), findsOneWidget);
   });
+  testWidgets('text to speech audio shows generation parameters',
+      (tester) async {
+    final artifact = ArtifactView(
+      id: 'artifact-tts',
+      taskId: 'task-tts',
+      runId: 'run-tts',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'audio',
+      title: '文字转语音',
+      mimeType: 'audio/wav',
+      content: const {
+        'assetId': 'tts-audio',
+        'name': 'speech.wav',
+      },
+      metadata: const {
+        'model': 'index-tts2',
+        'voice': 'gentle_female',
+        'speed': 'normal',
+        'emotion': 'natural',
+      },
+      assets: [
+        AssetView(
+          id: 'tts-audio',
+          name: 'speech.wav',
+          mediaType: 'audio/wav',
+          sizeBytes: 246396,
+          createdAt: DateTime(2026, 8, 4, 12),
+          origin: 'MODEL_OUTPUT',
+          category: 'AUDIO',
+        ),
+      ],
+      createdAt: DateTime(2026, 8, 4, 12),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: ArtifactResultPage(
+        artifact: artifact,
+        rendererKey: 'audio',
+      ),
+    ));
+
+    expect(find.text('生成参数'), findsOneWidget);
+    expect(find.text('Index TTS2'), findsOneWidget);
+    expect(find.text('温柔女声'), findsOneWidget);
+    expect(find.text('正常'), findsOneWidget);
+    expect(find.text('自然'), findsOneWidget);
+    expect(find.text('240.6 KB'), findsOneWidget);
+  });
+
 }
