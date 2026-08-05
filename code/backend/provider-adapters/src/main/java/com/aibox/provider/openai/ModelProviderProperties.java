@@ -24,6 +24,9 @@ public class ModelProviderProperties {
         private String protocol;
         private String baseUrl;
         private String apiKey;
+        private String proxyUrl;
+        private String apiKeyHeader;
+        private String apiKeyPrefix = "Bearer ";
         private String chatPath = "/v1/chat/completions";
         private String audioPath = "/v1/audio/transcriptions";
         private String imagePath = "/v1/images/generations";
@@ -38,6 +41,12 @@ public class ModelProviderProperties {
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
         public String getApiKey() { return apiKey; }
         public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+        public String getProxyUrl() { return proxyUrl; }
+        public void setProxyUrl(String proxyUrl) { this.proxyUrl = proxyUrl; }
+        public String getApiKeyHeader() { return apiKeyHeader; }
+        public void setApiKeyHeader(String apiKeyHeader) { this.apiKeyHeader = apiKeyHeader; }
+        public String getApiKeyPrefix() { return apiKeyPrefix; }
+        public void setApiKeyPrefix(String apiKeyPrefix) { this.apiKeyPrefix = apiKeyPrefix; }
         public String getChatPath() { return chatPath; }
         public void setChatPath(String chatPath) { this.chatPath = chatPath; }
         public String getAudioPath() { return audioPath; }

@@ -131,4 +131,49 @@ void main() {
       ['user-reference-1', 'user-reference-2'],
     );
   });
+  test('run configuration summary shows model and TTS parameters', () {
+    final run = RunView(
+      id: 'run-tts',
+      runNumber: 1,
+      status: 'SUCCEEDED',
+      parameters: const {
+        'voice': 'gentle_female',
+        'speed': 'normal',
+        'emotion': 'natural',
+      },
+      inputAssetIds: const [],
+      baseArtifactId: null,
+      selectedModelCode: 'openai2api-index-tts2-tts',
+      selectedModels: const {
+        'TEXT_TO_SPEECH': 'openai2api-index-tts2-tts',
+      },
+      errorCode: null,
+      errorMessage: null,
+      createdAt: DateTime(2026, 8, 4),
+    );
+    final artifact = ArtifactView(
+      id: 'artifact-tts',
+      taskId: 'task-tts',
+      runId: 'run-tts',
+      parentArtifactId: null,
+      versionNumber: 1,
+      kind: 'audio',
+      title: '文字转语音',
+      mimeType: 'audio/wav',
+      content: const {'assetId': 'audio'},
+      metadata: const {
+        'model': 'index-tts2',
+        'voice': 'gentle_female',
+        'speed': 'normal',
+        'emotion': 'natural',
+      },
+      createdAt: DateTime(2026, 8, 4),
+    );
+
+    expect(
+      runConfigurationSummary(run, artifact),
+      'Index TTS2 · 温柔女声 · 正常 · 自然',
+    );
+  });
+
 }

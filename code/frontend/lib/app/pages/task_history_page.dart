@@ -90,7 +90,12 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
                 Text('执行记录 (${detail.runs.length})',
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
-                ...detail.runs.map((run) => _RunRow(run: run)),
+                ...detail.runs.map((run) => _RunRow(
+                      run: run,
+                      artifact: detail.artifacts
+                          .where((artifact) => artifact.runId == run.id)
+                          .firstOrNull,
+                    )),
               ],
             ),
           );
@@ -194,8 +199,9 @@ class _ArtifactRow extends StatelessWidget {
 }
 
 class _RunRow extends StatelessWidget {
-  const _RunRow({required this.run});
+  const _RunRow({required this.run, required this.artifact});
   final RunView run;
+  final ArtifactView? artifact;
 
   @override
   Widget build(BuildContext context) {
@@ -204,6 +210,7 @@ class _RunRow extends StatelessWidget {
         : null;
     final deletedInputs =
         run.inputAssets.where((asset) => !asset.available).length;
+    final configuration = runConfigurationSummary(run, artifact);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: const BoxDecoration(
@@ -213,6 +220,15 @@ class _RunRow extends StatelessWidget {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('第 ${run.runNumber} 次执行 · ${_shortDate(run.createdAt)}'),
+            if (configuration.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                configuration,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ],
             if (errorMessage != null) ...[
               const SizedBox(height: 4),
               Text(
@@ -274,6 +290,56 @@ class _EmptyLine extends StatelessWidget {
       );
 }
 
+String runConfigurationSummary(RunView run, ArtifactView? artifact) {
+  final values = <String>[];
+  final metadata = artifact?.metadata ?? const <String, dynamic>{};
+  final model = metadata['model']?.toString().trim();
+  final selectedModel = run.selectedModels.values.firstOrNull ??
+      run.selectedModelCode?.trim();
+  final modelValue = model?.isNotEmpty == true ? model : selectedModel;
+  if (modelValue?.isNotEmpty == true) {
+    values.add(_historyDisplayIdentifier(modelValue!));
+  }
+  for (final field in const ['voice', 'speed', 'emotion']) {
+    final display = metadata['${field}Label']?.toString().trim();
+    final raw = metadata[field]?.toString().trim() ??
+        run.parameters[field]?.toString().trim();
+    final value = display?.isNotEmpty == true
+        ? display
+        : _historyBusinessValue(field, raw);
+    if (value?.isNotEmpty == true) values.add(value!);
+  }
+  return values.join(' · ');
+}
+
+String? _historyBusinessValue(String field, String? value) {
+  if (value == null || value.isEmpty) return null;
+  const labels = {
+    'voice': {
+      'science_female': '科普视频女声',
+      'gentle_female': '温柔女声',
+    },
+    'speed': {
+      'slow': '较慢',
+      'normal': '正常',
+      'fast': '较快',
+      'very_fast': '快速',
+    },
+    'emotion': {'natural': '自然'},
+  };
+  return labels[field]?[value] ?? _historyDisplayIdentifier(value);
+}
+
+String _historyDisplayIdentifier(String value) => value
+    .split(RegExp(r'[-_\s]+'))
+    .where((part) => part.isNotEmpty)
+    .map((part) => RegExp(
+              r'^(?:ai|api|gpt|tts\d*|v\d+)$',
+              caseSensitive: false,
+            ).hasMatch(part)
+        ? part.toUpperCase()
+        : '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
 String _shortDate(DateTime value) =>
     '${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} '
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';

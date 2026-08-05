@@ -544,6 +544,12 @@ components:
           type: [integer, "null"]
           minimum: 0
           description: 该 Deployment 可接收的参考图片数量；0 表示仅支持文生图
+        parameterOptions:
+          type: object
+          description: Deployment 对功能业务参数公开的可选值约束，不包含厂商参数或标识
+          additionalProperties:
+            type: array
+            items: {type: string}
     PromptOptimizationRequest:
       type: object
       required: [field, currentText, parameters]

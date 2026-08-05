@@ -160,6 +160,247 @@ void main() {
     expect(policy.options.single.code, 'cleanvoice-studio-sound-audio');
   });
 
+  test('text to speech contract drives the generic form and model picker', () {
+    final feature = FeatureDetail.fromJson({
+      'code': 'audio.text_to_speech',
+      'displayName': '文字转语音',
+      'description': '将文字合成为 WAV 音频',
+      'version': 1,
+      'resultType': 'audio',
+      'rendererKey': 'audio',
+      'executionMode': 'ASYNC',
+      'inputSchema': {
+        'type': 'object',
+        'required': ['text', 'voice', 'speed', 'emotion'],
+        'properties': {
+          'text': {'type': 'string', 'minLength': 1, 'maxLength': 500},
+          'voice': {
+            'type': 'string',
+            'enum': ['science_female', 'gentle_female'],
+            'default': 'gentle_female',
+          },
+          'speed': {
+            'type': 'number',
+            'minimum': 0.5,
+            'maximum': 2.0,
+            'multipleOf': 0.05,
+            'default': 1.0,
+          },
+          'emotion': {
+            'type': 'string',
+            'enum': ['natural'],
+            'default': 'natural',
+          },
+        },
+        'additionalProperties': false,
+      },
+      'uiSchema': {
+        'order': ['text', 'voice', 'speed', 'emotion'],
+        'widgets': {
+          'text': 'textarea',
+          'voice': 'dropdown',
+          'speed': 'slider',
+          'emotion': 'segmented',
+        },
+        'enumLabels': {
+          'voice': {
+            'science_female': '科普视频女声',
+            'gentle_female': '温柔女声',
+          },
+        },
+      },
+      'outputSchema': const <String, Object?>{},
+      'config': const <String, Object?>{},
+      'modelPolicies': [
+        {
+          'capability': 'TEXT_TO_SPEECH',
+          'defaultModelCode': 'openai2api-omnivoice-tts',
+          'allowUserSelection': true,
+          'options': [
+            {
+              'code': 'openai2api-gpt-sovits-v2-tts',
+              'displayName': 'GPT-SoVITS v2 中文语音',
+              'description': '中文 WAV 语音',
+              'isDefault': false,
+              'sourceType': 'RELAY',
+              'sourceName': 'OpenAI2API Unified TTS',
+            },
+            {
+              'code': 'openai2api-index-tts2-tts',
+              'displayName': 'IndexTTS2 中文语音',
+              'description': '中文 WAV 语音',
+              'isDefault': false,
+              'sourceType': 'RELAY',
+              'sourceName': 'OpenAI2API Unified TTS',
+            },
+            {
+              'code': 'openai2api-omnivoice-tts',
+              'displayName': 'OmniVoice 多语言语音',
+              'description': '多语言 WAV 语音',
+              'isDefault': true,
+              'sourceType': 'RELAY',
+              'sourceName': 'OpenAI2API Unified TTS',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(feature.fieldOrder, ['text', 'voice', 'speed', 'emotion']);
+    expect(feature.widgetFor('text'), 'textarea');
+    expect(feature.widgetFor('voice'), 'dropdown');
+    expect(feature.widgetFor('speed'), 'slider');
+    expect(feature.properties['speed']['minimum'], 0.5);
+    expect(feature.properties['speed']['maximum'], 2.0);
+    expect(feature.properties['speed']['default'], 1.0);
+    expect(feature.optionLabel('voice', 'gentle_female'), '温柔女声');
+    expect(feature.modelPolicies.single.shouldShowSelector, isTrue);
+    expect(
+      feature.modelPolicies.single.defaultModelCode,
+      'openai2api-omnivoice-tts',
+    );
+    expect(
+      feature.modelPolicies.single.options
+          .singleWhere((option) => option.isDefault)
+          .code,
+      'openai2api-omnivoice-tts',
+    );
+    expect(
+      feature.modelPolicies.single.options.map((option) => option.code),
+      [
+        'openai2api-gpt-sovits-v2-tts',
+        'openai2api-index-tts2-tts',
+        'openai2api-omnivoice-tts',
+      ],
+    );
+    expect(feature.resultType, 'audio');
+    expect(feature.rendererKey, 'audio');
+  });
+
+  test('model option exposes public parameter options', () {
+    final option = ModelOption.fromJson({
+      'code': 'openai2api-gpt-sovits-v2-tts',
+      'displayName': 'GPT-SoVITS v2 中文语音',
+      'description': '中文语音模型',
+      'isDefault': true,
+      'sourceType': 'RELAY',
+      'sourceName': 'OpenAI2API Unified TTS',
+      'parameterOptions': {
+        'voice': ['gentle_female'],
+        'invalid': 'must-be-ignored',
+      },
+    });
+
+    expect(option.parameterOptions, {
+      'voice': ['gentle_female'],
+    });
+    expect(option.allowedValues('voice'), ['gentle_female']);
+    expect(option.allowedValues('speed'), isEmpty);
+  });
+
+  test('feature detail filters enum values by selected model', () {
+    final feature = FeatureDetail.fromJson({
+      'code': 'audio.text_to_speech',
+      'displayName': '文字转语音',
+      'description': '',
+      'version': 1,
+      'resultType': 'audio',
+      'rendererKey': 'audio',
+      'executionMode': 'ASYNC',
+      'inputSchema': {
+        'type': 'object',
+        'properties': {
+          'voice': {
+            'type': 'string',
+            'enum': ['science_female', 'gentle_female'],
+          },
+          'speed': {
+            'type': 'string',
+            'enum': ['slow', 'normal', 'fast'],
+          },
+        },
+      },
+      'uiSchema': const <String, Object?>{},
+      'outputSchema': const <String, Object?>{},
+      'config': const <String, Object?>{},
+      'modelPolicies': [
+        {
+          'capability': 'TEXT_TO_SPEECH',
+          'defaultModelCode': 'gpt',
+          'allowUserSelection': true,
+          'options': [
+            {
+              'code': 'gpt',
+              'displayName': 'GPT',
+              'description': '',
+              'isDefault': true,
+              'sourceType': 'RELAY',
+              'sourceName': 'Relay',
+              'parameterOptions': {
+                'voice': ['gentle_female'],
+              },
+            },
+            {
+              'code': 'index',
+              'displayName': 'IndexTTS2',
+              'description': '',
+              'isDefault': false,
+              'sourceType': 'RELAY',
+              'sourceName': 'Relay',
+              'parameterOptions': {
+                'voice': ['science_female', 'gentle_female'],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      feature.enumValuesFor('voice', {'TEXT_TO_SPEECH': 'gpt'}),
+      ['gentle_female'],
+    );
+    expect(
+      feature.enumValuesFor('voice', {'TEXT_TO_SPEECH': 'index'}),
+      ['science_female', 'gentle_female'],
+    );
+    expect(
+      feature.enumValuesFor('speed', {'TEXT_TO_SPEECH': 'gpt'}),
+      ['slow', 'normal', 'fast'],
+    );
+    expect(
+      feature.normalizedEnumValue(
+        'voice',
+        {'TEXT_TO_SPEECH': 'gpt'},
+        'science_female',
+      ),
+      'gentle_female',
+    );
+    expect(
+      feature.normalizedEnumValue(
+        'voice',
+        {'TEXT_TO_SPEECH': 'index'},
+        'science_female',
+      ),
+      'science_female',
+    );
+    expect(
+      feature.normalizedEnumValues(
+        {'TEXT_TO_SPEECH': 'gpt'},
+        {
+          'text': '保留原文字',
+          'voice': 'science_female',
+          'speed': 'fast',
+        },
+      ),
+      {
+        'text': '保留原文字',
+        'voice': 'gentle_female',
+        'speed': 'fast',
+      },
+    );
+  });
+
   test('feature detail exposes model selector presentation options', () {
     final feature = FeatureDetail.fromJson({
       'code': 'audio.transcription',

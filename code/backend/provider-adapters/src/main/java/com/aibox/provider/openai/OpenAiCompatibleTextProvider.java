@@ -27,6 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
@@ -36,6 +37,10 @@ import org.springframework.web.client.RestClientResponseException;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.URI;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -58,15 +63,22 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         Map<String, ProviderContext> configured = new LinkedHashMap<>();
         properties.getProviders().forEach((code, config) -> {
             if (!PROTOCOL.equalsIgnoreCase(config.getProtocol())) return;
+            if (!PROTOCOL.equalsIgnoreCase(config.getProtocol())) return;
             if (isBlank(config.getBaseUrl()) || isBlank(config.getApiKey())) {
                 throw new IllegalStateException("Provider " + code + " requires base-url and api-key");
             }
-            RestClient client = RestClient.builder()
+            RestClient.Builder clientBuilder = RestClient.builder()
                     .baseUrl(stripTrailingSlash(config.getBaseUrl()))
-                    .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + config.getApiKey())
-                    .defaultHeaders(headers -> config.getHeaders().forEach(headers::set))
-                    .build();
-            configured.put(code, new ProviderContext(code, client, config));
+                    .defaultHeader(
+                            apiKeyHeader(config),
+                            apiKeyValue(config)
+                    )
+                    .defaultHeaders(headers -> config.getHeaders().forEach(headers::set));
+            JdkClientHttpRequestFactory requestFactory = providerRequestFactory(code, config);
+            if (requestFactory != null) {
+                clientBuilder.requestFactory(requestFactory);
+            }
+            configured.put(code, new ProviderContext(code, clientBuilder.build(), config));
         });
         this.providers = Map.copyOf(configured);
     }
@@ -440,7 +452,14 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     @Override
     public TextToSpeechResponse synthesizeSpeech(ModelCallTarget target, TextToSpeechRequest request) {
         ProviderContext provider = requireProvider(target);
-        String format = isBlank(request.format()) ? "mp3" : request.format();
+        String format = setting(
+                target,
+                "speechFormat",
+                isBlank(request.format()) ? "mp3" : request.format()
+        );
+        if ("unified-tts".equalsIgnoreCase(setting(target, "speechProtocol", ""))) {
+            return execute(() -> synthesizeUnifiedTts(provider, target, request, format));
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", target.providerModel());
         body.put("input", request.text());
@@ -457,6 +476,47 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                     .body(byte[].class);
             if (content == null || content.length == 0) {
                 throw invalidResponse("Text-to-speech response is empty");
+            }
+            return new TextToSpeechResponse(
+                    new GeneratedAudio("speech." + format, audioMediaType(format), content),
+                    provider.code(), target.providerModel(), null, null, null
+            );
+        });
+    }
+
+    private TextToSpeechResponse synthesizeUnifiedTts(
+            ProviderContext provider,
+            ModelCallTarget target,
+            TextToSpeechRequest request,
+            String format
+    ) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", target.providerModel());
+        body.put("input", request.text());
+        body.put("voice_id", unifiedTtsVoiceId(target, request.voice()));
+        body.put("voice", setting(target, "defaultVoice", "default"));
+        body.put(
+                "language",
+                metadataValue(request, "language", setting(target, "defaultLanguage", "zh"))
+        );
+        String endUserId = metadataValue(request, "endUserId", setting(target, "defaultEndUserId", ""));
+        if (!isBlank(endUserId)) body.put("end_user_id", endUserId);
+        body.put("delivery", setting(target, "delivery", "realtime"));
+        body.put("response_format", format);
+        body.put("speed", request.speed() == null ? 1.0 : request.speed());
+        body.put("stream", false);
+        byte[] payload = jsonBody(body);
+
+        return execute(() -> {
+            byte[] content = provider.client().post()
+                    .uri(provider.config().getSpeechPath())
+                    .header("Idempotency-Key", request.runId().toString())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(payload)
+                    .retrieve()
+                    .body(byte[].class);
+            if (content == null || content.length == 0) {
+                throw invalidResponse("Unified TTS response is empty");
             }
             return new TextToSpeechResponse(
                     new GeneratedAudio("speech." + format, audioMediaType(format), content),
@@ -964,6 +1024,49 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         return value == null || value.toString().isBlank() ? fallback : value.toString();
     }
 
+    private static String unifiedTtsVoiceId(
+            ModelCallTarget target,
+            String requestedVoice
+    ) {
+        Object configured = target.settings().get("voiceMap");
+        if (!(configured instanceof Map<?, ?> voiceMap) || voiceMap.isEmpty()) {
+            return isBlank(requestedVoice)
+                    ? setting(target, "defaultVoiceId", "default")
+                    : requestedVoice;
+        }
+        Object voiceId = voiceMap.get(requestedVoice);
+        if (voiceId == null || voiceId.toString().isBlank()) {
+            throw new ModelProviderException(
+                    "PROVIDER_VOICE_UNSUPPORTED",
+                    "The selected voice is not configured for this deployment",
+                    false
+            );
+        }
+        return voiceId.toString();
+    }
+
+    private static String metadataValue(
+            TextToSpeechRequest request,
+            String name,
+            String fallback
+    ) {
+        Object value = request.metadata().get(name);
+        return value == null || value.toString().isBlank() ? fallback : value.toString();
+    }
+
+    private static byte[] jsonBody(Map<String, Object> body) {
+        try {
+            return ERROR_MAPPER.writeValueAsBytes(body);
+        } catch (IOException exception) {
+            throw new ModelProviderException(
+                    "PROVIDER_REQUEST_SERIALIZATION_FAILED",
+                    "Model provider request could not be serialized",
+                    false,
+                    exception
+            );
+        }
+    }
+
     private static boolean booleanSetting(ModelCallTarget target, String name, boolean fallback) {
         Object value = target.settings().get(name);
         if (value instanceof Boolean booleanValue) return booleanValue;
@@ -1011,8 +1114,66 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
         return new ModelProviderException("PROVIDER_INVALID_RESPONSE", message, false);
     }
 
+    private static JdkClientHttpRequestFactory providerRequestFactory(
+            String providerCode,
+            ModelProviderProperties.Provider config
+    ) {
+        HttpClient.Builder builder = HttpClient.newBuilder();
+        boolean customized = isPlainHttp(config.getBaseUrl());
+        if (customized) {
+            builder.version(HttpClient.Version.HTTP_1_1);
+        }
+
+        if (!isBlank(config.getProxyUrl())) {
+            URI proxyUri;
+            try {
+                proxyUri = URI.create(config.getProxyUrl().trim());
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalStateException(
+                        "Provider " + providerCode + " has an invalid proxy-url",
+                        exception
+                );
+            }
+            if (isBlank(proxyUri.getHost())
+                    || (!"http".equalsIgnoreCase(proxyUri.getScheme())
+                    && !"https".equalsIgnoreCase(proxyUri.getScheme()))) {
+                throw new IllegalStateException(
+                        "Provider " + providerCode + " proxy-url must be an HTTP proxy URL"
+                );
+            }
+            int port = proxyUri.getPort();
+            if (port < 0) {
+                port = "https".equalsIgnoreCase(proxyUri.getScheme()) ? 443 : 80;
+            }
+            builder.version(HttpClient.Version.HTTP_1_1);
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyUri.getHost(), port)));
+            customized = true;
+        }
+
+        return customized ? new JdkClientHttpRequestFactory(builder.build()) : null;
+    }
+
+    private static boolean isPlainHttp(String baseUrl) {
+        try {
+            return "http".equalsIgnoreCase(URI.create(baseUrl.trim()).getScheme());
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
     private static String stripTrailingSlash(String value) {
         return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private static String apiKeyHeader(ModelProviderProperties.Provider config) {
+        return isBlank(config.getApiKeyHeader())
+                ? HttpHeaders.AUTHORIZATION
+                : config.getApiKeyHeader().trim();
+    }
+
+    private static String apiKeyValue(ModelProviderProperties.Provider config) {
+        String prefix = config.getApiKeyPrefix() == null ? "" : config.getApiKeyPrefix();
+        return prefix + config.getApiKey();
     }
 
     private static boolean isBlank(String value) {

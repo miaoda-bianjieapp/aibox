@@ -181,11 +181,19 @@ class _ArtifactBody extends StatelessWidget {
       return _ImageRenderer(content: artifact.content, assets: artifact.assets);
     }
     if (artifact.kind == 'audio' || artifact.mimeType.startsWith('audio/')) {
-      return _MediaRenderer(
-          icon: Icons.graphic_eq_rounded,
-          label: '音频成果',
-          content: artifact.content,
-          asset: artifact.assets.firstOrNull);
+      final asset = artifact.assets.firstOrNull;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _MediaRenderer(
+            icon: Icons.graphic_eq_rounded,
+            label: '音频成果',
+            content: artifact.content,
+            asset: asset,
+          ),
+          _GenerationParameters(metadata: artifact.metadata, asset: asset),
+        ],
+      );
     }
     if (artifact.kind == 'video' || artifact.mimeType.startsWith('video/')) {
       return _MediaRenderer(
@@ -553,6 +561,102 @@ class _CheckerboardPainter extends CustomPainter {
   bool shouldRepaint(covariant _CheckerboardPainter oldDelegate) => false;
 }
 
+class _GenerationParameters extends StatelessWidget {
+  const _GenerationParameters({required this.metadata, required this.asset});
+
+  final Map<String, dynamic> metadata;
+  final AssetView? asset;
+
+  @override
+  Widget build(BuildContext context) {
+    final values = <String, String>{};
+    final model = metadata['model']?.toString().trim();
+    if (model?.isNotEmpty == true) values['模型'] = _displayIdentifier(model!);
+    _addMetadataValue(values, '声音', metadata, 'voiceLabel', 'voice');
+    _addMetadataValue(values, '语速', metadata, 'speedLabel', 'speed');
+    _addMetadataValue(values, '情绪', metadata, 'emotionLabel', 'emotion');
+    if (asset != null) values['文件大小'] = _formatBytes(asset!.sizeBytes);
+    if (values.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('生成参数', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 10),
+          ...values.entries.map((entry) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 72,
+                      child: Text(
+                        entry.key,
+                        style: const TextStyle(color: AppColors.muted),
+                      ),
+                    ),
+                    Expanded(child: Text(entry.value)),
+                  ],
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+void _addMetadataValue(
+  Map<String, String> values,
+  String label,
+  Map<String, dynamic> metadata,
+  String displayKey,
+  String valueKey,
+) {
+  final display = metadata[displayKey]?.toString().trim();
+  final raw = metadata[valueKey]?.toString().trim();
+  final value = display?.isNotEmpty == true
+      ? display!
+      : _displayBusinessValue(valueKey, raw);
+  if (value?.isNotEmpty == true) values[label] = value!;
+}
+
+String? _displayBusinessValue(String field, String? value) {
+  if (value == null || value.isEmpty) return null;
+  const labels = {
+    'voice': {
+      'science_female': '科普视频女声',
+      'gentle_female': '温柔女声',
+    },
+    'speed': {
+      'slow': '较慢',
+      'normal': '正常',
+      'fast': '较快',
+      'very_fast': '快速',
+    },
+    'emotion': {'natural': '自然'},
+  };
+  return labels[field]?[value] ?? _displayIdentifier(value);
+}
+
+String _displayIdentifier(String value) => value
+    .split(RegExp(r'[-_\s]+'))
+    .where((part) => part.isNotEmpty)
+    .map((part) => RegExp(
+              r'^(?:ai|api|gpt|tts\d*|v\d+)$',
+              caseSensitive: false,
+            ).hasMatch(part)
+        ? part.toUpperCase()
+        : '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) {
+    return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  }
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
 class _MediaRenderer extends StatelessWidget {
   const _MediaRenderer(
       {required this.icon,
