@@ -28,7 +28,7 @@ select
       "minLength": 1,
       "maxLength": 500,
       "title": "输入文字",
-      "description": "输入需要合成为语音的中文内容，最�?500 字�?
+      "description": "输入需要合成为语音的中文内容，最多 500 字。"
     },
     "voice": {
       "type": "string",
@@ -45,8 +45,8 @@ select
       "maximum": 2,
       "multipleOf": 0.05,
       "default": 1,
-      "title": "语�?,
-      "description": "拖动滑块调整语速，范围�?0.5× �?2.0×�?
+      "title": "语速",
+      "description": "拖动滑块调整语速，范围为 0.5× 到 2.0×。"
     },
     "emotion": {
       "type": "string",
@@ -104,17 +104,17 @@ select
   },
   "fieldHelp": {
     "text": {
-      "text": "最多输�?500 字，每次生成一�?WAV 音频�?
+      "text": "最多输入 500 字，每次生成一段 WAV 音频。"
     },
     "emotion": {
-      "text": "首版仅支持自然情绪�?
+      "text": "首版仅支持自然情绪。"
     },
     "speed": {
-      "text": "可在 0.5× �?2.0× 之间调整语速�?
+      "text": "可在 0.5× 到 2.0× 之间调整语速。"
     }
   },
-  "feeNotice": "文字转语音会调用付费语音模型。点击“开始生成”即表示确认本次调用�?,
-  "submitLabel": "开始生�?,
+  "feeNotice": "文字转语音会调用付费语音模型。点击“开始生成”即表示确认本次调用。",
+  "submitLabel": "开始生成",
   "revisionSubmitLabel": "重新生成并保存新版本"
 }
     $json$::jsonb,
