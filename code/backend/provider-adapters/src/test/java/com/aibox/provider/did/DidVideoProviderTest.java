@@ -45,13 +45,22 @@ class DidVideoProviderTest {
         server.createContext("/talks/talk-1", exchange -> respondJson(
                 exchange,
                 "{\"id\":\"talk-1\",\"status\":\"done\",\"result_url\":\"http://127.0.0.1:"
-                        + server.getAddress().getPort() + "/result.mp4\"}"
+                        + server.getAddress().getPort()
+                        + "/result.mp4?X-Amz-Credential=a%2Fb%2Bc&X-Amz-Signature=abc%2Fdef%2Bghi\"}"
         ));
         server.createContext("/talks", exchange -> {
             createTalk.set(new ObjectMapper().readTree(exchange.getRequestBody()));
             respondJson(exchange, "{\"id\":\"talk-1\",\"status\":\"created\"}");
         });
         server.createContext("/result.mp4", exchange -> {
+            String expectedQuery = "X-Amz-Credential=a%2Fb%2Bc&X-Amz-Signature=abc%2Fdef%2Bghi";
+            if (!expectedQuery.equals(exchange.getRequestURI().getRawQuery())) {
+                byte[] response = "invalid signature".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(400, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
             byte[] response = new byte[]{1, 2, 3, 4};
             exchange.getResponseHeaders().set("Content-Type", "video/mp4");
             exchange.sendResponseHeaders(200, response.length);

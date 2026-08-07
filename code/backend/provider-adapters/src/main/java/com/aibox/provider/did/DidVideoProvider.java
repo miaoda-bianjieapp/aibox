@@ -19,6 +19,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.net.URI;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -258,7 +259,7 @@ public final class DidVideoProvider implements ModelProviderClient {
 
     private static byte[] download(RestClient client, String url) {
         try {
-            byte[] content = client.get().uri(url).retrieve().body(byte[].class);
+            byte[] content = client.get().uri(URI.create(url)).retrieve().body(byte[].class);
             if (content == null || content.length == 0) throw invalidResponse("D-ID video download is empty");
             return content;
         } catch (RestClientResponseException exception) {
