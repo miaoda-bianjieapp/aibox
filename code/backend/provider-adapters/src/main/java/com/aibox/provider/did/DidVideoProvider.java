@@ -11,6 +11,8 @@ import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
 import com.aibox.provider.openai.ModelProviderProperties;
 import com.fasterxml.jackson.databind.JsonNode;
+
+import javax.imageio.ImageIO;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
@@ -19,6 +21,12 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -31,6 +39,7 @@ public final class DidVideoProvider implements ModelProviderClient {
 
     public static final String PROTOCOL = "d-id";
     private static final int MAX_AUDIO_BYTES = 6 * 1024 * 1024;
+    private static final int MAX_IMAGE_DIMENSION = 1280;
 
     private final Map<String, ProviderContext> providers;
 
@@ -102,6 +111,7 @@ public final class DidVideoProvider implements ModelProviderClient {
                     false
             );
         }
+        image = prepareImageForUpload(image);
         String imageUrl = upload(provider, target, image, "image", "imageUploadPath", provider.config().getImagePath());
         String audioUrl = upload(provider, target, audio, "audio", "audioUploadPath", provider.config().getAudioPath());
 
@@ -112,6 +122,8 @@ public final class DidVideoProvider implements ModelProviderClient {
         config.put("stitch", booleanSetting(target, "stitch", true));
         config.put("fluent", booleanSetting(target, "fluent", true));
         config.put("pad_audio", numberSetting(target, "padAudioSeconds", 0.0));
+        Map<String, Object> expressions = driverExpressions(request);
+        if (expressions != null) config.put("driver_expressions", expressions);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("source_url", imageUrl);
         body.put("script", script);
@@ -269,6 +281,91 @@ public final class DidVideoProvider implements ModelProviderClient {
         }
     }
 
+    private static Map<String, Object> driverExpressions(VideoGenerationRequest request) {
+        String prompt = metadataString(request, "performancePrompt").toLowerCase(Locale.ROOT);
+        String expression;
+        if (containsAny(prompt, "\u5f00\u5fc3", "\u5fae\u7b11", "\u7b11", "\u6109\u5feb", "happy", "smile", "joy")) {
+            expression = "happy";
+        } else if (containsAny(prompt, "\u60ca\u8bb6", "\u9707\u60ca", "\u610f\u5916", "surprise", "shocked")) {
+            expression = "surprise";
+        } else if (containsAny(prompt, "\u4e25\u8083", "\u51dd\u91cd", "\u4e0d\u5b89", "\u6050\u60e7", "\u7d27\u5f20", "\u51b7\u5cfb", "serious", "tense", "fear", "concerned")) {
+            expression = "serious";
+        } else {
+            return null;
+        }
+        Map<String, Object> timed = new LinkedHashMap<>();
+        timed.put("start_frame", 0);
+        timed.put("expression", expression);
+        timed.put("intensity", 0.75);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("expressions", List.of(timed));
+        result.put("transition_frames", 12);
+        return result;
+    }
+
+    private static boolean containsAny(String value, String... candidates) {
+        for (String candidate : candidates) {
+            if (value.contains(candidate)) return true;
+        }
+        return false;
+    }
+
+    static ModelAsset prepareImageForUpload(ModelAsset asset) {
+        try {
+            BufferedImage source = ImageIO.read(new ByteArrayInputStream(asset.content()));
+            if (source == null) {
+                throw new ModelProviderException(
+                        "PROVIDER_ASSET_INVALID",
+                        "D-ID could not decode the avatar image",
+                        false
+                );
+            }
+            int width = source.getWidth();
+            int height = source.getHeight();
+            int largest = Math.max(width, height);
+            if (largest <= MAX_IMAGE_DIMENSION) return asset;
+
+            double scale = MAX_IMAGE_DIMENSION / (double) largest;
+            int targetWidth = Math.max(1, (int) Math.round(width * scale));
+            int targetHeight = Math.max(1, (int) Math.round(height * scale));
+            boolean png = "image/png".equals(asset.mediaType());
+            int imageType = png && source.getColorModel().hasAlpha()
+                    ? BufferedImage.TYPE_INT_ARGB
+                    : BufferedImage.TYPE_INT_RGB;
+            BufferedImage resized = new BufferedImage(targetWidth, targetHeight, imageType);
+            Graphics2D graphics = resized.createGraphics();
+            try {
+                graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+                graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                graphics.drawImage(source, 0, 0, targetWidth, targetHeight, null);
+            } finally {
+                graphics.dispose();
+            }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            String format = png ? "png" : "jpeg";
+            if (!ImageIO.write(resized, format, output)) {
+                throw new ModelProviderException(
+                        "PROVIDER_ASSET_INVALID",
+                        "D-ID avatar image could not be encoded",
+                        false
+                );
+            }
+            return new ModelAsset(
+                    asset.id(),
+                    asset.fileName(),
+                    asset.mediaType(),
+                    output.toByteArray()
+            );
+        } catch (IOException exception) {
+            throw new ModelProviderException(
+                    "PROVIDER_ASSET_INVALID",
+                    "D-ID avatar image could not be prepared",
+                    false,
+                    exception
+            );
+        }
+    }
+
     private static ModelAsset singleAsset(
             List<ModelAsset> assets,
             String mediaPrefix,
@@ -345,9 +442,14 @@ public final class DidVideoProvider implements ModelProviderClient {
     }
 
     private static ModelProviderException httpError(String message, RestClientResponseException exception) {
+        String detail = exception.getResponseBodyAsString();
+        String sanitized = detail == null ? "" : detail.replaceAll("[\r\n]+", " ").trim();
+        String suffix = sanitized.isBlank()
+                ? ""
+                : ": " + sanitized.substring(0, Math.min(500, sanitized.length()));
         return new ModelProviderException(
                 "PROVIDER_HTTP_" + exception.getStatusCode().value(),
-                message + " with HTTP " + exception.getStatusCode().value(),
+                message + " with HTTP " + exception.getStatusCode().value() + suffix,
                 exception.getStatusCode().is5xxServerError() || exception.getStatusCode().value() == 429,
                 exception
         );

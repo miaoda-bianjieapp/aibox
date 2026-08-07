@@ -12,12 +12,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+
+import javax.imageio.ImageIO;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -77,12 +82,12 @@ class DidVideoProviderTest {
                     List.of(), 12, "9:16", "720p", 1,
                     Map.of(
                             "voiceGenerationMode", "TTS",
-                            "performancePrompt", "Natural expression",
+                            "performancePrompt", "\u7709\u5b87\u7d27\u9501\uff0c\u76ee\u5149\u51dd\u91cd\u800c\u9690\u6709\u4e0d\u5b89",
                             "negativePrompt", "No subtitles"
                     )
             );
             List<ModelAsset> assets = List.of(
-                    new ModelAsset(UUID.randomUUID(), "avatar.png", "image/png", new byte[]{9, 8, 7}),
+                    new ModelAsset(UUID.randomUUID(), "avatar.png", "image/png", pngBytes(640, 480)),
                     new ModelAsset(UUID.randomUUID(), "speech.wav", "audio/wav", new byte[]{6, 5, 4})
             );
 
@@ -96,6 +101,8 @@ class DidVideoProviderTest {
             assertEquals("https://assets.example/avatar.png", createTalk.get().path("source_url").asText());
             assertEquals("audio", createTalk.get().path("script").path("type").asText());
             assertEquals("https://assets.example/speech.wav", createTalk.get().path("script").path("audio_url").asText());
+            assertEquals("serious", createTalk.get().path("config").path("driver_expressions").path("expressions").get(0).path("expression").asText());
+            assertEquals(0.75, createTalk.get().path("config").path("driver_expressions").path("expressions").get(0).path("intensity").asDouble());
             assertFalse(createTalk.get().toString().contains("Only the confirmed audio should drive speech"));
             assertEquals("talk-1", response.providerRequestId());
             assertEquals("talks", response.model());
@@ -138,7 +145,24 @@ class DidVideoProviderTest {
     }
 
     @Test
-    void rejectsUnsupportedImageTypeAndOversizedAudioBeforeUpload() {
+    void downscalesLargeAvatarImagesToTheProviderSafeResolution() throws Exception {
+        BufferedImage source = new BufferedImage(2560, 1696, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        ImageIO.write(source, "png", encoded);
+        ModelAsset original = new ModelAsset(
+                UUID.randomUUID(), "large-avatar.png", "image/png", encoded.toByteArray()
+        );
+
+        ModelAsset prepared = DidVideoProvider.prepareImageForUpload(original);
+
+        BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(prepared.content()));
+        assertEquals(1280, decoded.getWidth());
+        assertEquals(848, decoded.getHeight());
+        assertEquals("image/png", prepared.mediaType());
+    }
+
+    @Test
+    void rejectsUnsupportedImageTypeAndOversizedAudioBeforeUpload() throws Exception {
         DidVideoProvider provider = provider(null);
         ModelCallTarget target = target();
         VideoGenerationRequest request = new VideoGenerationRequest(
@@ -159,11 +183,18 @@ class DidVideoProviderTest {
         ModelProviderException audioSize = assertThrows(
                 ModelProviderException.class,
                 () -> provider.generateVideo(target, request, List.of(
-                        new ModelAsset(UUID.randomUUID(), "avatar.png", "image/png", new byte[]{1}),
+                        new ModelAsset(UUID.randomUUID(), "avatar.png", "image/png", pngBytes(64, 64)),
                         new ModelAsset(UUID.randomUUID(), "speech.wav", "audio/wav", new byte[6 * 1024 * 1024 + 1])
                 ))
         );
         assertEquals("PROVIDER_FILE_TOO_LARGE", audioSize.code());
+    }
+
+    private static byte[] pngBytes(int width, int height) throws Exception {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", output);
+        return output.toByteArray();
     }
 
     private static DidVideoProvider provider(HttpServer server) {

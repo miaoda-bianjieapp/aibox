@@ -17,7 +17,6 @@
     "resolution",
     "durationSeconds",
     "performancePrompt",
-    "negativePrompt",
     "outputCount",
     "fps"
   ],
@@ -218,10 +217,13 @@
       "text": "文本配音必须先生成并确认音频；上传音频也必须确认。"
     },
     "negativePrompt": {
-      "text": "可选，用于避免不希望出现的动作、镜头或画面。"
+      "text": "D-ID Talks 不支持负面提示词，当前页面不展示该字段。"
     },
     "voiceGenerationMode": {
       "text": "只有视频 Deployment 提供可在最终提交前试听并确认的独立音频时，才开放视频模型原生语音。当前 D-ID 模型使用独立 TTS 或上传音频。"
+    },
+    "performancePrompt": {
+      "text": "D-ID Standard Talks 只能控制面部表情。开心/微笑、严肃/凝重、惊讶等关键词会映射为 Provider 表情；手势、全身动作、运镜和背景描述不会生效。"
     }
   },
   "feeNotice": "人物图片、语音和视频模型可能产生费用。点击生成即表示确认本次调用。",

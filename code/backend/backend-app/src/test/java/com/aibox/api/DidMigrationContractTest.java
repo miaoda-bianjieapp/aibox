@@ -14,25 +14,28 @@ class DidMigrationContractTest {
 
     @Test
     void jsonDollarQuotesDoNotLookLikeFlywayPlaceholders() throws Exception {
-        String migration = Files.readString(findMigration()).replace("\r\n", "\n");
+        for (String fileName : new String[]{
+                "V20260807103000__did_official_talks_provider.sql",
+                "V20260807114000__did_expression_prompt_limits.sql"
+        }) {
+            String migration = Files.readString(findMigration(fileName)).replace("\r\n", "\n");
 
-        assertThat(FLYWAY_PLACEHOLDER_COLLISION.matcher(migration).find()).isFalse();
-        assertThat(migration)
-                .contains("$input$\n{")
-                .contains("$ui$\n{")
-                .contains("$output$\n{")
-                .contains("$config$\n{");
+            assertThat(FLYWAY_PLACEHOLDER_COLLISION.matcher(migration).find()).isFalse();
+            assertThat(migration)
+                    .contains("$input$\n{")
+                    .contains("$ui$\n{")
+                    .contains("$output$\n{")
+                    .contains("$config$\n{");
+        }
     }
 
-    private static Path findMigration() {
+    private static Path findMigration(String fileName) {
         Path current = Path.of("").toAbsolutePath();
         while (current != null) {
-            Path candidate = current.resolve(
-                    "backend-app/src/main/resources/db/migration/V20260807103000__did_official_talks_provider.sql"
-            );
+            Path candidate = current.resolve("backend-app/src/main/resources/db/migration/" + fileName);
             if (Files.isRegularFile(candidate)) return candidate;
             current = current.getParent();
         }
-        throw new IllegalStateException("D-ID migration could not be found");
+        throw new IllegalStateException("D-ID migration could not be found: " + fileName);
     }
 }

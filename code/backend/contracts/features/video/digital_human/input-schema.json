@@ -123,14 +123,14 @@
     "performancePrompt": {
       "type": "string",
       "maxLength": 500,
-      "title": "角色表现",
-      "description": "描述角色动作、情绪和镜头表现。"
+      "title": "面部表现提示词",
+      "description": "D-ID Talks 仅能将开心、严肃、惊讶等情绪关键词映射为面部表情，不支持手势、全身动作、运镜或背景动画。"
     },
     "negativePrompt": {
       "type": "string",
       "maxLength": 500,
       "title": "负面提示词",
-      "description": "描述不希望出现的动作、镜头或画面。"
+      "description": "D-ID Talks 当前不接收负面提示词，该字段仅保留为历史兼容参数。"
     },
     "outputCount": {
       "type": "integer",
