@@ -1,6 +1,6 @@
 featureCode: video.digital_human
 workspaceCode: video
-version: 13
+version: 14
 displayName: 数字人口播
 description: 选择并确认人物形象，使用文案或音频生成一条数字人口播视频。
 status: INTERNAL

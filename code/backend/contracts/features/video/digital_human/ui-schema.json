@@ -159,7 +159,7 @@
       "decimalPlaces": 2
     },
     "performancePrompt": {
-      "maxLines": 4
+      "maxLines": 6
     },
     "negativePrompt": {
       "maxLines": 4
@@ -223,7 +223,7 @@
       "text": "只有视频 Deployment 提供可在最终提交前试听并确认的独立音频时，才开放视频模型原生语音。当前 D-ID 模型使用独立 TTS 或上传音频。"
     },
     "performancePrompt": {
-      "text": "D-ID Standard Talks 只能控制面部表情。开心/微笑、严肃/凝重、惊讶等关键词会映射为 Provider 表情；手势、全身动作、运镜和背景描述不会生效。"
+      "text": "建议按三段组织：基线情绪；中段变化；结尾收束。例如：基线保持自然克制；随后眉头微蹙、目光凝重；最后恢复平静。只填写面部表情、视线和自然眨眼，不要填写手势、全身动作、运镜或背景。"
     }
   },
   "feeNotice": "人物图片、语音和视频模型可能产生费用。点击生成即表示确认本次调用。",

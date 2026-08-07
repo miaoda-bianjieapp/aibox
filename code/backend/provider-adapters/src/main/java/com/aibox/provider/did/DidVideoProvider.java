@@ -29,6 +29,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -119,10 +120,12 @@ public final class DidVideoProvider implements ModelProviderClient {
         script.put("type", "audio");
         script.put("audio_url", audioUrl);
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("stitch", booleanSetting(target, "stitch", true));
+        config.put("stitch", booleanSetting(target, "stitch", false));
         config.put("fluent", booleanSetting(target, "fluent", true));
+        config.put("motion_factor", numberSetting(target, "motionFactor", 1.0));
+        config.put("align_expand_factor", numberSetting(target, "alignExpandFactor", 0.3));
         config.put("pad_audio", numberSetting(target, "padAudioSeconds", 0.0));
-        Map<String, Object> expressions = driverExpressions(request);
+        Map<String, Object> expressions = driverExpressions(target, request);
         if (expressions != null) config.put("driver_expressions", expressions);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("source_url", imageUrl);
@@ -281,26 +284,84 @@ public final class DidVideoProvider implements ModelProviderClient {
         }
     }
 
-    private static Map<String, Object> driverExpressions(VideoGenerationRequest request) {
-        String prompt = metadataString(request, "performancePrompt").toLowerCase(Locale.ROOT);
-        String expression;
-        if (containsAny(prompt, "\u5f00\u5fc3", "\u5fae\u7b11", "\u7b11", "\u6109\u5feb", "happy", "smile", "joy")) {
-            expression = "happy";
-        } else if (containsAny(prompt, "\u60ca\u8bb6", "\u9707\u60ca", "\u610f\u5916", "surprise", "shocked")) {
-            expression = "surprise";
-        } else if (containsAny(prompt, "\u4e25\u8083", "\u51dd\u91cd", "\u4e0d\u5b89", "\u6050\u60e7", "\u7d27\u5f20", "\u51b7\u5cfb", "serious", "tense", "fear", "concerned")) {
-            expression = "serious";
-        } else {
-            return null;
+    private static Map<String, Object> driverExpressions(ModelCallTarget target, VideoGenerationRequest request) {
+        String prompt = metadataString(request, "performancePrompt");
+        List<ExpressionCue> cues = expressionCues(prompt);
+        if (cues.isEmpty()) return null;
+
+        int totalFrames = Math.max(30, request.durationSeconds() * 30);
+        List<Map<String, Object>> timeline = new ArrayList<>();
+        boolean startsNeutral = "neutral".equals(cues.get(0).expression());
+        if (!startsNeutral) timeline.add(expressionFrame(0, "neutral", 0.35));
+
+        for (int i = 0; i < cues.size(); i++) {
+            ExpressionCue cue = cues.get(i);
+            int startFrame;
+            if (startsNeutral && i == 0) {
+                startFrame = 0;
+            } else if (cues.size() == 1) {
+                startFrame = (int) Math.round(totalFrames * 0.22);
+            } else {
+                double progress = (double) i / (cues.size() - 1);
+                startFrame = (int) Math.round(totalFrames * (0.18 + progress * 0.62));
+            }
+            timeline.add(expressionFrame(startFrame, cue.expression(), cue.intensity()));
         }
-        Map<String, Object> timed = new LinkedHashMap<>();
-        timed.put("start_frame", 0);
-        timed.put("expression", expression);
-        timed.put("intensity", 0.75);
+
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("expressions", List.of(timed));
-        result.put("transition_frames", 12);
+        result.put("expressions", timeline);
+        result.put("transition_frames", intSetting(target, "expressionTransitionFrames", 24, 1, 120));
         return result;
+    }
+
+    private static List<ExpressionCue> expressionCues(String prompt) {
+        if (prompt == null || prompt.isBlank()) return List.of();
+        List<ExpressionCue> cues = new ArrayList<>();
+        String[] clauses = prompt.toLowerCase(Locale.ROOT).split("[,\\x{FF0C}\\x{3002}.!\\x{FF01}?\\x{FF1F};\\x{FF1B}\\n]+|(?=\\x{968F}\\x{540E}|\\x{7136}\\x{540E}|\\x{6700}\\x{540E}|\\x{9010}\\x{6E10}|\\x{8F6C}\\x{800C}|\\x{6062}\\x{590D})");
+        for (String clause : clauses) {
+            String expression = expressionFor(clause);
+            if (expression.isBlank()) continue;
+            ExpressionCue cue = new ExpressionCue(expression, intensityFor(clause));
+            if (!cues.isEmpty() && cues.get(cues.size() - 1).expression().equals(cue.expression())) {
+                if (cue.intensity() > cues.get(cues.size() - 1).intensity()) cues.set(cues.size() - 1, cue);
+            } else {
+                cues.add(cue);
+            }
+        }
+        return cues.size() > 4 ? List.copyOf(cues.subList(0, 4)) : List.copyOf(cues);
+    }
+
+    private static String expressionFor(String clause) {
+        if (containsAny(clause, "\u5f00\u5fc3", "\u5fae\u7b11", "\u7b11", "\u6109\u5feb", "\u6e29\u67d4", "\u53cb\u597d", "\u6e29\u6696", "happy", "smile", "joy")) {
+            return "happy";
+        }
+        if (containsAny(clause, "\u60ca\u8bb6", "\u9707\u60ca", "\u610f\u5916", "\u60ca\u6050", "surprise", "shocked")) {
+            return "surprise";
+        }
+        if (containsAny(clause, "\u4e25\u8083", "\u51dd\u91cd", "\u4e0d\u5b89", "\u6050\u60e7", "\u7d27\u5f20", "\u51b7\u5cfb", "\u5fe7\u90c1", "\u60b2\u4f24", "\u6124\u6012", "\u4e13\u6ce8", "serious", "tense", "fear", "concerned", "sad")) {
+            return "serious";
+        }
+        if (containsAny(clause, "\u5e73\u9759", "\u5e73\u548c", "\u81ea\u7136", "\u514b\u5236", "\u653e\u677e", "neutral", "calm", "composed", "relaxed")) {
+            return "neutral";
+        }
+        return "";
+    }
+
+    private static double intensityFor(String clause) {
+        if (containsAny(clause, "\u5fae", "\u8f7b", "\u9690", "\u7565", "\u514b\u5236", "\u6e29\u67d4", "\u53cb\u597d", "\u5e73\u548c", "subtle", "slight", "restrained")) return 0.45;
+        if (containsAny(clause, "\u5f3a\u70c8", "\u6781\u5ea6", "\u9707\u60ca", "\u60ca\u6050", "\u6050\u60e7", "\u6124\u6012", "intense", "extreme", "shocked")) return 0.85;
+        return 0.75;
+    }
+
+    private static Map<String, Object> expressionFrame(int startFrame, String expression, double intensity) {
+        Map<String, Object> frame = new LinkedHashMap<>();
+        frame.put("start_frame", startFrame);
+        frame.put("expression", expression);
+        frame.put("intensity", intensity);
+        return frame;
+    }
+
+    private record ExpressionCue(String expression, double intensity) {
     }
 
     private static boolean containsAny(String value, String... candidates) {

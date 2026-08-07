@@ -124,7 +124,7 @@
       "type": "string",
       "maxLength": 500,
       "title": "面部表现提示词",
-      "description": "D-ID Talks 仅能将开心、严肃、惊讶等情绪关键词映射为面部表情，不支持手势、全身动作、运镜或背景动画。"
+      "description": "按“基线情绪；中段变化；结尾收束”组织面部表现。只填写面部表情、视线和自然眨眼；手势、全身动作、运镜和背景不会生效。"
     },
     "negativePrompt": {
       "type": "string",

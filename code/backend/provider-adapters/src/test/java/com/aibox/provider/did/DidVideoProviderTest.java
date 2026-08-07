@@ -82,7 +82,7 @@ class DidVideoProviderTest {
                     List.of(), 12, "9:16", "720p", 1,
                     Map.of(
                             "voiceGenerationMode", "TTS",
-                            "performancePrompt", "\u7709\u5b87\u7d27\u9501\uff0c\u76ee\u5149\u51dd\u91cd\u800c\u9690\u6709\u4e0d\u5b89",
+                            "performancePrompt", "\u6574\u4f53\u4fdd\u6301\u5e73\u9759\uff1b\u968f\u540e\u7709\u5934\u5fae\u8e59\u3001\u76ee\u5149\u51dd\u91cd\u800c\u9690\u6709\u4e0d\u5b89\uff1b\u6700\u540e\u6062\u590d\u5e73\u9759\u3002",
                             "negativePrompt", "No subtitles"
                     )
             );
@@ -101,8 +101,19 @@ class DidVideoProviderTest {
             assertEquals("https://assets.example/avatar.png", createTalk.get().path("source_url").asText());
             assertEquals("audio", createTalk.get().path("script").path("type").asText());
             assertEquals("https://assets.example/speech.wav", createTalk.get().path("script").path("audio_url").asText());
-            assertEquals("serious", createTalk.get().path("config").path("driver_expressions").path("expressions").get(0).path("expression").asText());
-            assertEquals(0.75, createTalk.get().path("config").path("driver_expressions").path("expressions").get(0).path("intensity").asDouble());
+            JsonNode expressions = createTalk.get().path("config").path("driver_expressions").path("expressions");
+            assertFalse(createTalk.get().path("config").path("stitch").asBoolean());
+            assertEquals(1.0, createTalk.get().path("config").path("motion_factor").asDouble());
+            assertEquals(0.3, createTalk.get().path("config").path("align_expand_factor").asDouble());
+            assertEquals(24, createTalk.get().path("config").path("driver_expressions").path("transition_frames").asInt());
+            assertEquals(3, expressions.size());
+            assertEquals("neutral", expressions.get(0).path("expression").asText());
+            assertEquals(0, expressions.get(0).path("start_frame").asInt());
+            assertEquals("serious", expressions.get(1).path("expression").asText());
+            assertEquals(176, expressions.get(1).path("start_frame").asInt());
+            assertEquals(0.45, expressions.get(1).path("intensity").asDouble());
+            assertEquals("neutral", expressions.get(2).path("expression").asText());
+            assertEquals(288, expressions.get(2).path("start_frame").asInt());
             assertFalse(createTalk.get().toString().contains("Only the confirmed audio should drive speech"));
             assertEquals("talk-1", response.providerRequestId());
             assertEquals("talks", response.model());
@@ -219,7 +230,7 @@ class DidVideoProviderTest {
                 Map.of(
                         "videoPollIntervalMillis", 1,
                         "videoPollTimeoutSeconds", 2,
-                        "stitch", true
+                        "stitch", false
                 )
         );
     }

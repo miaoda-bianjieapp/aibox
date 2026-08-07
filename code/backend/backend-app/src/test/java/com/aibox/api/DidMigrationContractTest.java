@@ -29,6 +29,20 @@ class DidMigrationContractTest {
         }
     }
 
+    @Test
+    void structuredFacialPromptMigrationDefinesNaturalMotionDefaults() throws Exception {
+        String migration = Files.readString(findMigration("V20260807150000__did_structured_facial_prompt.sql"))
+                .replace("\r\n", "\n");
+
+        assertThat(migration)
+                .contains("\"stitch\": false")
+                .contains("\"motionFactor\": 1.0")
+                .contains("\"expressionTransitionFrames\": 24")
+                .contains("\"performancePromptMode\": \"structured-facial-expression-plan\"")
+                .contains("previous.version = 13")
+                .contains("set current_version = 14");
+    }
+
     private static Path findMigration(String fileName) {
         Path current = Path.of("").toAbsolutePath();
         while (current != null) {

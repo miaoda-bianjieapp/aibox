@@ -354,7 +354,7 @@ class DigitalHumanFeatureHandlerMockTest {
         };
         FeatureExecutionContext context = new FeatureExecutionContext(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                DigitalHumanFeatureHandler.FEATURE_CODE, 13,
+                DigitalHumanFeatureHandler.FEATURE_CODE, 14,
                 Map.ofEntries(
                         Map.entry("avatarSource", "UPLOAD"),
                         Map.entry("avatarImage", avatarId.toString()),
@@ -397,7 +397,7 @@ class DigitalHumanFeatureHandlerMockTest {
         UUID avatarId = UUID.randomUUID();
         FeatureExecutionContext context = new FeatureExecutionContext(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                DigitalHumanFeatureHandler.FEATURE_CODE, 13,
+                DigitalHumanFeatureHandler.FEATURE_CODE, 14,
                 Map.ofEntries(
                         Map.entry("avatarSource", "UPLOAD"),
                         Map.entry("avatarImage", avatarId.toString()),
