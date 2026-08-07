@@ -1,0 +1,285 @@
+{
+  "pageKey": "video.digital_human",
+  "order": [
+    "avatarSource",
+    "avatarImage",
+    "avatarPrompt",
+    "avatarConfirmed",
+    "audioSource",
+    "script",
+    "audioFile",
+    "audioConfirmed",
+    "voiceGenerationMode",
+    "voice",
+    "speed",
+    "emotion",
+    "aspectRatio",
+    "resolution",
+    "durationSeconds",
+    "performancePrompt",
+    "negativePrompt",
+    "outputCount",
+    "fps"
+  ],
+  "widgets": {
+    "avatarSource": "segmented",
+    "avatarImage": "image",
+    "avatarPrompt": "textarea",
+    "avatarConfirmed": "boolean",
+    "audioSource": "segmented",
+    "script": "textarea",
+    "audioFile": "audio",
+    "audioConfirmed": "boolean",
+    "voice": "dropdown",
+    "speed": "slider",
+    "emotion": "segmented",
+    "aspectRatio": "segmented",
+    "resolution": "segmented",
+    "performancePrompt": "textarea",
+    "negativePrompt": "textarea",
+    "outputCount": "hidden",
+    "fps": "hidden",
+    "voiceGenerationMode": "segmented",
+    "durationSeconds": "number"
+  },
+  "visibility": {
+    "avatarPrompt": {
+      "field": "avatarSource",
+      "equals": "AI_GENERATED"
+    },
+    "script": {
+      "field": "audioSource",
+      "equals": "TEXT_TO_SPEECH"
+    },
+    "voice": {
+      "all": [
+        {
+          "field": "audioSource",
+          "equals": "TEXT_TO_SPEECH"
+        },
+        {
+          "field": "voiceGenerationMode",
+          "equals": "TTS"
+        }
+      ]
+    },
+    "speed": {
+      "all": [
+        {
+          "field": "audioSource",
+          "equals": "TEXT_TO_SPEECH"
+        },
+        {
+          "field": "voiceGenerationMode",
+          "equals": "TTS"
+        }
+      ]
+    },
+    "emotion": {
+      "all": [
+        {
+          "field": "audioSource",
+          "equals": "TEXT_TO_SPEECH"
+        },
+        {
+          "field": "voiceGenerationMode",
+          "equals": "TTS"
+        }
+      ]
+    },
+    "audioFile": {
+      "field": "audioSource",
+      "equals": "UPLOAD_AUDIO"
+    },
+    "voiceGenerationMode": {
+      "field": "audioSource",
+      "equals": "TEXT_TO_SPEECH"
+    },
+    "avatarImage": {
+      "any": [
+        {
+          "field": "avatarSource",
+          "equals": "UPLOAD"
+        },
+        {
+          "field": "avatarSource",
+          "equals": "HISTORY"
+        },
+        {
+          "field": "avatarSource",
+          "equals": "AI_GENERATED"
+        }
+      ]
+    }
+  },
+  "fieldOptions": {
+    "avatarImage": {
+      "acceptedMimeTypes": [
+        "image/png",
+        "image/jpeg"
+      ],
+      "allowedExtensions": [
+        ".png",
+        ".jpg",
+        ".jpeg"
+      ],
+      "maxItems": 1,
+      "maxFileSizeBytes": 10485760,
+      "maxTotalSizeBytes": 10485760,
+      "showPreview": true
+    },
+    "audioFile": {
+      "acceptedMimeTypes": [
+        "audio/wav",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/aac",
+        "audio/ogg"
+      ],
+      "allowedExtensions": [
+        ".wav",
+        ".mp3",
+        ".m4a",
+        ".aac",
+        ".ogg"
+      ],
+      "maxItems": 1,
+      "maxFileSizeBytes": 6291456,
+      "maxTotalSizeBytes": 6291456,
+      "showPreview": true
+    },
+    "avatarConfirmed": {
+      "default": false
+    },
+    "audioConfirmed": {
+      "default": false
+    },
+    "speed": {
+      "step": 0.05,
+      "suffix": "×",
+      "decimalPlaces": 2
+    },
+    "performancePrompt": {
+      "maxLines": 4
+    },
+    "negativePrompt": {
+      "maxLines": 4
+    },
+    "durationSeconds": {
+      "min": 1,
+      "max": 60,
+      "step": 1
+    }
+  },
+  "enumLabels": {
+    "avatarSource": {
+      "UPLOAD": "上传图片",
+      "HISTORY": "历史图片",
+      "AI_GENERATED": "AI 生成"
+    },
+    "audioSource": {
+      "TEXT_TO_SPEECH": "文本配音",
+      "UPLOAD_AUDIO": "上传音频"
+    },
+    "voice": {
+      "science_female": "科普视频女声",
+      "gentle_female": "温柔女声"
+    },
+    "emotion": {
+      "natural": "自然"
+    },
+    "aspectRatio": {
+      "9:16": "9:16",
+      "16:9": "16:9",
+      "21:9": "21:9",
+      "1:1": "1:1"
+    },
+    "resolution": {
+      "720p": "720p",
+      "1080p": "1080p"
+    },
+    "voiceGenerationMode": {
+      "TTS": "独立 TTS",
+      "VIDEO_NATIVE": "视频模型原生语音"
+    }
+  },
+  "conditionalOptions": {
+    "voiceGenerationMode": {
+      "VIDEO_NATIVE": {
+        "requiresModelCapability": "nativeAudioOutput"
+      }
+    }
+  },
+  "fieldHelp": {
+    "avatarConfirmed": {
+      "text": "请先预览并确认人物形象。"
+    },
+    "audioConfirmed": {
+      "text": "文本配音必须先生成并确认音频；上传音频也必须确认。"
+    },
+    "negativePrompt": {
+      "text": "可选，用于避免不希望出现的动作、镜头或画面。"
+    },
+    "voiceGenerationMode": {
+      "text": "只有视频 Deployment 提供可在最终提交前试听并确认的独立音频时，才开放视频模型原生语音。当前 D-ID 模型使用独立 TTS 或上传音频。"
+    }
+  },
+  "feeNotice": "人物图片、语音和视频模型可能产生费用。点击生成即表示确认本次调用。",
+  "submitLabel": "生成数字人口播",
+  "revisionSubmitLabel": "生成新版本",
+  "nativeVoiceEnabled": false,
+  "modelSelectors": {
+    "IMAGE_GENERATION": {
+      "label": "人物生图模型",
+      "widget": "dropdown"
+    },
+    "TEXT_TO_SPEECH": {
+      "label": "配音模型",
+      "widget": "dropdown"
+    },
+    "VIDEO_GENERATION": {
+      "label": "视频生成模型",
+      "widget": "dropdown"
+    }
+  },
+  "modelSelectorPlacement": {
+    "IMAGE_GENERATION": "avatarPrompt",
+    "TEXT_TO_SPEECH": "script",
+    "VIDEO_GENERATION": "aspectRatio"
+  },
+  "modelSelectorVisibility": {
+    "IMAGE_GENERATION": {
+      "field": "avatarSource",
+      "equals": "AI_GENERATED"
+    },
+    "TEXT_TO_SPEECH": {
+      "all": [
+        {
+          "field": "audioSource",
+          "equals": "TEXT_TO_SPEECH"
+        },
+        {
+          "field": "voiceGenerationMode",
+          "equals": "TTS"
+        }
+      ]
+    },
+    "VIDEO_GENERATION": {}
+  },
+  "confirmationDependencies": {
+    "avatarConfirmed": [
+      "avatarSource",
+      "avatarImage",
+      "avatarPrompt"
+    ],
+    "audioConfirmed": [
+      "audioSource",
+      "script",
+      "audioFile",
+      "voiceGenerationMode",
+      "voice",
+      "speed",
+      "emotion"
+    ]
+  }
+}

@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "avatarSource",
+    "avatarConfirmed",
+    "audioSource",
+    "audioConfirmed",
+    "aspectRatio",
+    "resolution",
+    "outputCount",
+    "fps",
+    "durationSeconds"
+  ],
+  "properties": {
+    "avatarSource": {
+      "type": "string",
+      "enum": [
+        "UPLOAD",
+        "HISTORY",
+        "AI_GENERATED"
+      ],
+      "default": "UPLOAD",
+      "title": "人物来源"
+    },
+    "avatarImage": {
+      "type": "string",
+      "format": "uuid",
+      "title": "人物图片"
+    },
+    "avatarPrompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "title": "人物描述",
+      "description": "用于生成候选人物形象。"
+    },
+    "avatarConfirmed": {
+      "type": "boolean",
+      "const": true,
+      "title": "确认人物形象"
+    },
+    "audioSource": {
+      "type": "string",
+      "enum": [
+        "TEXT_TO_SPEECH",
+        "UPLOAD_AUDIO"
+      ],
+      "default": "TEXT_TO_SPEECH",
+      "title": "声音来源"
+    },
+    "script": {
+      "type": "string",
+      "maxLength": 300,
+      "title": "口播文案",
+      "description": "最多 300 个字符。"
+    },
+    "audioFile": {
+      "type": "string",
+      "format": "uuid",
+      "title": "上传音频"
+    },
+    "audioConfirmed": {
+      "type": "boolean",
+      "const": true,
+      "title": "确认使用音频"
+    },
+    "voiceGenerationMode": {
+      "type": "string",
+      "default": "TTS",
+      "title": "语音生成方式",
+      "description": "独立 TTS 会先生成可试听、可确认的音频；VIDEO_NATIVE 仅在视频模型能提供提交前音频预览时开放，当前 D-ID 部署默认关闭。",
+      "enum": [
+        "TTS",
+        "VIDEO_NATIVE"
+      ]
+    },
+    "voice": {
+      "type": "string",
+      "enum": [
+        "science_female",
+        "gentle_female"
+      ],
+      "default": "gentle_female",
+      "title": "音色"
+    },
+    "speed": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 2.0,
+      "multipleOf": 0.05,
+      "default": 1.0,
+      "title": "语速"
+    },
+    "emotion": {
+      "type": "string",
+      "enum": [
+        "natural"
+      ],
+      "default": "natural",
+      "title": "情绪"
+    },
+    "aspectRatio": {
+      "type": "string",
+      "enum": [
+        "9:16",
+        "16:9",
+        "21:9",
+        "1:1"
+      ],
+      "default": "9:16",
+      "title": "视频比例"
+    },
+    "resolution": {
+      "type": "string",
+      "enum": [
+        "720p",
+        "1080p"
+      ],
+      "default": "720p",
+      "title": "分辨率"
+    },
+    "performancePrompt": {
+      "type": "string",
+      "maxLength": 500,
+      "title": "角色表现",
+      "description": "描述角色动作、情绪和镜头表现。"
+    },
+    "negativePrompt": {
+      "type": "string",
+      "maxLength": 500,
+      "title": "负面提示词",
+      "description": "描述不希望出现的动作、镜头或画面。"
+    },
+    "outputCount": {
+      "type": "integer",
+      "const": 1,
+      "default": 1,
+      "title": "输出数量"
+    },
+    "fps": {
+      "type": "integer",
+      "const": 30,
+      "default": 30,
+      "title": "帧率"
+    },
+    "durationSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60,
+      "default": 5,
+      "title": "视频时长（秒）",
+      "description": "用于控制最终视频长度；文本原生语音模式会根据文案自动建议。"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "avatarSource": {
+            "enum": [
+              "UPLOAD",
+              "HISTORY",
+              "AI_GENERATED"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "avatarImage"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "avatarSource": {
+            "const": "AI_GENERATED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "avatarPrompt"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "audioSource": {
+            "const": "TEXT_TO_SPEECH"
+          },
+          "voiceGenerationMode": {
+            "const": "TTS"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "script",
+          "voice",
+          "speed",
+          "emotion"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "audioSource": {
+            "const": "TEXT_TO_SPEECH"
+          },
+          "voiceGenerationMode": {
+            "const": "VIDEO_NATIVE"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "script"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "audioSource": {
+            "const": "UPLOAD_AUDIO"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "audioFile"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

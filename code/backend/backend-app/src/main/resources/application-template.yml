@@ -97,6 +97,17 @@ yuanzuo:
         speech-path: /audio/speech
         video-path: /videos/generations
 
+      # D-ID Official Talks API. Adapter uploads the confirmed avatar image and audio, then polls the asynchronous talk.
+      d-id-official:
+        protocol: d-id
+        base-url: https://api.d-id.com
+        api-key: "CHANGE_ME_D_ID_API_KEY"
+        api-key-header: Authorization
+        api-key-prefix: "Basic "
+        image-path: /images
+        audio-path: /audios
+        video-path: /talks
+        video-status-path: /talks/{taskId}
       # AssemblyAI 官方预录音转写接口。异步上传、提交和轮询由 Provider Adapter 封装。
       assemblyai-official:
         protocol: assemblyai

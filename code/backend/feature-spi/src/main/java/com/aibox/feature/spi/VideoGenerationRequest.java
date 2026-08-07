@@ -11,6 +11,7 @@ public record VideoGenerationRequest(
         String deploymentCode,
         String prompt,
         List<UUID> inputAssetIds,
+        List<ModelAsset> inlineInputAssets,
         Integer durationSeconds,
         String aspectRatio,
         String resolution,
@@ -19,7 +20,25 @@ public record VideoGenerationRequest(
 ) {
     public VideoGenerationRequest {
         inputAssetIds = inputAssetIds == null ? List.of() : List.copyOf(inputAssetIds);
+        inlineInputAssets = inlineInputAssets == null ? List.of() : List.copyOf(inlineInputAssets);
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
         count = Math.max(1, count);
+    }
+
+    public VideoGenerationRequest(
+            UUID tenantId,
+            UUID runId,
+            String modelAlias,
+            String deploymentCode,
+            String prompt,
+            List<UUID> inputAssetIds,
+            Integer durationSeconds,
+            String aspectRatio,
+            String resolution,
+            int count,
+            Map<String, Object> metadata
+    ) {
+        this(tenantId, runId, modelAlias, deploymentCode, prompt, inputAssetIds, List.of(),
+                durationSeconds, aspectRatio, resolution, count, metadata);
     }
 }
