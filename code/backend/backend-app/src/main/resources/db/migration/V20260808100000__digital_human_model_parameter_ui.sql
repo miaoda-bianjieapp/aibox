@@ -56,18 +56,13 @@ select
     16,
     jsonb_set(
       jsonb_set(
-        jsonb_set(
-          previous.input_schema_json,
-          '{properties,aspectRatio,enum}',
-          '["9:16","16:9","21:9","1:1","SOURCE"]'::jsonb,
-          true
-        ),
-        '{properties,resolution,enum}',
-        '["720p","1080p","SOURCE"]'::jsonb,
+        previous.input_schema_json,
+        '{properties,aspectRatio,enum}',
+        '["9:16","16:9","21:9","1:1","SOURCE"]'::jsonb,
         true
       ),
-      '{properties,durationSeconds,description}',
-      to_jsonb('??????????????????????????????????????????'::text),
+      '{properties,resolution,enum}',
+      '["720p","1080p","SOURCE"]'::jsonb,
       true
     ),
     jsonb_set(
