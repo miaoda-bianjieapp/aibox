@@ -22,6 +22,7 @@ import com.aibox.feature.spi.TextToSpeechRequest;
 import com.aibox.feature.spi.TextToSpeechResponse;
 import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
+import com.aibox.feature.spi.VideoGenerationLifecycleListener;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.core.io.ByteArrayResource;
@@ -234,6 +235,9 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             List<ModelAsset> assets
     ) {
         ProviderContext provider = requireProvider(target);
+        if ("agnes-json".equalsIgnoreCase(setting(target, "imageProtocol", ""))) {
+            return execute(() -> generateAgnesImage(provider, target, request, assets));
+        }
         String imageSize = resolveImageSize(target, request.size());
         if (!assets.isEmpty()) {
             ModelAsset maskAsset = null;
@@ -331,6 +335,52 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
                     provider, provider.config().getImagePath(), imageIdempotencyKey(request), body
                 ), provider.code(), target.providerModel()
         ));
+    }
+
+    private static ImageGenerationResponse generateAgnesImage(
+            ProviderContext provider,
+            ModelCallTarget target,
+            ImageGenerationRequest request,
+            List<ModelAsset> assets
+    ) {
+        if (request.maskAssetId() != null) {
+            throw new ModelProviderException(
+                    "MODEL_MASK_NOT_SUPPORTED",
+                    "The selected image model does not support masked editing",
+                    false
+            );
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", target.providerModel());
+        body.put("prompt", request.prompt());
+        body.put("n", request.count());
+        body.put("size", setting(target, "imageResolution", "2K"));
+
+        Map<String, Object> extraBody = new LinkedHashMap<>();
+        if (!isBlank(request.size())
+                && Set.of("1:1", "3:4", "4:3", "16:9", "9:16").contains(request.size())) {
+            extraBody.put("aspect_ratio", request.size());
+        }
+        if (!assets.isEmpty()) {
+            List<String> images = assets.stream().map(asset -> {
+                if (!asset.mediaType().startsWith("image/")) {
+                    throw new ModelProviderException(
+                            "PROVIDER_ASSET_TYPE_UNSUPPORTED",
+                            "Agnes image generation accepts image references only: " + asset.fileName(),
+                            false
+                    );
+                }
+                return Base64.getEncoder().encodeToString(asset.content());
+            }).toList();
+            extraBody.put("image", images);
+        }
+        if (!extraBody.isEmpty()) body.put("extra_body", extraBody);
+
+        String path = assets.isEmpty()
+                ? provider.config().getImagePath()
+                : provider.config().getImageEditPath();
+        JsonNode response = postJson(provider, path, imageIdempotencyKey(request), body);
+        return parseImageResponse(response, provider.code(), target.providerModel());
     }
 
     @Override
@@ -531,7 +581,65 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             VideoGenerationRequest request,
             List<ModelAsset> assets
     ) {
+        return generateVideoResumable(
+                target,
+                request,
+                assets,
+                null,
+                VideoGenerationLifecycleListener.NOOP
+        );
+    }
+
+    @Override
+    public boolean supportsResumableVideo(ModelCallTarget target) {
+        String protocol = setting(target, "videoProtocol", "");
+        return "openai-videos".equalsIgnoreCase(protocol)
+                || "xai-videos".equalsIgnoreCase(protocol)
+                || "agnes-videos".equalsIgnoreCase(protocol);
+    }
+
+    @Override
+    public VideoGenerationResponse generateVideoResumable(
+            ModelCallTarget target,
+            VideoGenerationRequest request,
+            List<ModelAsset> assets,
+            String providerRequestId,
+            VideoGenerationLifecycleListener listener
+    ) {
         ProviderContext provider = requireProvider(target);
+        VideoGenerationLifecycleListener lifecycle = listener == null
+                ? VideoGenerationLifecycleListener.NOOP
+                : listener;
+        if ("openai-videos".equalsIgnoreCase(setting(target, "videoProtocol", ""))) {
+            return execute(() -> generateOpenAiVideo(
+                    provider,
+                    target,
+                    request,
+                    assets,
+                    providerRequestId,
+                    lifecycle
+            ));
+        }
+        if ("xai-videos".equalsIgnoreCase(setting(target, "videoProtocol", ""))) {
+            return execute(() -> generateXaiVideo(
+                    provider,
+                    target,
+                    request,
+                    assets,
+                    providerRequestId,
+                    lifecycle
+            ));
+        }
+        if ("agnes-videos".equalsIgnoreCase(setting(target, "videoProtocol", ""))) {
+            return execute(() -> generateAgnesVideo(
+                    provider,
+                    target,
+                    request,
+                    assets,
+                    providerRequestId,
+                    lifecycle
+            ));
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", target.providerModel());
         body.put("prompt", request.prompt());
@@ -554,9 +662,598 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
             body.put("input_images", inputImages);
         }
         return execute(() -> parseVideoResponse(
-                postJson(provider, provider.config().getVideoPath(), request.runId().toString(), body),
+                postJson(provider, videoPath(provider, target), request.runId().toString(), body),
                 provider.code(), target.providerModel()
         ));
+    }
+
+    private static VideoGenerationResponse generateOpenAiVideo(
+            ProviderContext provider,
+            ModelCallTarget target,
+            VideoGenerationRequest request,
+            List<ModelAsset> assets,
+            String existingVideoId,
+            VideoGenerationLifecycleListener listener
+    ) {
+        if (hasVideoFrame(request, "lastFrameAssetId")) {
+            throw new ModelProviderException(
+                    "MODEL_LAST_FRAME_NOT_SUPPORTED",
+                    "The selected OpenAI-compatible video deployment does not support a last frame image",
+                    false
+            );
+        }
+        if (request.count() != 1) {
+            throw new ModelProviderException(
+                    "PROVIDER_VIDEO_COUNT_UNSUPPORTED",
+                    "The selected video model supports exactly one video per request",
+                    false
+            );
+        }
+        if (assets.size() > 1) {
+            throw new ModelProviderException(
+                    "PROVIDER_REFERENCE_IMAGE_LIMIT_EXCEEDED",
+                    "The selected video model accepts at most one reference image",
+                    false
+            );
+        }
+
+        String videoId = existingVideoId;
+        if (isBlank(videoId)) {
+            String size = resolveOpenAiVideoSize(target, request);
+            String path = videoPath(provider, target);
+            JsonNode created;
+            if (usesJsonVideoSubmission(target) && assets.isEmpty()) {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("model", target.providerModel());
+                body.put("prompt", request.prompt());
+                if (request.durationSeconds() != null) {
+                    body.put("seconds", request.durationSeconds().toString());
+                }
+                if (!isBlank(size)) body.put("size", size);
+                created = postJson(provider, path, request.runId().toString(), body);
+            } else {
+                MultipartBodyBuilder body = new MultipartBodyBuilder();
+                body.part("model", target.providerModel());
+                body.part("prompt", request.prompt());
+                if (request.durationSeconds() != null) {
+                    body.part("seconds", request.durationSeconds());
+                }
+                if (!isBlank(size)) body.part("size", size);
+                if (!assets.isEmpty()) {
+                    ModelAsset reference = assets.get(0);
+                    if (!reference.mediaType().startsWith("image/")) {
+                        throw new ModelProviderException(
+                                "PROVIDER_ASSET_TYPE_UNSUPPORTED",
+                                "OpenAI video generation accepts image references only: " + reference.fileName(),
+                                false
+                        );
+                    }
+                    body.part(
+                            "input_reference",
+                            new NamedByteArrayResource(reference.content(), reference.fileName())
+                    ).contentType(safeMediaType(reference.mediaType()));
+                }
+                created = provider.client().post()
+                        .uri(path)
+                        .header("Idempotency-Key", request.runId().toString())
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(body.build())
+                        .retrieve()
+                        .body(JsonNode.class);
+            }
+            videoId = created == null ? null : created.path("id").asText(null);
+            if (isBlank(videoId)) {
+                throw invalidResponse("Video creation response has no video id");
+            }
+            listener.onSubmitted(
+                    videoId,
+                    created.path("model").asText(target.providerModel()),
+                    videoProviderState("openai-videos", "submitted")
+            );
+        }
+
+        JsonNode completed = awaitOpenAiVideo(provider, target, videoId, listener);
+        listener.onPhase(
+                "DOWNLOADING",
+                videoProviderState("openai-videos", "downloading")
+        );
+        DownloadedVideo downloaded = downloadOpenAiVideo(provider, target, videoId);
+        String fileName = completed.path("filename").asText("generated.mp4");
+        String mediaType = isBlank(downloaded.mediaType())
+                ? "video/mp4"
+                : downloaded.mediaType();
+        JsonNode usage = completed.path("usage");
+        return new VideoGenerationResponse(
+                List.of(new GeneratedVideo(null, fileName, mediaType, downloaded.content())),
+                provider.code(),
+                completed.path("model").asText(target.providerModel()),
+                videoId,
+                nullableInt(usage, "input_tokens"),
+                nullableInt(usage, "output_tokens")
+        );
+    }
+
+    private static JsonNode awaitOpenAiVideo(
+            ProviderContext provider,
+            ModelCallTarget target,
+            String videoId,
+            VideoGenerationLifecycleListener listener
+    ) {
+        long pollIntervalMs = Math.max(1, intSetting(target, "videoPollIntervalMs", 1_000));
+        long pollTimeoutMs = Math.max(
+                pollIntervalMs,
+                intSetting(target, "videoPollTimeoutMs", 900_000)
+        );
+        long deadline = System.nanoTime() + (pollTimeoutMs * 1_000_000L);
+        String path = stripTrailingSlash(videoPath(provider, target)) + "/" + videoId;
+        while (true) {
+            JsonNode statusResponse = provider.client().get()
+                    .uri(path)
+                    .retrieve()
+                    .body(JsonNode.class);
+            String status = statusResponse == null
+                    ? ""
+                    : statusResponse.path("status").asText("").trim().toLowerCase(Locale.ROOT);
+            listener.onPhase(
+                    "GENERATING",
+                    videoProviderState("openai-videos", status)
+            );
+            if (Set.of("completed", "succeeded", "success", "done").contains(status)) {
+                return statusResponse;
+            }
+            if (Set.of("failed", "cancelled", "canceled", "expired").contains(status)) {
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_GENERATION_FAILED",
+                        "The video provider reported a terminal failure",
+                        false
+                );
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_GENERATION_TIMEOUT",
+                        "The video provider did not finish before the polling timeout",
+                        true
+                );
+            }
+            sleepVideoPoll(pollIntervalMs);
+        }
+    }
+
+    private static VideoGenerationResponse generateXaiVideo(
+            ProviderContext provider,
+            ModelCallTarget target,
+            VideoGenerationRequest request,
+            List<ModelAsset> assets,
+            String existingRequestId,
+            VideoGenerationLifecycleListener listener
+    ) {
+        if (request.count() != 1) {
+            throw new ModelProviderException(
+                    "PROVIDER_VIDEO_COUNT_UNSUPPORTED",
+                    "The selected video model supports exactly one video per request",
+                    false
+            );
+        }
+        int maxReferenceImages = intSetting(target, "maxReferenceImages", 1);
+        if (assets.size() > maxReferenceImages) {
+            throw new ModelProviderException(
+                "PROVIDER_REFERENCE_IMAGE_LIMIT_EXCEEDED",
+                "The selected video model accepts at most " + maxReferenceImages + " reference images",
+                false
+            );
+        }
+
+        String requestId = existingRequestId;
+        if (isBlank(requestId)) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", target.providerModel());
+            body.put("prompt", request.prompt());
+            if (request.durationSeconds() != null) {
+                body.put("duration", request.durationSeconds());
+            }
+            if (!isBlank(request.aspectRatio())) {
+                body.put("aspect_ratio", request.aspectRatio());
+            }
+            if (!isBlank(request.resolution())) {
+                body.put("resolution", request.resolution());
+            }
+            if (!assets.isEmpty()) {
+                List<Map<String, String>> references = assets.stream()
+                        .map(OpenAiCompatibleTextProvider::videoReferenceImage)
+                        .toList();
+                String referenceField = setting(target, "videoReferenceField", "image");
+                if ("reference_images".equals(referenceField)) {
+                    body.put("reference_images", references);
+                } else {
+                    body.put("image", references.get(0));
+                }
+            }
+
+            JsonNode created = postJson(
+                    provider, videoPath(provider, target), request.runId().toString(), body
+            );
+            requestId = created == null
+                    ? null
+                    : created.path("request_id").asText(created.path("id").asText(null));
+            if (isBlank(requestId)) {
+                throw invalidResponse("Video creation response has no request id");
+            }
+            listener.onSubmitted(
+                    requestId,
+                    created.path("model").asText(target.providerModel()),
+                    videoProviderState("xai-videos", "submitted")
+            );
+        }
+
+        JsonNode completed = awaitXaiVideo(provider, target, requestId, listener);
+        String videoUrl = videoUrl(completed);
+        if (isBlank(videoUrl)) {
+            throw invalidResponse("Video result has no downloadable URL");
+        }
+        listener.onPhase(
+                "DOWNLOADING",
+                videoProviderState("xai-videos", "downloading")
+        );
+        DownloadedVideo downloaded = downloadVideoUrl(videoUrl);
+        String fileName = completed.path("filename").asText("generated.mp4");
+        String mediaType = isBlank(downloaded.mediaType())
+                ? "video/mp4"
+                : downloaded.mediaType();
+        JsonNode usage = completed.path("usage");
+        return new VideoGenerationResponse(
+                List.of(new GeneratedVideo(null, fileName, mediaType, downloaded.content())),
+                provider.code(),
+                completed.path("model").asText(target.providerModel()),
+                requestId,
+                nullableInt(usage, "input_tokens"),
+                nullableInt(usage, "output_tokens")
+        );
+    }
+
+    private static VideoGenerationResponse generateAgnesVideo(
+            ProviderContext provider,
+            ModelCallTarget target,
+            VideoGenerationRequest request,
+            List<ModelAsset> assets,
+            String existingVideoId,
+            VideoGenerationLifecycleListener listener
+    ) {
+        if (request.count() != 1) {
+            throw new ModelProviderException(
+                    "PROVIDER_VIDEO_COUNT_UNSUPPORTED",
+                    "The selected video model supports exactly one video per request",
+                    false
+            );
+        }
+        if (!assets.isEmpty()) {
+            throw new ModelProviderException(
+                    "PROVIDER_REFERENCE_IMAGE_LIMIT_EXCEEDED",
+                    "The selected video model does not accept reference images",
+                    false
+            );
+        }
+
+        String videoId = existingVideoId;
+        if (isBlank(videoId)) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("model", target.providerModel());
+            body.put("prompt", request.prompt());
+            if (request.durationSeconds() != null) {
+                body.put("duration", request.durationSeconds());
+            }
+            if (!isBlank(request.aspectRatio())) {
+                body.put("aspect_ratio", request.aspectRatio());
+            }
+            if (!isBlank(request.resolution())) {
+                body.put("resolution", request.resolution());
+            }
+
+            JsonNode created = postJson(
+                    provider, videoPath(provider, target), request.runId().toString(), body
+            );
+            JsonNode createdItem = agnesDataItem(created);
+            videoId = createdItem.path("task_id").asText(
+                    createdItem.path("id").asText(createdItem.path("video_id").asText(null))
+            );
+            if (isBlank(videoId)) {
+                throw invalidResponse("Agnes video creation response has no video id");
+            }
+            listener.onSubmitted(
+                    videoId,
+                    createdItem.path("model").asText(target.providerModel()),
+                    videoProviderState("agnes-videos", createdItem.path("status").asText("pending"))
+            );
+        }
+
+        JsonNode completed = awaitAgnesVideo(provider, target, videoId, listener);
+        String videoUrl = videoUrl(completed);
+        if (isBlank(videoUrl)) {
+            throw invalidResponse("Agnes video result has no downloadable URL");
+        }
+        listener.onPhase(
+                "DOWNLOADING",
+                videoProviderState("agnes-videos", "downloading")
+        );
+        DownloadedVideo downloaded = downloadVideoUrl(videoUrl);
+        String mediaType = isBlank(downloaded.mediaType())
+                ? "video/mp4"
+                : downloaded.mediaType();
+        return new VideoGenerationResponse(
+                List.of(new GeneratedVideo(null, "generated.mp4", mediaType, downloaded.content())),
+                provider.code(),
+                completed.path("model").asText(target.providerModel()),
+                videoId,
+                null,
+                null
+        );
+    }
+
+    private static JsonNode awaitAgnesVideo(
+            ProviderContext provider,
+            ModelCallTarget target,
+            String videoId,
+            VideoGenerationLifecycleListener listener
+    ) {
+        long pollIntervalMs = Math.max(1, intSetting(target, "videoPollIntervalMs", 5_000));
+        long pollTimeoutMs = Math.max(
+                pollIntervalMs,
+                intSetting(target, "videoPollTimeoutMs", 900_000)
+        );
+        long deadline = System.nanoTime() + (pollTimeoutMs * 1_000_000L);
+        String path = stripTrailingSlash(videoPath(provider, target)) + "/" + videoId;
+        while (true) {
+            JsonNode response = provider.client().get()
+                    .uri(path)
+                    .retrieve()
+                    .body(JsonNode.class);
+            JsonNode item = agnesDataItem(response);
+            String status = item.path("status").asText("").trim().toLowerCase(Locale.ROOT);
+            listener.onPhase(
+                    "GENERATING",
+                    videoProviderState("agnes-videos", status)
+            );
+            if (Set.of("completed", "succeeded", "success", "done").contains(status)) {
+                return item;
+            }
+            if (Set.of("failed", "cancelled", "canceled", "expired").contains(status)) {
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_GENERATION_FAILED",
+                        "The video provider reported a terminal failure",
+                        false
+                );
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_GENERATION_TIMEOUT",
+                        "The video provider did not finish before the polling timeout",
+                        true
+                );
+            }
+            sleepVideoPoll(pollIntervalMs);
+        }
+    }
+
+    private static JsonNode agnesDataItem(JsonNode response) {
+        if (response == null) return ERROR_MAPPER.nullNode();
+        JsonNode data = response.path("data");
+        return data.isArray() && !data.isEmpty() ? data.path(0) : response;
+    }
+
+    private static DownloadedVideo downloadOpenAiVideo(
+            ProviderContext provider,
+            ModelCallTarget target,
+            String videoId
+    ) {
+        String path = stripTrailingSlash(videoPath(provider, target)) + "/" + videoId + "/content";
+        return provider.client().get()
+                .uri(path)
+                .accept(MediaType.APPLICATION_OCTET_STREAM)
+                .exchange(OpenAiCompatibleTextProvider::readDownloadedVideo);
+    }
+
+    private static JsonNode awaitXaiVideo(
+            ProviderContext provider,
+            ModelCallTarget target,
+            String requestId,
+            VideoGenerationLifecycleListener listener
+    ) {
+        long pollIntervalMs = Math.max(1, intSetting(target, "videoPollIntervalMs", 1_000));
+        long pollTimeoutMs = Math.max(
+                pollIntervalMs,
+                intSetting(target, "videoPollTimeoutMs", 900_000)
+        );
+        long deadline = System.nanoTime() + (pollTimeoutMs * 1_000_000L);
+        String path = xaiVideoStatusPath(target, videoPath(provider, target), requestId);
+        while (true) {
+            JsonNode statusResponse = provider.client().get()
+                    .uri(path)
+                    .retrieve()
+                    .body(JsonNode.class);
+            String status = statusResponse == null
+                    ? ""
+                    : statusResponse.path("status").asText("").trim().toLowerCase(Locale.ROOT);
+            listener.onPhase(
+                    "GENERATING",
+                    videoProviderState("xai-videos", status)
+            );
+            if (Set.of("completed", "succeeded", "success", "done").contains(status)) {
+                return statusResponse;
+            }
+            if (Set.of("failed", "cancelled", "canceled", "expired").contains(status)) {
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_GENERATION_FAILED",
+                        "The video provider reported a terminal failure",
+                        false
+                );
+            }
+            if (System.nanoTime() >= deadline) {
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_GENERATION_TIMEOUT",
+                        "The video provider did not finish before the polling timeout",
+                        true
+                );
+            }
+            try {
+                Thread.sleep(pollIntervalMs);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_GENERATION_INTERRUPTED",
+                        "Video generation polling was interrupted",
+                        true,
+                        exception
+                );
+            }
+        }
+    }
+
+    private static DownloadedVideo downloadVideoUrl(String url) {
+        return RestClient.create().get()
+                .uri(url)
+                .accept(MediaType.APPLICATION_OCTET_STREAM)
+                .exchange(OpenAiCompatibleTextProvider::readDownloadedVideo);
+    }
+
+    private static Map<String, Object> videoProviderState(String protocol, String status) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("protocol", protocol);
+        state.put("status", isBlank(status) ? "unknown" : status);
+        return Map.copyOf(state);
+    }
+
+    private static DownloadedVideo readDownloadedVideo(
+            org.springframework.http.HttpRequest httpRequest,
+            org.springframework.http.client.ClientHttpResponse response
+    ) throws IOException {
+        int status = response.getStatusCode().value();
+        if (status < 200 || status >= 300) {
+            String errorBody = new String(
+                    response.getBody().readAllBytes(),
+                    StandardCharsets.UTF_8
+            );
+            throw mapHttpFailure(
+                    status,
+                    errorBody,
+                    new IOException("Provider returned HTTP " + status)
+            );
+        }
+        byte[] content = response.getBody().readAllBytes();
+        if (content.length == 0) {
+            throw invalidResponse("Video content response is empty");
+        }
+        return new DownloadedVideo(
+                content,
+                response.getHeaders().getFirst(HttpHeaders.CONTENT_TYPE)
+        );
+    }
+
+    private static String resolveOpenAiVideoSize(
+            ModelCallTarget target,
+            VideoGenerationRequest request
+    ) {
+        if (!isBlank(request.resolution()) && !isBlank(request.aspectRatio())) {
+            String combined = mappedVideoSize(
+                    target,
+                    request.resolution() + "|" + request.aspectRatio()
+            );
+            if (!isBlank(combined)) return combined;
+        }
+        String requested = !isBlank(request.resolution())
+                ? request.resolution()
+                : request.aspectRatio();
+        String mapped = mappedVideoSize(target, requested);
+        if (!isBlank(mapped)) return mapped;
+        if ("16:9".equalsIgnoreCase(requested) || "landscape".equalsIgnoreCase(requested)) {
+            return "1280x720";
+        }
+        if ("9:16".equalsIgnoreCase(requested) || "portrait".equalsIgnoreCase(requested)) {
+            return "720x1280";
+        }
+        return requested;
+    }
+
+    private static String mappedVideoSize(ModelCallTarget target, String requested) {
+        Object configured = target.settings().get("videoSizeMap");
+        if (!(configured instanceof Map<?, ?> mapping) || isBlank(requested)) return null;
+        Object resolved = mapping.get(requested);
+        return resolved == null || resolved.toString().isBlank()
+                ? null
+                : resolved.toString();
+    }
+
+    private static void sleepVideoPoll(long pollIntervalMs) {
+        try {
+            Thread.sleep(pollIntervalMs);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ModelProviderException(
+                    "PROVIDER_VIDEO_GENERATION_INTERRUPTED",
+                    "Video generation polling was interrupted",
+                    true,
+                    exception
+            );
+        }
+    }
+
+    private static Map<String, String> videoReferenceImage(ModelAsset asset) {
+        if (!asset.mediaType().startsWith("image/")) {
+            throw new ModelProviderException(
+                    "PROVIDER_ASSET_TYPE_UNSUPPORTED",
+                    "xAI video generation accepts image references only: " + asset.fileName(),
+                    false
+            );
+        }
+        String dataUrl = "data:" + asset.mediaType() + ";base64,"
+                + Base64.getEncoder().encodeToString(asset.content());
+        return Map.of("url", dataUrl);
+    }
+
+    private static boolean hasVideoFrame(
+            VideoGenerationRequest request,
+            String field
+    ) {
+        Object value = request.metadata().get(field);
+        return value != null && !value.toString().isBlank();
+    }
+
+    private static String xaiVideoStatusPath(
+            ModelCallTarget target,
+            String videoPath,
+            String requestId
+    ) {
+        String configured = setting(target, "videoStatusPath", "");
+        if (!isBlank(configured)) {
+            return configured
+                    .replace("{requestId}", requestId)
+                    .replace("{id}", requestId);
+        }
+        String path = stripTrailingSlash(videoPath);
+        if (path.endsWith("/generations")) {
+            path = path.substring(0, path.length() - "/generations".length());
+        }
+        return path + "/" + requestId;
+    }
+
+    private static String videoPath(ProviderContext provider, ModelCallTarget target) {
+        return setting(target, "videoPath", provider.config().getVideoPath());
+    }
+
+    private static boolean usesJsonVideoSubmission(ModelCallTarget target) {
+        return "json".equalsIgnoreCase(setting(target, "videoRequestFormat", ""));
+    }
+
+    private static String videoUrl(JsonNode response) {
+        if (response == null) return null;
+        String url = response.path("video").path("url").asText(null);
+        if (!isBlank(url)) return url;
+        url = response.path("metadata").path("url").asText(null);
+        if (!isBlank(url)) return url;
+        url = response.path("video_url").asText(null);
+        if (!isBlank(url)) return url;
+        url = response.path("videoUrl").asText(null);
+        if (!isBlank(url)) return url;
+        url = response.path("url").asText(null);
+        return isBlank(url) ? null : url;
     }
 
     private static ImageGenerationResponse parseImageResponse(
@@ -1192,6 +1889,9 @@ public final class OpenAiCompatibleTextProvider implements ModelProviderClient {
     }
 
     private record BinaryResult(String url, byte[] content) {
+    }
+
+    private record DownloadedVideo(byte[] content, String mediaType) {
     }
 
     private record ProviderContext(

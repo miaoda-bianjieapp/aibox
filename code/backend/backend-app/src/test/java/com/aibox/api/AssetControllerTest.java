@@ -3,6 +3,7 @@ package com.aibox.api;
 import com.aibox.platform.asset.AssetLibraryService;
 import com.aibox.platform.asset.AssetPreviewService;
 import com.aibox.platform.asset.AssetService;
+import com.aibox.platform.asset.CreativeAssetService;
 import com.aibox.platform.common.PlatformException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -110,7 +111,8 @@ class AssetControllerTest {
         AssetController controller = new AssetController(
                 mock(AssetService.class),
                 mock(AssetLibraryService.class),
-                previewService
+                previewService,
+                mock(CreativeAssetService.class)
         );
 
         ResponseEntity<?> response = controller.previewContent(assetId);
@@ -127,7 +129,8 @@ class AssetControllerTest {
         return new AssetController(
                 assetService,
                 mock(AssetLibraryService.class),
-                mock(AssetPreviewService.class)
+                mock(AssetPreviewService.class),
+                mock(CreativeAssetService.class)
         );
     }
 

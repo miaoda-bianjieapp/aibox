@@ -76,6 +76,20 @@ public interface ModelProviderClient {
         throw unsupported(target);
     }
 
+    default boolean supportsResumableVideo(ModelCallTarget target) {
+        return false;
+    }
+
+    default VideoGenerationResponse generateVideoResumable(
+            ModelCallTarget target,
+            VideoGenerationRequest request,
+            List<ModelAsset> assets,
+            String providerRequestId,
+            VideoGenerationLifecycleListener listener
+    ) {
+        return generateVideo(target, request, assets);
+    }
+
     private ModelProviderException unsupported(ModelCallTarget target) {
         return new ModelProviderException(
                 "MODEL_CAPABILITY_NOT_SUPPORTED",

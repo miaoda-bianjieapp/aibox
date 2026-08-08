@@ -28,9 +28,11 @@ import com.aibox.feature.spi.TextToSpeechRequest;
 import com.aibox.feature.spi.TextToSpeechResponse;
 import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
+import com.aibox.feature.spi.VideoGenerationLifecycleListener;
 import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.document.DocumentComparisonEngine;
 import com.aibox.platform.document.DocumentKnowledgeService;
+import com.aibox.platform.execution.RunExecutionPhaseService;
 import com.aibox.platform.model.ModelRoutingService;
 import com.aibox.platform.prompt.PromptOptimizationModelGateway;
 import org.springframework.stereotype.Component;
@@ -61,6 +63,7 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
     private final DocumentKnowledgeService documentKnowledgeService;
     private final ModelRoutingService routingService;
     private final Clock clock;
+    private final RunExecutionPhaseService phaseService;
 
     public RoutingModelGateway(
             List<ModelProviderClient> providers,
@@ -68,7 +71,8 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
             AssetService assetService,
             DocumentKnowledgeService documentKnowledgeService,
             ModelRoutingService routingService,
-            Clock clock
+            Clock clock,
+            RunExecutionPhaseService phaseService
     ) {
         this.providers = List.copyOf(providers);
         this.invocationRepository = invocationRepository;
@@ -76,6 +80,7 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
         this.documentKnowledgeService = documentKnowledgeService;
         this.routingService = routingService;
         this.clock = clock;
+        this.phaseService = phaseService;
     }
 
     @Override
@@ -616,17 +621,267 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
         ProviderTarget selected = requireProvider(
                 ModelCapability.VIDEO_GENERATION, request.modelAlias(), request.deploymentCode()
         );
+        validateVideoParameters(selected.target(), request);
+        validateVideoReferenceImageLimit(selected.target(), request);
         List<ModelAsset> assets = request.inputAssetIds().stream().map(assetService::readForModel).toList();
+        String requestFingerprint = fingerprint(
+                request.modelAlias(),
+                selected.target().deploymentCode(),
+                request.prompt(),
+                request.inputAssetIds().toString(),
+                String.valueOf(request.durationSeconds()),
+                request.aspectRatio(),
+                request.resolution(),
+                Integer.toString(request.count())
+        );
+        if (selected.provider().supportsResumableVideo(selected.target())) {
+            return invokeResumableVideo(request, selected, assets, requestFingerprint);
+        }
         return invoke(
                 request.tenantId(), request.runId(), ModelCapability.VIDEO_GENERATION, request.modelAlias(),
-                selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
-                        request.prompt(), request.inputAssetIds().toString(),
-                        String.valueOf(request.durationSeconds()), request.aspectRatio(), request.resolution(),
-                        Integer.toString(request.count())),
+                selected, requestFingerprint,
                 () -> selected.provider().generateVideo(selected.target(), request, assets),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputUnits(), response.outputUnits())
         );
+    }
+
+    private static void validateVideoParameters(
+            ModelCallTarget target,
+            VideoGenerationRequest request
+    ) {
+        Object rawOptions = target.settings().get("parameterOptions");
+        if (!(rawOptions instanceof Map<?, ?> options)) return;
+
+        validateVideoOption(
+                target,
+                "durationSeconds",
+                request.durationSeconds(),
+                options.get("durationSeconds")
+        );
+        validateVideoOption(
+                target,
+                "aspectRatio",
+                request.aspectRatio(),
+                options.get("aspectRatio")
+        );
+        validateVideoOption(
+                target,
+                "resolution",
+                request.resolution(),
+                options.get("resolution")
+        );
+    }
+
+    private static void validateVideoReferenceImageLimit(
+            ModelCallTarget target,
+            VideoGenerationRequest request
+    ) {
+        Object configured = target.settings().get("maxReferenceImages");
+        if (configured == null) return;
+        int maximum;
+        try {
+            maximum = configured instanceof Number number
+                    ? number.intValue()
+                    : Integer.parseInt(configured.toString());
+        } catch (NumberFormatException exception) {
+            throw new ModelProviderException(
+                    "MODEL_CONFIGURATION_INVALID",
+                    "The selected video deployment has an invalid reference image limit",
+                    false,
+                    exception
+            );
+        }
+        maximum = Math.max(0, maximum);
+        int referenceCount = request.inputAssetIds().size();
+        if (referenceCount <= maximum) return;
+
+        int frameCount = metadataInt(request.metadata(), "frameInputCount");
+        if (frameCount > maximum) {
+            throw new ModelProviderException(
+                    "MODEL_FRAME_INPUT_NOT_SUPPORTED",
+                    maximum == 0
+                            ? "The selected video deployment does not support first or last frame images"
+                            : "The selected video deployment accepts at most "
+                            + maximum + " frame image",
+                    false
+            );
+        }
+        throw new ModelProviderException(
+                "MODEL_REFERENCE_IMAGE_LIMIT_EXCEEDED",
+                "The selected video deployment accepts at most "
+                        + maximum + " reference images",
+                false
+        );
+    }
+
+    private static int metadataInt(Map<String, Object> metadata, String key) {
+        Object value = metadata == null ? null : metadata.get(key);
+        if (value instanceof Number number) return Math.max(0, number.intValue());
+        if (value == null) return 0;
+        try {
+            return Math.max(0, Integer.parseInt(value.toString()));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    private static void validateVideoOption(
+            ModelCallTarget target,
+            String field,
+            Object requested,
+            Object rawAllowed
+    ) {
+        if (requested == null || !(rawAllowed instanceof List<?> allowed)) return;
+        String requestedValue = requested.toString();
+        boolean supported = allowed.stream()
+                .filter(value -> value != null)
+                .map(Object::toString)
+                .anyMatch(requestedValue::equals);
+        if (!supported) {
+            throw new ModelProviderException(
+                    "PROVIDER_VIDEO_PARAMETER_UNSUPPORTED",
+                    "The selected video deployment does not support "
+                            + field + "=" + requestedValue
+                            + " for " + target.providerModel(),
+                    false
+            );
+        }
+    }
+
+    private VideoGenerationResponse invokeResumableVideo(
+            VideoGenerationRequest request,
+            ProviderTarget selected,
+            List<ModelAsset> assets,
+            String requestFingerprint
+    ) {
+        ProviderInvocationEntity invocation =
+                invocationRepository
+                        .findFirstByRunIdAndInvocationScopeAndCapabilityAndDeploymentCodeAndRequestFingerprintAndProviderRequestIdIsNotNullOrderByStartedAtDesc(
+                                request.runId(),
+                                ProviderInvocationScope.TASK_RUN,
+                                ModelCapability.VIDEO_GENERATION.name(),
+                                selected.target().deploymentCode(),
+                                requestFingerprint
+                        )
+                        .orElseGet(() -> {
+                            ProviderInvocationEntity created = new ProviderInvocationEntity(
+                                    UUID.randomUUID(),
+                                    request.tenantId(),
+                                    request.runId(),
+                                    ProviderInvocationScope.TASK_RUN,
+                                    ModelCapability.VIDEO_GENERATION.name(),
+                                    selected.target().providerCode(),
+                                    selected.target().deploymentCode(),
+                                    request.modelAlias(),
+                                    requestFingerprint,
+                                    clock.instant()
+                            );
+                            created.markSubmitting();
+                            return invocationRepository.saveAndFlush(created);
+                        });
+
+        String existingRequestId = invocation.getProviderRequestId();
+        phaseService.update(
+                request.runId(),
+                existingRequestId == null || existingRequestId.isBlank()
+                        ? "SUBMITTING"
+                        : phaseForInvocation(invocation.getStatus())
+        );
+
+        VideoGenerationLifecycleListener listener = new VideoGenerationLifecycleListener() {
+            @Override
+            public void onSubmitted(
+                    String providerRequestId,
+                    String providerModel,
+                    Map<String, Object> providerState
+            ) {
+                invocation.submitted(
+                        providerModel,
+                        providerRequestId,
+                        providerState,
+                        clock.instant()
+                );
+                invocationRepository.saveAndFlush(invocation);
+                phaseService.update(request.runId(), "GENERATING");
+            }
+
+            @Override
+            public void onPhase(String phase, Map<String, Object> providerState) {
+                invocation.phase(phase, providerState, clock.instant());
+                invocationRepository.saveAndFlush(invocation);
+                phaseService.update(request.runId(), phaseForInvocation(phase));
+            }
+        };
+
+        try {
+            VideoGenerationResponse response = selected.provider().generateVideoResumable(
+                    selected.target(),
+                    request,
+                    assets,
+                    existingRequestId,
+                    listener
+            );
+            invocation.succeed(
+                    response.model(),
+                    response.providerRequestId(),
+                    response.inputUnits(),
+                    response.outputUnits(),
+                    clock.instant()
+            );
+            invocationRepository.saveAndFlush(invocation);
+            return response;
+        } catch (ModelProviderException exception) {
+            if (invocation.getProviderRequestId() != null
+                    && !invocation.getProviderRequestId().isBlank()
+                    && exception.retryable()) {
+                invocation.interrupted(exception.code(), clock.instant());
+                invocationRepository.saveAndFlush(invocation);
+                throw exception;
+            }
+            if ((invocation.getProviderRequestId() == null
+                    || invocation.getProviderRequestId().isBlank())
+                    && exception.retryable()) {
+                invocation.submissionUnknown(exception.code(), clock.instant());
+                invocationRepository.saveAndFlush(invocation);
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_SUBMISSION_UNKNOWN",
+                        "Video submission status is unknown; automatic resubmission is disabled",
+                        false,
+                        exception
+                );
+            }
+            invocation.fail(exception.code(), clock.instant());
+            invocationRepository.saveAndFlush(invocation);
+            throw exception;
+        } catch (RuntimeException exception) {
+            if (invocation.getProviderRequestId() != null
+                    && !invocation.getProviderRequestId().isBlank()) {
+                invocation.interrupted("PROVIDER_UNEXPECTED_ERROR", clock.instant());
+                invocationRepository.saveAndFlush(invocation);
+                throw new ModelProviderException(
+                        "PROVIDER_UNEXPECTED_ERROR",
+                        "Video provider failed after submission",
+                        true,
+                        exception
+                );
+            }
+            invocation.submissionUnknown("PROVIDER_UNEXPECTED_ERROR", clock.instant());
+            invocationRepository.saveAndFlush(invocation);
+            throw new ModelProviderException(
+                    "PROVIDER_VIDEO_SUBMISSION_UNKNOWN",
+                    "Video submission status is unknown; automatic resubmission is disabled",
+                    false,
+                    exception
+            );
+        }
+    }
+
+    private static String phaseForInvocation(String value) {
+        if ("DOWNLOADING".equalsIgnoreCase(value)) return "DOWNLOADING";
+        if ("PERSISTING".equalsIgnoreCase(value)) return "PERSISTING";
+        if ("SUBMITTING".equalsIgnoreCase(value)) return "SUBMITTING";
+        return "GENERATING";
     }
 
     private ProviderTarget requireProvider(

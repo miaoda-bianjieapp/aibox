@@ -18,17 +18,20 @@ public class RunExecutionCoordinator {
     private final FeatureRegistry featureRegistry;
     private final ModelGateway modelGateway;
     private final RunOutputService outputService;
+    private final RunExecutionPhaseService phaseService;
 
     public RunExecutionCoordinator(
             RunExecutionStateService stateService,
             FeatureRegistry featureRegistry,
             ModelGateway modelGateway,
-            RunOutputService outputService
+            RunOutputService outputService,
+            RunExecutionPhaseService phaseService
     ) {
         this.stateService = stateService;
         this.featureRegistry = featureRegistry;
         this.modelGateway = modelGateway;
         this.outputService = outputService;
+        this.phaseService = phaseService;
     }
 
     public boolean execute(UUID runId) {
@@ -53,6 +56,7 @@ public class RunExecutionCoordinator {
         } else {
             result = handler.execute(context, modelGateway);
         }
+        phaseService.update(runId, "PERSISTING");
         stateService.succeed(runId, result.artifacts());
         return true;
     }

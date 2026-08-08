@@ -1,0 +1,27 @@
+{
+  "pageKey": "video_generate",
+  "order": [
+    "mode",
+    "prompt",
+    "script",
+    "durationSeconds",
+    "aspectRatio",
+    "resolution"
+  ],
+  "widgets": {
+    "mode": "segmented",
+    "prompt": "textarea",
+    "script": "textarea",
+    "durationSeconds": "select",
+    "aspectRatio": "select",
+    "resolution": "select"
+  },
+  "modelSelectors": {
+    "TEXT_GENERATION": {"label": "分镜文本模型", "widget": "dropdown"},
+    "IMAGE_GENERATION": {"label": "资产图片模型", "widget": "dropdown"},
+    "VIDEO_GENERATION": {"label": "视频模型", "widget": "dropdown"}
+  },
+  "feeNotice": "剧本拆分、资产生成和最终视频生成可能分别产生模型费用。",
+  "submitLabel": "生成视频",
+  "revisionSubmitLabel": "生成新版本"
+}

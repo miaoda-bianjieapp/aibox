@@ -10,6 +10,7 @@ import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.document.DocumentKnowledgeService;
+import com.aibox.platform.execution.RunExecutionPhaseService;
 import com.aibox.platform.model.ModelRoutingService;
 import org.junit.jupiter.api.Test;
 
@@ -109,7 +110,8 @@ class RoutingModelGatewayDocumentQaTest {
                 mock(AssetService.class),
                 knowledgeService,
                 routingService,
-                Clock.fixed(Instant.parse("2026-07-25T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-25T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
         DocumentQuestionRequest request = new DocumentQuestionRequest(
                 UUID.randomUUID(),

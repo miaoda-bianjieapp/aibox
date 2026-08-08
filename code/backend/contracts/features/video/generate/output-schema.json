@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "format": {"enum": ["video_storyboard", "image", "video"]},
+    "script": {"type": "string"},
+    "shots": {"type": "array"},
+    "assetId": {"type": "string", "format": "uuid"},
+    "assetIds": {
+      "type": "array",
+      "items": {"type": "string", "format": "uuid"}
+    }
+  },
+  "additionalProperties": true
+}

@@ -401,6 +401,111 @@ void main() {
     );
   });
 
+  test('video parameter enums follow the selected video deployment', () {
+    final feature = FeatureDetail.fromJson({
+      'code': 'video.generate',
+      'displayName': 'AI video',
+      'description': '',
+      'version': 1,
+      'resultType': 'video',
+      'rendererKey': 'video_generate',
+      'executionMode': 'ASYNC',
+      'inputSchema': {
+        'type': 'object',
+        'properties': {
+          'durationSeconds': {
+            'type': 'integer',
+            'enum': [3, 4, 5, 8, 10, 12, 15, 16, 18, 20],
+          },
+          'aspectRatio': {
+            'type': 'string',
+            'enum': ['16:9', '9:16'],
+          },
+          'resolution': {
+            'type': 'string',
+            'enum': ['480p', '720p', '1080p'],
+          },
+        },
+      },
+      'uiSchema': const <String, Object?>{},
+      'outputSchema': const <String, Object?>{},
+      'config': const <String, Object?>{},
+      'modelPolicies': [
+        {
+          'capability': 'VIDEO_GENERATION',
+          'defaultModelCode': 'seedance',
+          'allowUserSelection': true,
+          'options': [
+            {
+              'code': 'seedance',
+              'displayName': 'Seedance 2.0',
+              'description': '',
+              'isDefault': true,
+              'sourceType': 'RELAY',
+              'sourceName': 'New API',
+              'maxReferenceImages': 1,
+              'parameterOptions': {
+                'durationSeconds': ['4', '8', '12', '15'],
+                'aspectRatio': ['16:9', '9:16'],
+                'resolution': ['720p'],
+              },
+            },
+            {
+              'code': 'sora',
+              'displayName': 'Sora 2',
+              'description': '',
+              'isDefault': false,
+              'sourceType': 'RELAY',
+              'sourceName': 'Codex2API',
+              'maxReferenceImages': 1,
+              'parameterOptions': {
+                'durationSeconds': ['16', '20'],
+                'aspectRatio': ['16:9', '9:16'],
+                'resolution': ['720p'],
+              },
+            },
+            {
+              'code': 'agnes',
+              'displayName': 'Agnes Video V2.0',
+              'description': '',
+              'isDefault': false,
+              'sourceType': 'OFFICIAL',
+              'sourceName': 'Agnes AI Official',
+              'maxReferenceImages': 0,
+              'parameterOptions': {
+                'durationSeconds': ['3', '5', '10', '18'],
+                'aspectRatio': ['16:9', '9:16'],
+                'resolution': ['480p', '720p', '1080p'],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      feature
+          .enumValuesFor('durationSeconds', {'VIDEO_GENERATION': 'seedance'}),
+      ['4', '8', '12', '15'],
+    );
+    expect(
+      feature.enumValuesFor('durationSeconds', {'VIDEO_GENERATION': 'sora'}),
+      ['16', '20'],
+    );
+    expect(
+      feature.enumValuesFor('resolution', {'VIDEO_GENERATION': 'seedance'}),
+      ['720p'],
+    );
+    expect(
+      feature.enumValuesFor('durationSeconds', {'VIDEO_GENERATION': 'agnes'}),
+      ['3', '5', '10', '18'],
+    );
+    expect(
+      feature.enumValuesFor('resolution', {'VIDEO_GENERATION': 'agnes'}),
+      ['480p', '720p', '1080p'],
+    );
+  });
+
   test('feature detail exposes model selector presentation options', () {
     final feature = FeatureDetail.fromJson({
       'code': 'audio.transcription',

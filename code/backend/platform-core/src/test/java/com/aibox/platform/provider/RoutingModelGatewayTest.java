@@ -21,8 +21,10 @@ import com.aibox.feature.spi.TextToSpeechRequest;
 import com.aibox.feature.spi.TextToSpeechResponse;
 import com.aibox.feature.spi.VideoGenerationRequest;
 import com.aibox.feature.spi.VideoGenerationResponse;
+import com.aibox.feature.spi.VideoGenerationLifecycleListener;
 import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.document.DocumentKnowledgeService;
+import com.aibox.platform.execution.RunExecutionPhaseService;
 import com.aibox.platform.model.ModelRoutingService;
 import org.junit.jupiter.api.Test;
 
@@ -31,6 +33,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -40,6 +43,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class RoutingModelGatewayTest {
@@ -60,7 +64,8 @@ class RoutingModelGatewayTest {
                 mock(AssetService.class),
                 mock(DocumentKnowledgeService.class),
                 routingService,
-                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         TextGenerationResponse response = gateway.generateText(new TextGenerationRequest(
@@ -99,7 +104,8 @@ class RoutingModelGatewayTest {
                 mock(AssetService.class),
                 mock(DocumentKnowledgeService.class),
                 routingService,
-                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         gateway.generatePromptOptimization(new TextGenerationRequest(
@@ -149,7 +155,8 @@ class RoutingModelGatewayTest {
                 mock(AssetService.class),
                 mock(DocumentKnowledgeService.class),
                 routingService,
-                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
         List<String> deltas = new java.util.ArrayList<>();
 
@@ -181,7 +188,8 @@ class RoutingModelGatewayTest {
         RoutingModelGateway gateway = new RoutingModelGateway(
                 List.of(new TestProvider()), repository, mock(AssetService.class),
                 mock(DocumentKnowledgeService.class), routingService,
-                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         TextToSpeechResponse speech = gateway.synthesizeSpeech(new TextToSpeechRequest(
@@ -196,6 +204,201 @@ class RoutingModelGatewayTest {
         assertThat(speech.audio().content()).isNotEmpty();
         assertThat(video.videos()).hasSize(1);
         verify(repository, times(4)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
+    void rejectsVideoParametersOutsideTheSelectedDeploymentConstraint() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        AssetService assetService = mock(AssetService.class);
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.VIDEO_GENERATION,
+                "video.default",
+                "seedance-video"
+        )).thenReturn(List.of(new ModelCallTarget(
+                "seedance-video",
+                "test",
+                "doubao-seedance-2-0-260128",
+                ModelCapability.VIDEO_GENERATION,
+                Map.of(
+                        "parameterOptions", Map.of(
+                                "durationSeconds", List.of("4", "8", "12", "15"),
+                                "aspectRatio", List.of("16:9", "9:16"),
+                                "resolution", List.of("720p")
+                        )
+                )
+        )));
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(new TestProvider()),
+                repository,
+                assetService,
+                mock(DocumentKnowledgeService.class),
+                routingService,
+                Clock.fixed(Instant.parse("2026-08-06T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
+        );
+
+        assertThatThrownBy(() -> gateway.generateVideo(new VideoGenerationRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "video.default",
+                "seedance-video",
+                "sunrise",
+                List.of(),
+                16,
+                "16:9",
+                "720p",
+                1,
+                Map.of()
+        )))
+                .isInstanceOf(com.aibox.feature.spi.ModelProviderException.class)
+                .extracting(exception ->
+                        ((com.aibox.feature.spi.ModelProviderException) exception).code())
+                .isEqualTo("PROVIDER_VIDEO_PARAMETER_UNSUPPORTED");
+
+        verifyNoInteractions(repository, assetService);
+    }
+
+    @Test
+    void rejectsFrameInputsBeforeProviderInvocationWhenDeploymentAllowsOnlyOneImage() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        AssetService assetService = mock(AssetService.class);
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.VIDEO_GENERATION,
+                "video.default",
+                "single-frame-video"
+        )).thenReturn(List.of(new ModelCallTarget(
+                "single-frame-video",
+                "test",
+                "single-frame-model",
+                ModelCapability.VIDEO_GENERATION,
+                Map.of("maxReferenceImages", 1)
+        )));
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(new TestProvider()),
+                repository,
+                assetService,
+                mock(DocumentKnowledgeService.class),
+                routingService,
+                Clock.fixed(Instant.parse("2026-08-08T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
+        );
+
+        UUID first = UUID.randomUUID();
+        UUID last = UUID.randomUUID();
+        assertThatThrownBy(() -> gateway.generateVideo(new VideoGenerationRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "video.default",
+                "single-frame-video",
+                "transition",
+                List.of(first, last),
+                8,
+                "16:9",
+                "720p",
+                1,
+                Map.of(
+                        "firstFrameAssetId", first.toString(),
+                        "lastFrameAssetId", last.toString(),
+                        "frameInputCount", 2
+                )
+        )))
+                .isInstanceOf(com.aibox.feature.spi.ModelProviderException.class)
+                .extracting(exception ->
+                        ((com.aibox.feature.spi.ModelProviderException) exception).code())
+                .isEqualTo("MODEL_FRAME_INPUT_NOT_SUPPORTED");
+
+        verifyNoInteractions(repository, assetService);
+    }
+
+    @Test
+    void resumesSubmittedVideoInvocationWithoutCreatingANewProviderRequest() {
+        UUID runId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-08-06T00:00:00Z");
+        ProviderInvocationEntity existing = new ProviderInvocationEntity(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                runId,
+                ProviderInvocationScope.TASK_RUN,
+                ModelCapability.VIDEO_GENERATION.name(),
+                "test",
+                "test-video",
+                "video.default",
+                "fingerprint",
+                now
+        );
+        existing.submitted("provider-video", "video-existing", Map.of(), now);
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository
+                .findFirstByRunIdAndInvocationScopeAndCapabilityAndDeploymentCodeAndRequestFingerprintAndProviderRequestIdIsNotNullOrderByStartedAtDesc(
+                        any(), any(), any(), any(), any()
+                ))
+                .thenReturn(Optional.of(existing));
+        when(repository.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
+        AtomicReference<String> resumedRequestId = new AtomicReference<>();
+        ModelProviderClient provider = new TestProvider() {
+            @Override
+            public boolean supportsResumableVideo(ModelCallTarget target) {
+                return true;
+            }
+
+            @Override
+            public VideoGenerationResponse generateVideoResumable(
+                    ModelCallTarget target,
+                    VideoGenerationRequest request,
+                    List<ModelAsset> assets,
+                    String providerRequestId,
+                    VideoGenerationLifecycleListener listener
+            ) {
+                resumedRequestId.set(providerRequestId);
+                listener.onPhase("DOWNLOADING", Map.of("status", "done"));
+                return new VideoGenerationResponse(
+                        List.of(new GeneratedVideo(
+                                null, "video.mp4", "video/mp4", new byte[]{1}
+                        )),
+                        "test",
+                        "provider-video",
+                        providerRequestId,
+                        null,
+                        null
+                );
+            }
+        };
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.VIDEO_GENERATION, "video.default", null
+        )).thenReturn(List.of(target("test-video", ModelCapability.VIDEO_GENERATION)));
+        RunExecutionPhaseService phaseService = mock(RunExecutionPhaseService.class);
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(provider),
+                repository,
+                mock(AssetService.class),
+                mock(DocumentKnowledgeService.class),
+                routingService,
+                Clock.fixed(now, ZoneOffset.UTC),
+                phaseService
+        );
+
+        VideoGenerationResponse response = gateway.generateVideo(new VideoGenerationRequest(
+                UUID.randomUUID(),
+                runId,
+                "video.default",
+                null,
+                "sunrise",
+                List.of(),
+                8,
+                "16:9",
+                "720p",
+                1,
+                Map.of()
+        ));
+
+        assertThat(resumedRequestId.get()).isEqualTo("video-existing");
+        assertThat(response.providerRequestId()).isEqualTo("video-existing");
+        verify(repository, times(2)).saveAndFlush(existing);
+        verify(phaseService).update(runId, "GENERATING");
+        verify(phaseService).update(runId, "DOWNLOADING");
     }
 
     @Test
@@ -240,7 +443,8 @@ class RoutingModelGatewayTest {
                 assetService,
                 mock(DocumentKnowledgeService.class),
                 routingService,
-                Clock.fixed(Instant.parse("2026-08-01T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-08-01T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         AudioEnhancementResponse response = gateway.enhanceAudio(new AudioEnhancementRequest(
@@ -310,7 +514,8 @@ class RoutingModelGatewayTest {
                 assetService,
                 mock(DocumentKnowledgeService.class),
                 routingService,
-                Clock.fixed(Instant.parse("2026-07-18T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-18T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         gateway.generateImage(new ImageGenerationRequest(
@@ -375,7 +580,8 @@ class RoutingModelGatewayTest {
                 assetService,
                 mock(DocumentKnowledgeService.class),
                 routingService,
-                Clock.fixed(Instant.parse("2026-07-25T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-25T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         gateway.generateMultimodalText(new MultimodalTextGenerationRequest(
@@ -416,7 +622,8 @@ class RoutingModelGatewayTest {
                 mock(AssetService.class),
                 mock(DocumentKnowledgeService.class),
                 routingService,
-                Clock.fixed(Instant.parse("2026-07-24T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-24T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         assertThatThrownBy(() -> gateway.generateImage(new ImageGenerationRequest(
@@ -452,7 +659,8 @@ class RoutingModelGatewayTest {
         RoutingModelGateway gateway = new RoutingModelGateway(
                 List.of(new TestProvider()), repository, assetService,
                 mock(DocumentKnowledgeService.class), routingService,
-                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC)
+                Clock.fixed(Instant.parse("2026-07-14T00:00:00Z"), ZoneOffset.UTC),
+                mock(RunExecutionPhaseService.class)
         );
 
         ImageExpansionResponse response = gateway.expandImage(new ImageExpansionRequest(
