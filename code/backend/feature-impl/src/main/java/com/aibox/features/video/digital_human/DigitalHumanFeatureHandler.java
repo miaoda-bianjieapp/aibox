@@ -45,8 +45,8 @@ public final class DigitalHumanFeatureHandler implements FeatureHandler {
     );
     private static final Set<String> AUDIO_SOURCES = Set.of("TEXT_TO_SPEECH", "UPLOAD_AUDIO");
     private static final Set<String> VOICE_MODES = Set.of("TTS", "VIDEO_NATIVE");
-    private static final Set<String> ASPECT_RATIOS = Set.of("9:16", "16:9", "21:9", "1:1");
-    private static final Set<String> RESOLUTIONS = Set.of("720p", "1080p");
+    private static final Set<String> ASPECT_RATIOS = Set.of("9:16", "16:9", "21:9", "1:1", "SOURCE");
+    private static final Set<String> RESOLUTIONS = Set.of("720p", "1080p", "SOURCE");
     private static final Set<String> VOICES = Set.of("science_female", "gentle_female");
     private static final Set<String> EMOTIONS = Set.of("natural");
     private static final Set<String> IMAGE_TYPES = Set.of("image/png", "image/jpeg", "image/webp");
@@ -180,11 +180,20 @@ public final class DigitalHumanFeatureHandler implements FeatureHandler {
             validateAsset(context, audioId, AUDIO_TYPES, "audioFile", "音频文件");
         }
 
-        enumValue(context, "aspectRatio", ASPECT_RATIOS);
-        enumValue(context, "resolution", RESOLUTIONS);
-        int durationSeconds = intValue(context, "durationSeconds", 5);
-        if (durationSeconds < 1 || durationSeconds > 60) {
-            throw new FeatureValidationException("durationSeconds", "视频时长必须在 1 到 60 秒之间");
+        String aspectRatio = enumValue(context, "aspectRatio", ASPECT_RATIOS);
+        String resolution = enumValue(context, "resolution", RESOLUTIONS);
+        if (DID_VIDEO_DEPLOYMENT.equals(videoDeployment)
+                && (!"SOURCE".equals(aspectRatio) || !"SOURCE".equals(resolution))) {
+            throw new FeatureValidationException("aspectRatio", "D-ID Talks 的比例和分辨率由人物图片与 Provider 决定，不能手动选择");
+        }
+        if (!DID_VIDEO_DEPLOYMENT.equals(videoDeployment)
+                && ("SOURCE".equals(aspectRatio) || "SOURCE".equals(resolution))) {
+            throw new FeatureValidationException("aspectRatio", "当前模型不支持 SOURCE 比例或分辨率，请选择模型支持的具体值");
+        }
+        int durationSeconds = durationSeconds(context, audioSource, stringValue(context, "script"));
+        int maxDuration = maxDurationSeconds(videoDeployment);
+        if (durationSeconds < 1 || durationSeconds > maxDuration) {
+            throw new FeatureValidationException("durationSeconds", "当前音频或文案预计时长超过模型上限 " + maxDuration + " 秒");
         }
         int outputCount = intValue(context, "outputCount", 1);
         if (outputCount != 1) throw new FeatureValidationException("outputCount", "每次只能生成 1 条视频");
@@ -294,14 +303,23 @@ public final class DigitalHumanFeatureHandler implements FeatureHandler {
             String audioSource,
             String script
     ) {
-        int requested = intValue(context, "durationSeconds", 5);
-        if ("TEXT_TO_SPEECH".equals(audioSource)
-                && "VIDEO_NATIVE".equals(stringValue(context, "voiceGenerationMode"))) {
+        if ("TEXT_TO_SPEECH".equals(audioSource)) {
+            double speed = numberValue(context, "speed", 1.0);
             int characters = script.codePointCount(0, script.length());
-            int estimated = (int) Math.ceil(characters / 4.0);
-            return Math.max(1, Math.min(60, Math.max(requested, estimated)));
+            int estimated = (int) Math.ceil(characters / (4.0 * Math.max(0.5, Math.min(2.0, speed))));
+            return Math.max(1, estimated);
         }
-        return Math.max(1, Math.min(60, requested));
+        int requested = intValue(context, "durationSeconds", 0);
+        return Math.max(0, requested);
+    }
+
+    private static int maxDurationSeconds(String deployment) {
+        return switch (deployment) {
+            case "openai2api-sora-2-video" -> 12;
+            case "openai2api-grok-imagine-video-1-5-video" -> 15;
+            case "agnes-ai-video-v2-0-video" -> 18;
+            default -> 60;
+        };
     }
 
     private static String buildPrompt(FeatureExecutionContext context, String script) {

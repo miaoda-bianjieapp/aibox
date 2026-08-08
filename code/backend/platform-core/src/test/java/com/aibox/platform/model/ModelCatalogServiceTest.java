@@ -150,6 +150,26 @@ class ModelCatalogServiceTest {
     }
 
     @Test
+    void exposesOnlyPublicParameterConstraints() {
+        ModelDeploymentEntity deployment = availableDeployment("model-a");
+        when(deployment.getConfig()).thenReturn(Map.of(
+                "parameterConstraints", Map.of(
+                        "speed", Map.of("min", 0.5, "max", 2.0, "step", 0.05),
+                        "voice", Map.of("mode", "catalog", "providerVoiceId", "secret")
+                ),
+                "providerSecret", "must-not-leak"
+        ));
+
+        ModelCatalogService.ModelPolicyView policy = service.getFeaturePolicy("writing.draft");
+
+        assertThat(policy.options().get(0).parameterConstraints())
+                .containsEntry("speed", Map.of("min", 0.5, "max", 2.0, "step", 0.05))
+                .containsEntry("voice", Map.of("mode", "catalog"));
+        assertThat(policy.options().get(0).parameterConstraints())
+                .doesNotContainKey("providerSecret");
+    }
+
+    @Test
     void mapsTheLegacyUnsupportedReferenceImageFlagToZero() {
         ModelDeploymentEntity deployment = availableDeployment("model-a");
         when(deployment.getConfig()).thenReturn(Map.of(

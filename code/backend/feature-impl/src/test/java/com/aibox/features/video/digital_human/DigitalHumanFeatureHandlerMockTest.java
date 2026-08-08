@@ -366,8 +366,8 @@ class DigitalHumanFeatureHandlerMockTest {
                         Map.entry("voice", "gentle_female"),
                         Map.entry("speed", 1.0),
                         Map.entry("emotion", "natural"),
-                        Map.entry("aspectRatio", "9:16"),
-                        Map.entry("resolution", "720p"),
+                        Map.entry("aspectRatio", "SOURCE"),
+                        Map.entry("resolution", "SOURCE"),
                         Map.entry("durationSeconds", 5),
                         Map.entry("outputCount", 1),
                         Map.entry("fps", 30)
@@ -406,8 +406,8 @@ class DigitalHumanFeatureHandlerMockTest {
                         Map.entry("script", "Do not enable native voice yet"),
                         Map.entry("audioConfirmed", true),
                         Map.entry("voiceGenerationMode", "VIDEO_NATIVE"),
-                        Map.entry("aspectRatio", "9:16"),
-                        Map.entry("resolution", "720p"),
+                        Map.entry("aspectRatio", "SOURCE"),
+                        Map.entry("resolution", "SOURCE"),
                         Map.entry("durationSeconds", 5),
                         Map.entry("outputCount", 1),
                         Map.entry("fps", 30)
@@ -422,6 +422,97 @@ class DigitalHumanFeatureHandlerMockTest {
                 FeatureValidationException.class,
                 () -> new DigitalHumanFeatureHandler().execute(context, request -> {
                     throw new AssertionError("D-ID native voice must be rejected before provider invocation");
+                })
+        );
+    }
+
+    @Test
+    void didRejectsTextDurationAboveProviderLimitBeforeCallingModels() {
+        UUID avatarId = UUID.randomUUID();
+        ModelGateway gateway = new ModelGateway() {
+            @Override
+            public TextGenerationResponse generateText(TextGenerationRequest request) {
+                throw new AssertionError("text generation must not be called");
+            }
+
+            @Override
+            public TextToSpeechResponse synthesizeSpeech(TextToSpeechRequest request) {
+                throw new AssertionError("TTS must be rejected before provider invocation");
+            }
+
+            @Override
+            public VideoGenerationResponse generateVideo(VideoGenerationRequest request) {
+                throw new AssertionError("video generation must be rejected before provider invocation");
+            }
+        };
+        FeatureExecutionContext context = new FeatureExecutionContext(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                DigitalHumanFeatureHandler.FEATURE_CODE, 16,
+                Map.ofEntries(
+                        Map.entry("avatarSource", "UPLOAD"),
+                        Map.entry("avatarImage", avatarId.toString()),
+                        Map.entry("avatarConfirmed", true),
+                        Map.entry("audioSource", "TEXT_TO_SPEECH"),
+                        Map.entry("script", "x".repeat(300)),
+                        Map.entry("audioConfirmed", true),
+                        Map.entry("voiceGenerationMode", "TTS"),
+                        Map.entry("voice", "gentle_female"),
+                        Map.entry("speed", 0.5),
+                        Map.entry("emotion", "natural"),
+                        Map.entry("aspectRatio", "SOURCE"),
+                        Map.entry("resolution", "SOURCE"),
+                        Map.entry("durationSeconds", 1),
+                        Map.entry("outputCount", 1),
+                        Map.entry("fps", 30)
+                ),
+                List.of(avatarId),
+                List.of(new InputAssetReference(avatarId, "avatar.png", "image/png", 1024)),
+                Map.of(
+                        "TEXT_TO_SPEECH", "mock-tts-model",
+                        "VIDEO_GENERATION", "did-talks-v1-video"
+                ),
+                "did-talks-v1-video", null
+        );
+
+        assertThrows(
+                FeatureValidationException.class,
+                () -> new DigitalHumanFeatureHandler().execute(context, gateway)
+        );
+    }
+
+    @Test
+    void rejectsEmptyTextAudioBeforeProviderInvocation() {
+        UUID avatarId = UUID.randomUUID();
+        FeatureExecutionContext context = new FeatureExecutionContext(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                DigitalHumanFeatureHandler.FEATURE_CODE, 16,
+                Map.ofEntries(
+                        Map.entry("avatarSource", "UPLOAD"),
+                        Map.entry("avatarImage", avatarId.toString()),
+                        Map.entry("avatarConfirmed", true),
+                        Map.entry("audioSource", "TEXT_TO_SPEECH"),
+                        Map.entry("script", ""),
+                        Map.entry("audioConfirmed", true),
+                        Map.entry("voiceGenerationMode", "TTS"),
+                        Map.entry("voice", "gentle_female"),
+                        Map.entry("speed", 1.0),
+                        Map.entry("emotion", "natural"),
+                        Map.entry("aspectRatio", "SOURCE"),
+                        Map.entry("resolution", "SOURCE"),
+                        Map.entry("durationSeconds", 1),
+                        Map.entry("outputCount", 1),
+                        Map.entry("fps", 30)
+                ),
+                List.of(avatarId),
+                List.of(new InputAssetReference(avatarId, "avatar.png", "image/png", 1024)),
+                Map.of("VIDEO_GENERATION", "did-talks-v1-video"),
+                "did-talks-v1-video", null
+        );
+
+        assertThrows(
+                FeatureValidationException.class,
+                () -> new DigitalHumanFeatureHandler().execute(context, request -> {
+                    throw new AssertionError("empty script must be rejected before provider invocation");
                 })
         );
     }

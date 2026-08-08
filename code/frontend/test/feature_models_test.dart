@@ -350,6 +350,12 @@ void main() {
               'parameterOptions': {
                 'voice': ['science_female', 'gentle_female'],
               },
+              'parameterConstraints': {
+                'speed': {'min': 0.5, 'max': 2.0, 'step': 0.05},
+                'aspectRatio': {
+                  'allowedValues': ['1:1', '16:9', '9:16']
+                },
+              },
             },
           ],
         },
@@ -367,6 +373,16 @@ void main() {
     expect(
       feature.enumValuesFor('speed', {'TEXT_TO_SPEECH': 'gpt'}),
       ['slow', 'normal', 'fast'],
+    );
+    expect(
+      feature.modelOption('TEXT_TO_SPEECH', 'index')?.constraintsFor('speed'),
+      {'min': 0.5, 'max': 2.0, 'step': 0.05},
+    );
+    expect(
+      feature
+          .modelOption('TEXT_TO_SPEECH', 'index')
+          ?.allowedValues('aspectRatio'),
+      ['1:1', '16:9', '9:16'],
     );
     expect(
       feature.normalizedEnumValue(
@@ -707,6 +723,67 @@ void main() {
     expect(
       preview.spreadsheet?.sheets.single.rows.single.cells,
       ['华东', '42'],
+    );
+  });
+
+  test('model selectors can be placed beside their functional fields', () {
+    final feature = FeatureDetail.fromJson({
+      'code': 'video.digital_human',
+      'displayName': 'Digital human',
+      'description': '',
+      'version': 4,
+      'resultType': 'video',
+      'rendererKey': 'video',
+      'executionMode': 'ASYNC',
+      'inputSchema': {
+        'type': 'object',
+        'properties': const <String, Object?>{},
+      },
+      'uiSchema': {
+        'modelSelectorPlacement': {
+          'IMAGE_GENERATION': 'avatarPrompt',
+          'TEXT_TO_SPEECH': 'script',
+          'VIDEO_GENERATION': 'aspectRatio',
+        },
+        'modelSelectorVisibility': {
+          'IMAGE_GENERATION': {
+            'field': 'avatarSource',
+            'equals': 'AI_GENERATED',
+          },
+          'TEXT_TO_SPEECH': {
+            'all': [
+              {'field': 'audioSource', 'equals': 'TEXT_TO_SPEECH'},
+              {'field': 'voiceGenerationMode', 'equals': 'TTS'},
+            ],
+          },
+        },
+      },
+      'outputSchema': const <String, Object?>{},
+      'config': const <String, Object?>{},
+      'modelPolicies': const <Object?>[],
+    });
+
+    expect(feature.modelSelectorAnchor('IMAGE_GENERATION'), 'avatarPrompt');
+    expect(feature.modelSelectorAnchor('TEXT_TO_SPEECH'), 'script');
+    expect(feature.modelSelectorAnchor('VIDEO_GENERATION'), 'aspectRatio');
+    expect(
+      feature.isModelSelectorVisible('IMAGE_GENERATION', {
+        'avatarSource': 'AI_GENERATED',
+      }),
+      isTrue,
+    );
+    expect(
+      feature.isModelSelectorVisible('IMAGE_GENERATION', {
+        'avatarSource': 'UPLOAD',
+      }),
+      isFalse,
+    );
+    expect(
+      feature.isModelSelectorVisible('TEXT_TO_SPEECH', {
+        'audioSource': 'TEXT_TO_SPEECH',
+        'voiceGenerationMode': 'VIDEO_NATIVE',
+      }),
+      isFalse,
     );
   });
 }
