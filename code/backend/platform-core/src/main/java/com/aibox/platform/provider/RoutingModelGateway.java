@@ -616,13 +616,15 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
         ProviderTarget selected = requireProvider(
                 ModelCapability.VIDEO_GENERATION, request.modelAlias(), request.deploymentCode()
         );
-        List<ModelAsset> assets = request.inputAssetIds().stream().map(assetService::readForModel).toList();
+        List<ModelAsset> assets = new ArrayList<>(request.inputAssetIds().stream().map(assetService::readForModel).toList());
+        assets.addAll(request.inlineInputAssets());
         return invoke(
                 request.tenantId(), request.runId(), ModelCapability.VIDEO_GENERATION, request.modelAlias(),
                 selected, fingerprint(request.modelAlias(), selected.target().deploymentCode(),
                         request.prompt(), request.inputAssetIds().toString(),
                         String.valueOf(request.durationSeconds()), request.aspectRatio(), request.resolution(),
-                        Integer.toString(request.count())),
+                        Integer.toString(request.count()),
+                    request.inlineInputAssets().stream().map(asset -> asset.fileName() + ":" + asset.content().length).toList().toString()),
                 () -> selected.provider().generateVideo(selected.target(), request, assets),
                 response -> new InvocationOutcome(response.model(), response.providerRequestId(),
                         response.inputUnits(), response.outputUnits())
@@ -700,7 +702,7 @@ public final class RoutingModelGateway implements ModelGateway, PromptOptimizati
             invocationRepository.save(invocation);
             return response;
         } catch (ModelProviderException exception) {
-            invocation.fail(exception.code(), clock.instant());
+            invocation.fail(exception.code(), exception.providerRequestId(), clock.instant());
             invocationRepository.save(invocation);
             throw exception;
         } catch (RuntimeException exception) {

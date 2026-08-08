@@ -135,9 +135,29 @@ public class ProviderInvocationEntity {
     }
 
     public void fail(String errorCode, Instant finishedAt) {
+        fail(errorCode, null, finishedAt);
+    }
+
+    public void fail(String errorCode, String providerRequestId, Instant finishedAt) {
         this.status = "FAILED";
         this.errorCode = errorCode;
+        if (providerRequestId != null && !providerRequestId.isBlank()) {
+            this.providerRequestId = providerRequestId.trim();
+        }
         this.finishedAt = finishedAt;
+    }
+
+
+    public String getProviderRequestId() {
+        return providerRequestId;
+    }
+
+    public String getErrorCode() {
+        return errorCode;
+    }
+
+    public String getStatus() {
+        return status;
     }
 
     public String getDeploymentCode() {

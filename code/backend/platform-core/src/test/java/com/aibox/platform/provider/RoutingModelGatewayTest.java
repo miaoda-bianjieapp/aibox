@@ -3,6 +3,7 @@ package com.aibox.platform.provider;
 import com.aibox.feature.spi.AudioEnhancementRequest;
 import com.aibox.feature.spi.AudioEnhancementResponse;
 import com.aibox.feature.spi.ModelProviderClient;
+import com.aibox.feature.spi.ModelProviderException;
 import com.aibox.feature.spi.ModelCallTarget;
 import com.aibox.feature.spi.ModelCapability;
 import com.aibox.feature.spi.GeneratedAudio;
@@ -76,6 +77,47 @@ class RoutingModelGatewayTest {
 
         assertThat(response.text()).isEqualTo("result");
         verify(repository, times(2)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
+    void recordsProviderRequestIdWhenAsyncVideoPollingFails() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        AtomicReference<ProviderInvocationEntity> savedInvocation = new AtomicReference<>();
+        when(repository.save(any())).thenAnswer(call -> {
+            ProviderInvocationEntity invocation = call.getArgument(0);
+            savedInvocation.set(invocation);
+            return invocation;
+        });
+        ModelProviderClient provider = new TestProvider() {
+            @Override
+            public VideoGenerationResponse generateVideo(
+                    ModelCallTarget target, VideoGenerationRequest request, List<ModelAsset> assets
+            ) {
+                throw new ModelProviderException(
+                        "PROVIDER_VIDEO_TIMEOUT", "poll timeout", false, null, "provider-task-1"
+                );
+            }
+        };
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.VIDEO_GENERATION, "video.default", "sora-video"
+        )).thenReturn(List.of(new ModelCallTarget(
+                "sora-video", "test", "sora-2", ModelCapability.VIDEO_GENERATION, Map.of()
+        )));
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(provider), repository, mock(AssetService.class),
+                mock(DocumentKnowledgeService.class), routingService,
+                Clock.fixed(Instant.parse("2026-08-06T07:00:00Z"), ZoneOffset.UTC)
+        );
+
+        assertThatThrownBy(() -> gateway.generateVideo(new VideoGenerationRequest(
+                UUID.randomUUID(), UUID.randomUUID(), "video.default", "sora-video",
+                "prompt", List.of(), 4, "16:9", "720p", 1, Map.of()
+        ))).isInstanceOf(ModelProviderException.class);
+
+        assertThat(savedInvocation.get().getProviderRequestId()).isEqualTo("provider-task-1");
+        assertThat(savedInvocation.get().getErrorCode()).isEqualTo("PROVIDER_VIDEO_TIMEOUT");
+        assertThat(savedInvocation.get().getStatus()).isEqualTo("FAILED");
     }
 
     @Test
@@ -196,6 +238,45 @@ class RoutingModelGatewayTest {
         assertThat(speech.audio().content()).isNotEmpty();
         assertThat(video.videos()).hasSize(1);
         verify(repository, times(4)).save(any(ProviderInvocationEntity.class));
+    }
+
+    @Test
+    void appendsInlineAudioAfterPersistedVideoInputAssets() {
+        ProviderInvocationRepository repository = mock(ProviderInvocationRepository.class);
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ModelRoutingService routingService = mock(ModelRoutingService.class);
+        when(routingService.resolveCandidates(
+                ModelCapability.VIDEO_GENERATION, "digital_human.video", "did-talks-v1-video"
+        )).thenReturn(List.of(target("did-talks-v1-video", ModelCapability.VIDEO_GENERATION)));
+        UUID avatarId = UUID.randomUUID();
+        ModelAsset avatar = new ModelAsset(avatarId, "avatar.png", "image/png", new byte[]{1});
+        ModelAsset audio = new ModelAsset(UUID.randomUUID(), "confirmed.wav", "audio/wav", new byte[]{2});
+        AssetService assetService = mock(AssetService.class);
+        when(assetService.readForModel(avatarId)).thenReturn(avatar);
+        AtomicReference<List<ModelAsset>> capturedAssets = new AtomicReference<>();
+        ModelProviderClient provider = new TestProvider() {
+            @Override
+            public VideoGenerationResponse generateVideo(
+                    ModelCallTarget target,
+                    VideoGenerationRequest request,
+                    List<ModelAsset> assets
+            ) {
+                capturedAssets.set(assets);
+                return super.generateVideo(target, request, assets);
+            }
+        };
+        RoutingModelGateway gateway = new RoutingModelGateway(
+                List.of(provider), repository, assetService,
+                mock(DocumentKnowledgeService.class), routingService,
+                Clock.fixed(Instant.parse("2026-08-07T00:00:00Z"), ZoneOffset.UTC)
+        );
+
+        gateway.generateVideo(new VideoGenerationRequest(
+                UUID.randomUUID(), UUID.randomUUID(), "digital_human.video", "did-talks-v1-video",
+                "prompt", List.of(avatarId), List.of(audio), 5, "9:16", "720p", 1, Map.of()
+        ));
+
+        assertThat(capturedAssets.get()).containsExactly(avatar, audio);
     }
 
     @Test

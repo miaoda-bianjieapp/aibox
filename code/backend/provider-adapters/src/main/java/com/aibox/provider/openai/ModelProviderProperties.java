@@ -33,6 +33,7 @@ public class ModelProviderProperties {
         private String imageEditPath = "/v1/images/edits";
         private String speechPath = "/v1/audio/speech";
         private String videoPath = "/v1/videos/generations";
+        private String videoStatusPath = "/v1/video/generations/{taskId}";
         private Map<String, String> headers = new LinkedHashMap<>();
 
         public String getProtocol() { return protocol; }
@@ -59,6 +60,8 @@ public class ModelProviderProperties {
         public void setSpeechPath(String speechPath) { this.speechPath = speechPath; }
         public String getVideoPath() { return videoPath; }
         public void setVideoPath(String videoPath) { this.videoPath = videoPath; }
+        public String getVideoStatusPath() { return videoStatusPath; }
+        public void setVideoStatusPath(String videoStatusPath) { this.videoStatusPath = videoStatusPath; }
         public Map<String, String> getHeaders() { return headers; }
         public void setHeaders(Map<String, String> headers) {
             this.headers = headers == null ? new LinkedHashMap<>() : headers;

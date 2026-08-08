@@ -136,6 +136,38 @@ class FeatureDetail extends FeatureEntry {
   Map<String, dynamic> modelSelectorOptions(String capability) =>
       _map(_map(uiSchema['modelSelectors'])[capability]);
 
+  Map<String, String> get modelSelectorPlacements {
+    final configured = _map(uiSchema['modelSelectorPlacement']);
+    return configured.map(
+      (capability, anchor) => MapEntry(capability, anchor.toString()),
+    );
+  }
+
+  String? modelSelectorAnchor(String capability) {
+    final anchor = modelSelectorPlacements[capability]?.trim();
+    return anchor == null || anchor.isEmpty ? null : anchor;
+  }
+
+  bool isModelSelectorVisible(
+    String capability,
+    Map<String, Object?> values,
+  ) {
+    final rule = _map(_map(uiSchema['modelSelectorVisibility'])[capability]);
+    return rule.isEmpty || _matchesVisibilityRule(rule, values);
+  }
+
+  Map<String, List<String>> get confirmationDependencies {
+    final configured = _map(uiSchema['confirmationDependencies']);
+    final result = <String, List<String>>{};
+    for (final entry in configured.entries) {
+      final values = entry.value is List
+          ? (entry.value as List).map((item) => item.toString()).toList()
+          : const <String>[];
+      if (values.isNotEmpty) result[entry.key] = values;
+    }
+    return result;
+  }
+
   Map<String, dynamic> fieldHelp(
     String field,
     Map<String, Object?> values,
@@ -337,6 +369,7 @@ class ModelOption {
     required this.sourceName,
     required this.maxReferenceImages,
     this.parameterOptions = const {},
+    this.parameterConstraints = const {},
   });
 
   factory ModelOption.fromJson(Map<String, dynamic> json) => ModelOption(
@@ -350,6 +383,7 @@ class ModelOption {
             ? null
             : _integer(json, 'maxReferenceImages'),
         parameterOptions: _stringListMap(json['parameterOptions']),
+        parameterConstraints: _mapMap(json['parameterConstraints']),
       );
 
   final String code;
@@ -360,10 +394,24 @@ class ModelOption {
   final String sourceName;
   final int? maxReferenceImages;
   final Map<String, List<String>> parameterOptions;
+  final Map<String, Map<String, dynamic>> parameterConstraints;
+
+  Map<String, dynamic> constraintsFor(String field) =>
+      parameterConstraints[field] ?? const <String, dynamic>{};
 
   String get sourceLabel => sourceType == 'RELAY' ? '中转' : '官方';
-  List<String> allowedValues(String field) =>
-      parameterOptions[field] ?? const <String>[];
+  List<String> allowedValues(String field) {
+    final options = parameterOptions[field];
+    if (options != null && options.isNotEmpty) return options;
+    final raw = parameterConstraints[field]?['allowedValues'];
+    return raw is List
+        ? raw
+            .map((value) => value.toString())
+            .where((value) => value.isNotEmpty)
+            .toList()
+        : const <String>[];
+  }
+
   bool get supportsReferenceImages =>
       maxReferenceImages == null || maxReferenceImages! > 0;
 }
@@ -885,6 +933,17 @@ Map<String, String> _stringMap(Object? value) => value is Map
         .where((entry) => entry.key != null && entry.value != null)
         .map((entry) => MapEntry(entry.key.toString(), entry.value.toString())))
     : <String, String>{};
+
+Map<String, Map<String, dynamic>> _mapMap(Object? value) {
+  if (value is! Map) return const {};
+  final result = <String, Map<String, dynamic>>{};
+  for (final entry in value.entries) {
+    final key = entry.key?.toString().trim() ?? '';
+    if (key.isEmpty || entry.value is! Map) continue;
+    result[key] = _map(entry.value);
+  }
+  return result.isEmpty ? const {} : Map.unmodifiable(result);
+}
 
 Map<String, List<String>> _stringListMap(Object? value) {
   if (value is! Map) return const {};

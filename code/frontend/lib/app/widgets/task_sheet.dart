@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../models/feature_models.dart';
+import '../pages/digital_human_form_logic.dart';
 import '../models/prompt_optimization_undo_store.dart';
 import '../network/api_exception.dart';
 import '../network/native_file_picker.dart';
@@ -169,6 +171,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, Object?> _values = {};
   final Map<String, List<AssetView>> _assetsByField = {};
+  final Map<String, Duration> _audioDurations = {};
   final Set<String> _uploadingAssetFields = {};
   final Set<String> _temporaryDerivedAssetIds = {};
   final Map<String, String> _selectedModelGroups = {};
@@ -348,6 +351,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
               : policy.defaultModelCode;
     }
     for (final group in feature.modelSelectionGroups) {
+      if (group.capabilities.any(
+        (capability) => feature.modelSelectorAnchor(capability) != null,
+      )) {
+        continue;
+      }
       final options = _availableGroupOptions(feature, group);
       final selected = options.where((option) {
         if (!group.capabilities.every(option.deployments.containsKey)) {
@@ -380,11 +388,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         continue;
       }
       if (widgetType == 'slider') {
-        _values[field] = _sliderConfig(
-          schema,
-          feature.fieldOptions(field),
-          initial,
-        ).value;
+        _values[field] =
+            _sliderConfigForFeature(feature, field, schema, initial).value;
       } else if (schema['type'] == 'boolean') {
         _values[field] = initial == true;
       } else if (schema['enum'] is List) {
@@ -398,6 +403,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             TextEditingController(text: initial?.toString() ?? '');
       }
     }
+    _normalizeModelConstrainedScalars(feature);
     _initializeRevisionArtifactReference(feature);
     _refreshTaskTitleFromAssets(feature);
   }
@@ -479,6 +485,90 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         .firstOrNull;
   }
 
+  ModelOption? _selectedVideoModelOption(FeatureDetail feature) {
+    final policy = feature.modelPolicies
+        .where((item) => item.capability == 'VIDEO_GENERATION')
+        .firstOrNull;
+    if (policy == null) return null;
+    final selectedCode = _selectedModels[policy.capability];
+    return policy.options
+        .where((option) => option.code == selectedCode)
+        .firstOrNull;
+  }
+
+  ModelOption? _selectedModelOption(
+    FeatureDetail feature,
+    String capability,
+  ) {
+    final selectedCode = _selectedModels[capability];
+    if (selectedCode == null || selectedCode.isEmpty) return null;
+    return feature.modelOption(capability, selectedCode);
+  }
+
+  String? _parameterCapability(String field) => switch (field) {
+        'avatarSource' || 'avatarImage' || 'avatarPrompt' => 'IMAGE_GENERATION',
+        'audioSource' ||
+        'script' ||
+        'voiceGenerationMode' ||
+        'voice' ||
+        'speed' ||
+        'emotion' =>
+          'TEXT_TO_SPEECH',
+        _ => 'VIDEO_GENERATION',
+      };
+
+  Map<String, dynamic> _modelAwareFieldOptions(
+    FeatureDetail feature,
+    String field,
+  ) {
+    final options = Map<String, dynamic>.from(feature.fieldOptions(field));
+    final capability = _parameterCapability(field);
+    if (capability == null) return options;
+    final model = _selectedModelOption(feature, capability);
+    final constraints =
+        model?.constraintsFor(field) ?? const <String, dynamic>{};
+    for (final key in const ['min', 'max', 'step', 'maxLength']) {
+      final value = constraints[key];
+      if (value is num) options[key] = value;
+    }
+    return options;
+  }
+
+  bool _isModelUnsupportedParameter(FeatureDetail feature, String field) {
+    final capability = _parameterCapability(field);
+    if (capability == null) return false;
+    final constraint =
+        _selectedModelOption(feature, capability)?.constraintsFor(field) ??
+            const <String, dynamic>{};
+    return constraint['mode']?.toString() == 'unsupported';
+  }
+
+  bool _isSourceDerivedParameter(FeatureDetail feature, String field) {
+    if (field != 'aspectRatio' && field != 'resolution') return false;
+    final constraint =
+        _selectedVideoModelOption(feature)?.constraintsFor(field) ??
+            const <String, dynamic>{};
+    final mode = constraint['mode']?.toString();
+    final allowed = constraint['allowedValues'];
+    return (mode == 'source-image' || mode == 'provider-derived') &&
+        allowed is List &&
+        allowed.any((value) => value.toString() == 'SOURCE');
+  }
+
+  void _normalizeModelConstrainedScalars(FeatureDetail feature) {
+    for (final field in feature.fieldOrder) {
+      if (feature.widgetFor(field) != 'slider') continue;
+      final schema =
+          Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
+      _values[field] = _sliderConfigForFeature(
+        feature,
+        field,
+        schema,
+        _values[field],
+      ).value;
+    }
+  }
+
   bool _referenceInputsDisabledByModel(FeatureDetail feature) =>
       _selectedReferenceModel(feature)?.maxReferenceImages == 0;
 
@@ -519,6 +609,11 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final widgets = <Widget>[];
     final groupedCapabilities = <String>{};
     for (final group in feature.modelSelectionGroups) {
+      if (group.capabilities.any(
+        (capability) => feature.modelSelectorAnchor(capability) != null,
+      )) {
+        continue;
+      }
       final options = _availableGroupOptions(feature, group);
       if (options.isEmpty) continue;
       groupedCapabilities.addAll(group.capabilities);
@@ -526,6 +621,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
     for (final policy in feature.modelPolicies) {
       if (groupedCapabilities.contains(policy.capability)) continue;
+      if (feature.modelSelectorAnchor(policy.capability) != null) continue;
+      if (!feature.isModelSelectorVisible(policy.capability, _values)) continue;
       if (!policy.shouldShowSelector) continue;
       widgets.addAll(_buildModelSelector(feature, policy));
     }
@@ -694,7 +791,60 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     setState(() {
       _selectedModels[policy.capability] = code;
       _normalizeModelConstrainedValues(feature);
+      _normalizeModelConstrainedScalars(feature);
+      if (_isDigitalHuman(feature)) {
+        if (policy.capability == 'IMAGE_GENERATION' ||
+            policy.capability == 'VIDEO_GENERATION') {
+          _values['avatarConfirmed'] = false;
+        }
+        if (policy.capability == 'TEXT_TO_SPEECH' ||
+            policy.capability == 'VIDEO_GENERATION') {
+          _values['audioConfirmed'] = false;
+        }
+      }
     });
+  }
+
+  void _setFieldValue(FeatureDetail feature, String field, Object? value) {
+    if (_values[field] == value) return;
+    if (_isDigitalHuman(feature) && field == 'avatarSource') {
+      _switchDigitalHumanAvatarSource(feature, value?.toString() ?? '');
+      return;
+    }
+    setState(() {
+      _values[field] = value;
+      _invalidateConfirmationForField(feature, field);
+    });
+  }
+
+  bool _isDigitalHuman(FeatureDetail feature) =>
+      DigitalHumanFormLogic.isDigitalHuman(feature.id);
+
+  void _switchDigitalHumanAvatarSource(
+    FeatureDetail feature,
+    String source,
+  ) {
+    final removed = List<AssetView>.from(
+      _assetsByField['avatarImage'] ?? const <AssetView>[],
+    );
+    setState(() {
+      _values['avatarSource'] = source;
+      _assetsByField['avatarImage'] = [];
+      _values['avatarConfirmed'] = false;
+      _error = null;
+      _audioDurations.remove('audioFile');
+      for (final asset in removed) {
+        _temporaryDerivedAssetIds.remove(asset.id);
+      }
+    });
+    _refreshTaskTitleFromAssets(feature);
+    unawaited(_deleteTemporaryDerivedAssets(removed));
+  }
+
+  void _invalidateConfirmationForField(FeatureDetail feature, String field) {
+    for (final entry in feature.confirmationDependencies.entries) {
+      if (entry.value.contains(field)) _values[entry.key] = false;
+    }
   }
 
   void _normalizeModelConstrainedValues(FeatureDetail feature) {
@@ -704,14 +854,58 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       ..addAll(normalized);
   }
 
+  List<Widget> _buildPlacedModelSelectors(
+    FeatureDetail feature,
+    String anchorField,
+  ) {
+    final widgets = <Widget>[];
+    for (final policy in feature.modelPolicies) {
+      if (feature.modelSelectorAnchor(policy.capability) != anchorField) {
+        continue;
+      }
+      if (!feature.isModelSelectorVisible(policy.capability, _values)) {
+        continue;
+      }
+      if (!policy.shouldShowSelector) continue;
+      widgets.addAll(_buildModelSelector(feature, policy));
+    }
+    return widgets;
+  }
+
   List<Widget> _buildFields(FeatureDetail feature) {
     final fields = <Widget>[];
     var revisionReferenceAdded = false;
     for (final field in feature.fieldOrder) {
       if (!feature.isFieldVisible(field, _values)) continue;
+      if (_isDigitalHuman(feature) &&
+          _isModelUnsupportedParameter(feature, field)) {
+        continue;
+      }
+      fields.addAll(_buildPlacedModelSelectors(feature, field));
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
+      if (_isDigitalHuman(feature)) {
+        final source = _values['avatarSource']?.toString();
+        if (field == 'avatarImage' &&
+            source == DigitalHumanFormLogic.avatarGenerated) {
+          fields.add(_buildDigitalHumanGeneratedAvatarField(feature));
+          continue;
+        }
+        if ((field == 'aspectRatio' || field == 'resolution') &&
+            _isSourceDerivedParameter(feature, field)) {
+          fields.add(_buildSourceDerivedParameterField(feature, field));
+          continue;
+        }
+        if (field == 'durationSeconds') {
+          fields.add(_buildDigitalHumanDurationField(feature));
+          continue;
+        }
+        if (field == 'avatarConfirmed' || field == 'audioConfirmed') {
+          fields.add(_buildDigitalHumanConfirmationField(feature, field));
+          continue;
+        }
+      }
       if (!revisionReferenceAdded &&
           _assetFieldRequiresReferenceSupport(feature, field) &&
           feature.revisionArtifactReference.isNotEmpty &&
@@ -780,6 +974,271 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     return fields;
   }
 
+  Widget _buildDigitalHumanGeneratedAvatarField(FeatureDetail feature) {
+    final assets = _assetsByField['avatarImage'] ?? const <AssetView>[];
+    final prompt = _controllers['avatarPrompt']?.text.trim() ?? '';
+    final canGenerate = prompt.isNotEmpty &&
+        !_submitting &&
+        !_uploadingAssetFields.contains('avatarImage');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _FieldLabel('\u4eba\u7269\u56fe\u7247', required: true),
+        const SizedBox(height: 6),
+        const Text(
+          '\u4eba\u7269\u63cf\u8ff0\u4f1a\u88ab\u56fa\u5b9a\u5305\u88c5\u4e3a\u5355\u4eba\u5934\u80a9\u8096\u50cf\u63d0\u793a\uff0c\u53ea\u4f1a\u751f\u6210\u4eba\u7269\u56fe\u7247\uff0c\u4e0d\u4f1a\u5728\u6b64\u5904\u4e0a\u4f20\u6216\u9009\u62e9\u5386\u53f2\u56fe\u7247\u3002',
+          style: TextStyle(color: AppColors.muted, fontSize: 12, height: 1.4),
+        ),
+        const SizedBox(height: 10),
+        if (assets.isNotEmpty)
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: assets
+                .map(
+                  (asset) => _AssetPreview(
+                    asset: asset,
+                    contentUrl: widget.data.api.assetContentUrl(asset.id),
+                    onRemove: _submitting
+                        ? null
+                        : () => _removeAsset(feature, 'avatarImage', asset),
+                  ),
+                )
+                .toList(),
+          )
+        else
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.wash,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: const Text(
+              '\u8fd8\u6ca1\u6709\u751f\u6210\u4eba\u7269\u56fe\u7247\u3002\u8bf7\u5148\u586b\u5199\u4eba\u7269\u63cf\u8ff0\u3002',
+              style: TextStyle(color: AppColors.muted),
+            ),
+          ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed:
+              canGenerate ? () => _generateDigitalHumanAvatar(feature) : null,
+          icon: _uploadingAssetFields.contains('avatarImage')
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.auto_awesome_rounded),
+          label: Text(
+            _uploadingAssetFields.contains('avatarImage')
+                ? '\u751f\u6210\u4eba\u7269\u4e2d\u2026'
+                : assets.isEmpty
+                    ? '\u751f\u6210\u4eba\u7269\u56fe\u7247'
+                    : '\u91cd\u65b0\u751f\u6210\u4eba\u7269\u56fe\u7247',
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _generateDigitalHumanAvatar(FeatureDetail feature) async {
+    final rawPrompt = _controllers['avatarPrompt']?.text.trim() ?? '';
+    if (rawPrompt.isEmpty) {
+      setState(
+          () => _error = '\u8bf7\u5148\u586b\u5199\u4eba\u7269\u63cf\u8ff0');
+      return;
+    }
+    final imageModel = _selectedModels['IMAGE_GENERATION'];
+    if (imageModel == null || imageModel.isEmpty) {
+      setState(() => _error =
+          '\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u7684\u4eba\u7269\u751f\u56fe\u6a21\u578b');
+      return;
+    }
+    final oldAssets = List<AssetView>.from(
+      _assetsByField['avatarImage'] ?? const <AssetView>[],
+    );
+    setState(() {
+      _uploadingAssetFields.add('avatarImage');
+      _error = null;
+      _values['avatarConfirmed'] = false;
+    });
+    try {
+      final imageFeature = await widget.data.api.getFeature('image.generate');
+      final result = await widget.data.api.executeFeature(
+        feature: imageFeature,
+        taskTitle: '\u6570\u5b57\u4eba\u7269\u56fe\u7247',
+        projectId: _projectId,
+        selectedModelCode: imageModel,
+        selectedModels: {'IMAGE_GENERATION': imageModel},
+        parameters: {
+          'prompt': DigitalHumanFormLogic.fixedAvatarPrompt(rawPrompt),
+          'aspectRatio': '1:1',
+          'generatedReferenceMode': 'NONE',
+        },
+        inputAssetIds: const [],
+        onStatus: (status) {
+          if (mounted) setState(() => _status = status);
+        },
+      );
+      final generated =
+          result.artifact.assets.where((asset) => asset.isImage).firstOrNull;
+      if (generated == null) {
+        throw const ApiException(
+            '\u4eba\u7269\u751f\u56fe\u4efb\u52a1\u6ca1\u6709\u8fd4\u56de\u53ef\u7528\u56fe\u7247');
+      }
+      setState(() {
+        _assetsByField['avatarImage'] = [generated];
+        _temporaryDerivedAssetIds.add(generated.id);
+        _values['avatarConfirmed'] = false;
+        _status = null;
+      });
+      await _deleteTemporaryDerivedAssets(oldAssets);
+    } catch (exception) {
+      if (mounted) setState(() => _error = '$exception');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploadingAssetFields.remove('avatarImage');
+          _status = null;
+        });
+      }
+    }
+  }
+
+  Widget _buildDigitalHumanConfirmationField(
+    FeatureDetail feature,
+    String field,
+  ) {
+    final source = _values['avatarSource']?.toString();
+    final script = _controllers['script']?.text ?? '';
+    final hasAvatar = (_assetsByField['avatarImage']?.isNotEmpty ?? false);
+    final hasAudio = (_assetsByField['audioFile']?.isNotEmpty ?? false);
+    final ready = field == 'avatarConfirmed'
+        ? DigitalHumanFormLogic.canConfirmAvatar(
+            source: source,
+            hasImage: hasAvatar,
+            prompt: _controllers['avatarPrompt']?.text ?? '',
+          )
+        : DigitalHumanFormLogic.canConfirmAudio(
+            source: _values['audioSource']?.toString(),
+            hasAudio: hasAudio,
+            script: script,
+          );
+    final confirmed = _values[field] == true;
+    final title = field == 'avatarConfirmed'
+        ? '\u786e\u8ba4\u4f7f\u7528\u6b64\u4eba\u7269'
+        : _values['audioSource']?.toString() == DigitalHumanFormLogic.audioText
+            ? '\u786e\u8ba4\u6587\u6848\u548c\u914d\u97f3\u8bbe\u7f6e'
+            : '\u786e\u8ba4\u4f7f\u7528\u6b64\u97f3\u9891';
+    final hint = ready
+        ? field == 'avatarConfirmed'
+            ? '\u4eba\u7269\u56fe\u7247\u5df2\u51c6\u5907\u597d'
+            : '\u5185\u5bb9\u5df2\u51c6\u5907\u597d\uff0c\u8bf7\u786e\u8ba4\u540e\u624d\u80fd\u751f\u6210'
+        : field == 'avatarConfirmed'
+            ? '\u8bf7\u5148\u51c6\u5907\u4eba\u7269\u56fe\u7247'
+            : '\u8bf7\u5148\u586b\u5199\u6587\u6848\u6216\u9009\u62e9\u97f3\u9891';
+    return SwitchListTile.adaptive(
+      contentPadding: EdgeInsets.zero,
+      title: Text(title),
+      subtitle: Text(hint),
+      value: confirmed,
+      onChanged: !_submitting && ready
+          ? (value) => _setFieldValue(feature, field, value)
+          : null,
+    );
+  }
+
+  Widget _buildSourceDerivedParameterField(
+    FeatureDetail feature,
+    String field,
+  ) {
+    final schema =
+        Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
+    final constraint =
+        _selectedVideoModelOption(feature)?.constraintsFor(field) ??
+            const <String, dynamic>{};
+    final mode = constraint['mode']?.toString();
+    final label = mode == 'source-image' ? '???????' : '? Provider ??';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 15),
+        _FieldLabel(
+          schema['title']?.toString() ?? field,
+          required: feature.requiredFields.contains(field),
+        ),
+        const SizedBox(height: 6),
+        InputDecorator(
+          decoration: const InputDecoration(
+            enabled: false,
+            prefixIcon: Icon(Icons.lock_outline_rounded),
+          ),
+          child: Text(label),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDigitalHumanDurationField(FeatureDetail feature) {
+    final seconds = _digitalHumanDurationSeconds(feature);
+    final source = _values['audioSource']?.toString();
+    final max = _digitalHumanDurationLimit(feature);
+    final overLimit = seconds != null && seconds > max;
+    final text = seconds == null
+        ? source == DigitalHumanFormLogic.audioUpload
+            ? '\u6b63\u5728\u8bfb\u53d6\u97f3\u9891\u65f6\u957f\uff0c\u8bf7\u5148\u64ad\u653e\u6216\u7b49\u5f85\u6587\u4ef6\u89e3\u6790'
+            : '\u8bf7\u5148\u586b\u5199\u53e3\u64ad\u6587\u6848'
+        : '\u9884\u8ba1\u65f6\u957f $seconds \u79d2 / \u6a21\u578b\u4e0a\u9650 $max \u79d2';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: overLimit ? const Color(0xFFFFF4F1) : AppColors.wash,
+        borderRadius: BorderRadius.circular(10),
+        border:
+            Border.all(color: overLimit ? AppColors.danger : AppColors.line),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.timer_outlined,
+              size: 20, color: overLimit ? AppColors.danger : AppColors.accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              overLimit
+                  ? '$text\n\u8bf7\u7f29\u77ed\u6587\u6848\u6216\u97f3\u9891'
+                  : text,
+              style: TextStyle(
+                color: overLimit ? AppColors.danger : AppColors.ink,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  int _digitalHumanDurationLimit(FeatureDetail feature) {
+    final option = _selectedVideoModelOption(feature);
+    final value = option?.constraintsFor('durationSeconds')['max'];
+    return value is num ? value.toInt() : 60;
+  }
+
+  int? _digitalHumanDurationSeconds(FeatureDetail feature) {
+    final source = _values['audioSource']?.toString();
+    if (source == DigitalHumanFormLogic.audioText) {
+      final speed = (_values['speed'] as num?)?.toDouble() ?? 1.0;
+      return DigitalHumanFormLogic.estimateSpeechSeconds(
+        _controllers['script']?.text ?? '',
+        speed: speed,
+      );
+    }
+    final duration = _audioDurations['audioFile'];
+    return duration == null ? null : (duration.inMilliseconds / 1000).ceil();
+  }
+
   Widget _buildRevisionArtifactReference(FeatureDetail feature) {
     final config = feature.revisionArtifactReference;
     final modeField =
@@ -846,16 +1305,16 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         value: _values[field] == true,
         onChanged: _submitting
             ? null
-            : (value) => setState(() => _values[field] = value),
+            : (value) => _setFieldValue(feature, field, value),
       );
     }
     final options = schema['enum'];
     if (options is List) {
       final values = feature.enumValuesFor(field, _selectedModels);
       if (values.isEmpty) {
-        return InputDecorator(
-          decoration: const InputDecoration(enabled: false),
-          child: const Text(
+        return const InputDecorator(
+          decoration: InputDecoration(enabled: false),
+          child: Text(
             '当前模型没有可用选项',
             style: TextStyle(color: AppColors.muted),
           ),
@@ -892,7 +1351,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             onSelectionChanged: _submitting
                 ? null
                 : (selection) =>
-                    setState(() => _values[field] = selection.first),
+                    _setFieldValue(feature, field, selection.first),
             style: ButtonStyle(
               textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 12)),
               minimumSize:
@@ -919,12 +1378,20 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             .toList(),
         onChanged: _submitting
             ? null
-            : (value) => setState(() => _values[field] = value),
+            : (value) => _setFieldValue(feature, field, value),
       );
     }
     final multiline = widgetType == 'textarea';
     final numeric = schema['type'] == 'integer' || schema['type'] == 'number';
     final configuredMaxLength = schema['maxLength'];
+    final modelMaxLength = _modelAwareFieldOptions(feature, field)['maxLength'];
+    final effectiveMaxLength = modelMaxLength is num
+        ? configuredMaxLength is num
+            ? configuredMaxLength.toInt().clamp(1, modelMaxLength.toInt())
+            : modelMaxLength.toInt()
+        : configuredMaxLength is num
+            ? configuredMaxLength.toInt()
+            : null;
     final supportsPromptAssist =
         multiline && feature.supportsPromptAssist(field);
     final textField = TextField(
@@ -932,15 +1399,17 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       enabled: !_submitting && _optimizingPromptField != field,
       minLines: multiline ? 3 : 1,
       maxLines: multiline ? 6 : 1,
-      maxLength:
-          configuredMaxLength is num ? configuredMaxLength.toInt() : null,
+      maxLength: effectiveMaxLength,
       keyboardType: numeric
           ? const TextInputType.numberWithOptions(decimal: true)
           : TextInputType.text,
       decoration: InputDecoration(hintText: schema['description']?.toString()),
-      onChanged: supportsPromptAssist
-          ? (_) => setState(() => _promptAssistErrors.remove(field))
-          : null,
+      onChanged: (value) {
+        _setFieldValue(feature, field, value);
+        if (supportsPromptAssist) {
+          setState(() => _promptAssistErrors.remove(field));
+        }
+      },
     );
     if (!supportsPromptAssist) return textField;
 
@@ -991,8 +1460,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     String field,
     Map<String, dynamic> schema,
   ) {
-    final options = feature.fieldOptions(field);
-    final config = _sliderConfig(schema, options, _values[field]);
+    final config =
+        _sliderConfigForFeature(feature, field, schema, _values[field]);
     final required = feature.requiredFields.contains(field);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1039,7 +1508,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
                 ? null
                 : (value) => setState(() {
                       _values[field] =
-                          _sliderConfig(schema, options, value).value;
+                          _sliderConfigForFeature(feature, field, schema, value)
+                              .value;
                     }),
           ),
         ),
@@ -1068,8 +1538,13 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         fallback: _mimeTypesForWidget(widgetType));
     final allowedExtensions = _stringListOption(options, 'allowedExtensions');
     final maxTotalSizeBytes = _integerOption(options, 'maxTotalSizeBytes');
-    final allowAssetLibrarySelection =
-        options['allowAssetLibrarySelection'] == true;
+    final digitalAvatar = _isDigitalHuman(feature) && field == 'avatarImage';
+    final avatarSource = _values['avatarSource']?.toString();
+    final allowAssetLibrarySelection = options['allowAssetLibrarySelection'] ==
+            true &&
+        (!digitalAvatar || avatarSource == DigitalHumanFormLogic.avatarHistory);
+    final allowImageUpload =
+        !digitalAvatar || avatarSource == DigitalHumanFormLogic.avatarUpload;
     final currentBytes =
         assets.fold<int>(0, (sum, asset) => sum + asset.sizeBytes);
     if (widgetType == 'image') {
@@ -1086,6 +1561,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         maxTotalSizeBytes: maxTotalSizeBytes,
         currentBytes: currentBytes,
         allowAssetLibrarySelection: allowAssetLibrarySelection,
+        allowUpload: allowImageUpload,
       );
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1113,12 +1589,25 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           spacing: 8,
           runSpacing: 8,
           children: assets
-              .map((asset) => _AssetPreview(
-                    asset: asset,
-                    onRemove: _submitting || disabledByModel
-                        ? null
-                        : () => _removeAsset(feature, field, asset),
-                    contentUrl: widget.data.api.assetContentUrl(asset.id),
+              .map((asset) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _AssetPreview(
+                        asset: asset,
+                        onRemove: _submitting || disabledByModel
+                            ? null
+                            : () => _removeAsset(feature, field, asset),
+                        contentUrl: widget.data.api.assetContentUrl(asset.id),
+                      ),
+                      if (widgetType == 'audio')
+                        _InlineAudioPreview(
+                          url: widget.data.api.assetContentUrl(asset.id),
+                          onDurationChanged: (duration) {
+                            if (!mounted) return;
+                            setState(() => _audioDurations[field] = duration);
+                          },
+                        ),
+                    ],
                   ))
               .toList(),
         ),
@@ -1193,6 +1682,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     required int? maxTotalSizeBytes,
     required int currentBytes,
     required bool allowAssetLibrarySelection,
+    required bool allowUpload,
   }) {
     final uploading = _uploadingAssetFields.contains(field);
     final replaceExisting = maxItems == 1 && assets.isNotEmpty;
@@ -1216,7 +1706,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
           enabled: enabled,
           disabledReason: disabledByModel ? '当前模型不使用参考图，已选择内容会暂时保留。' : null,
           contentUrlFor: (asset) => widget.data.api.assetContentUrl(asset.id),
-          onPickImages: remaining <= 0
+          onPickImages: !allowUpload || remaining <= 0
               ? null
               : () => _pickImages(
                     feature,
@@ -1416,6 +1906,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         final staleMasks = <AssetView>[];
         setState(() {
           (_assetsByField[field] ??= []).add(asset);
+          _invalidateConfirmationForField(feature, field);
           staleMasks.addAll(_clearDependentMaskFields(feature, field));
         });
         _refreshTaskTitleFromAssets(feature);
@@ -1466,6 +1957,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         } else {
           (_assetsByField[field] ??= []).addAll(uploaded);
         }
+        _invalidateConfirmationForField(feature, field);
         staleMasks.addAll(_clearDependentMaskFields(feature, field));
       });
       _refreshTaskTitleFromAssets(feature);
@@ -1543,6 +2035,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       } else {
         (_assetsByField[field] ??= []).addAll(selected);
       }
+      _invalidateConfirmationForField(feature, field);
       staleMasks.addAll(_clearDependentMaskFields(feature, field));
       _error = null;
     });
@@ -1577,6 +2070,7 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final removed = <AssetView>[asset];
     setState(() {
       _assetsByField[field]?.remove(asset);
+      _invalidateConfirmationForField(feature, field);
       removed.addAll(_clearDependentMaskFields(feature, field));
     });
     _refreshTaskTitleFromAssets(feature);
@@ -1670,6 +2164,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     final parameters = <String, Object?>{};
     for (final field in feature.fieldOrder) {
       if (!feature.isFieldVisible(field, _values)) continue;
+      if (_isDigitalHuman(feature) &&
+          _isModelUnsupportedParameter(feature, field)) continue;
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
@@ -1704,9 +2200,16 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       setState(() => _error = '请填写任务名称');
       return;
     }
+    final blockReason = _digitalHumanSubmitBlockReason(feature);
+    if (blockReason != null) {
+      setState(() => _error = blockReason);
+      return;
+    }
     final parameters = <String, Object?>{};
     for (final field in feature.fieldOrder) {
       if (!feature.isFieldVisible(field, _values)) continue;
+      if (_isDigitalHuman(feature) &&
+          _isModelUnsupportedParameter(feature, field)) continue;
       final schema =
           Map<String, dynamic>.from(feature.properties[field] as Map? ?? {});
       final widgetType = feature.widgetFor(field) ?? 'text';
@@ -1862,11 +2365,57 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
     }
   }
 
+  String? _digitalHumanSubmitBlockReason(FeatureDetail feature) {
+    if (!_isDigitalHuman(feature)) return null;
+    final source = _values['avatarSource']?.toString();
+    final hasAvatar = (_assetsByField['avatarImage']?.isNotEmpty ?? false);
+    final avatarConfirmed = _values['avatarConfirmed'] == true;
+    if (!DigitalHumanFormLogic.canConfirmAvatar(
+      source: source,
+      hasImage: hasAvatar,
+      prompt: _controllers['avatarPrompt']?.text ?? '',
+    )) {
+      return '\u8bf7\u5148\u51c6\u5907\u5e76\u786e\u8ba4\u4eba\u7269\u56fe\u7247';
+    }
+    if (!avatarConfirmed) {
+      return '\u8bf7\u786e\u8ba4\u4f7f\u7528\u5f53\u524d\u4eba\u7269';
+    }
+    final audioSource = _values['audioSource']?.toString();
+    final hasAudio = (_assetsByField['audioFile']?.isNotEmpty ?? false);
+    final script = _controllers['script']?.text ?? '';
+    if (!DigitalHumanFormLogic.canConfirmAudio(
+      source: audioSource,
+      hasAudio: hasAudio,
+      script: script,
+    )) {
+      return '\u8bf7\u5148\u586b\u5199\u6587\u6848\u6216\u9009\u62e9\u97f3\u9891';
+    }
+    if (_values['audioConfirmed'] != true) {
+      return '\u8bf7\u786e\u8ba4\u4f7f\u7528\u5f53\u524d\u97f3\u9891';
+    }
+    final duration = _digitalHumanDurationSeconds(feature);
+    if (duration == null) {
+      return '\u8bf7\u7b49\u5f85\u97f3\u9891\u65f6\u957f\u8bfb\u53d6\u5b8c\u6210';
+    }
+    if (duration > _digitalHumanDurationLimit(feature)) {
+      return '\u5f53\u524d\u97f3\u9891\u8d85\u8fc7\u6240\u9009\u6a21\u578b\u7684\u65f6\u957f\u4e0a\u9650';
+    }
+    return null;
+  }
+
   Object? _effectiveFieldValue(
     FeatureDetail feature,
     String field,
     Map<String, dynamic> schema,
   ) {
+    if (_isDigitalHuman(feature) &&
+        (field == 'aspectRatio' || field == 'resolution') &&
+        _isSourceDerivedParameter(feature, field)) {
+      return 'SOURCE';
+    }
+    if (_isDigitalHuman(feature) && field == 'durationSeconds') {
+      return _digitalHumanDurationSeconds(feature);
+    }
     final revisionReference = feature.revisionArtifactReference;
     final modeField = revisionReference['modeField']?.toString();
     if (field == modeField && _referenceInputsDisabledByModel(feature)) {
@@ -1901,7 +2450,8 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       child: FilledButton.icon(
         onPressed: _submitting ||
                 _optimizingPromptField != null ||
-                _uploadingAssetFields.isNotEmpty
+                _uploadingAssetFields.isNotEmpty ||
+                _digitalHumanSubmitBlockReason(feature) != null
             ? null
             : () => _execute(feature),
         style: FilledButton.styleFrom(
@@ -1913,8 +2463,22 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
             : feature.submitLabel),
       ),
     );
+    final blockedReason = _digitalHumanSubmitBlockReason(feature);
+    final actionContent = <Widget>[
+      if (blockedReason != null) ...[
+        Text(
+          blockedReason,
+          style: const TextStyle(color: AppColors.danger, fontSize: 12),
+        ),
+        const SizedBox(height: 8),
+      ],
+      executeButton,
+    ];
     if (!feature.showResetAction) {
-      return SizedBox(width: double.infinity, child: executeButton);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: actionContent,
+      );
     }
     return Row(children: [
       Expanded(
@@ -1932,7 +2496,12 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         ),
       ),
       const SizedBox(width: 10),
-      Expanded(child: executeButton),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: actionContent,
+        ),
+      ),
     ]);
   }
 
@@ -1946,6 +2515,25 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
       _error = null;
       _promptAssistErrors.remove(field);
     });
+  }
+
+  _TaskSliderConfig _sliderConfigForFeature(
+    FeatureDetail feature,
+    String field,
+    Map<String, dynamic> schema,
+    Object? requested,
+  ) {
+    final capability = _parameterCapability(field);
+    final constraints = capability == null
+        ? const <String, dynamic>{}
+        : _selectedModelOption(feature, capability)?.constraintsFor(field) ??
+            const <String, dynamic>{};
+    return _sliderConfig(
+      schema,
+      _modelAwareFieldOptions(feature, field),
+      requested,
+      overrides: constraints,
+    );
   }
 
   void _resetParameters(FeatureDetail feature) {
@@ -1967,23 +2555,24 @@ class _TaskSheetContentState extends State<_TaskSheetContent> {
         final defaultValue = schema['default'];
         final widgetType = feature.widgetFor(field) ?? 'text';
         if (widgetType == 'slider') {
-          _values[field] = _sliderConfig(
-            schema,
-            feature.fieldOptions(field),
-            defaultValue,
-          ).value;
+          _values[field] =
+              _sliderConfigForFeature(feature, field, schema, defaultValue)
+                  .value;
         } else if (schema['type'] == 'boolean') {
           _values[field] = defaultValue == true;
         } else if (schema['enum'] is List) {
-          final options = (schema['enum'] as List)
-              .map((value) => value.toString())
-              .toList();
-          _values[field] = defaultValue?.toString() ??
-              (options.isEmpty ? null : options.first);
+          _values[field] = feature.normalizedEnumValue(
+            field,
+            _selectedModels,
+            defaultValue,
+          );
         } else {
           _controllers[field]?.text = defaultValue?.toString() ?? '';
         }
       }
+      _audioDurations.clear();
+      _values['avatarConfirmed'] = false;
+      _values['audioConfirmed'] = false;
       _status = null;
       _error = null;
     });
@@ -2385,14 +2974,21 @@ double? _doubleOption(Map<String, dynamic> options, String key) {
 _TaskSliderConfig _sliderConfig(
   Map<String, dynamic> schema,
   Map<String, dynamic> options,
-  Object? requested,
-) {
-  final minimum =
-      _doubleOption(schema, 'minimum') ?? _doubleOption(options, 'min') ?? 0;
-  final configuredMaximum =
-      _doubleOption(schema, 'maximum') ?? _doubleOption(options, 'max') ?? 1;
+  Object? requested, {
+  Map<String, dynamic>? overrides,
+}) {
+  final constraints = overrides ?? const <String, dynamic>{};
+  final minimum = _doubleOption(constraints, 'min') ??
+      _doubleOption(schema, 'minimum') ??
+      _doubleOption(options, 'min') ??
+      0;
+  final configuredMaximum = _doubleOption(constraints, 'max') ??
+      _doubleOption(schema, 'maximum') ??
+      _doubleOption(options, 'max') ??
+      1;
   final maximum = configuredMaximum > minimum ? configuredMaximum : minimum + 1;
-  final configuredStep = _doubleOption(options, 'step') ??
+  final configuredStep = _doubleOption(constraints, 'step') ??
+      _doubleOption(options, 'step') ??
       _doubleOption(schema, 'multipleOf') ??
       (maximum - minimum) / 100;
   final step = configuredStep > 0 ? configuredStep : (maximum - minimum) / 100;
@@ -2455,8 +3051,9 @@ class _TaskSliderConfig {
               minimumFractionDigits) {
         formatted = formatted.substring(0, formatted.length - 1);
       }
-      if (formatted.endsWith('.'))
+      if (formatted.endsWith('.')) {
         formatted = formatted.substring(0, formatted.length - 1);
+      }
     }
     return '$formatted$suffix';
   }
@@ -2604,6 +3201,81 @@ String _modelCapabilityLabel(String capability) => switch (capability) {
       'VIDEO_GENERATION' => '视频生成模型',
       _ => '使用模型',
     };
+
+class _InlineAudioPreview extends StatefulWidget {
+  const _InlineAudioPreview({
+    required this.url,
+    this.onDurationChanged,
+  });
+
+  final String url;
+  final ValueChanged<Duration>? onDurationChanged;
+
+  @override
+  State<_InlineAudioPreview> createState() => _InlineAudioPreviewState();
+}
+
+class _InlineAudioPreviewState extends State<_InlineAudioPreview> {
+  final AudioPlayer _player = AudioPlayer();
+  bool _loading = false;
+  bool _playing = false;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadMetadata());
+    _player.playerStateStream.listen((state) {
+      if (!mounted) return;
+      setState(() => _playing = state.playing);
+    });
+  }
+
+  Future<void> _loadMetadata() async {
+    try {
+      final duration = await _player.setUrl(widget.url);
+      if (!mounted) return;
+      _ready = true;
+      if (duration != null) widget.onDurationChanged?.call(duration);
+    } catch (_) {
+      // Playback will retry loading the URL when the user taps play.
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      if (_playing) {
+        await _player.pause();
+      } else {
+        if (!_ready) await _loadMetadata();
+        await _player.play();
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+        onPressed: _loading ? null : _toggle,
+        icon: _loading
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
+        label: Text(_playing ? '\\u6682\\u505c' : '\\u8bd5\\u542c'),
+      );
+}
 
 class _FieldLabel extends StatelessWidget {
   const _FieldLabel(this.text, {this.required = false});

@@ -15,6 +15,10 @@ import java.util.stream.Collectors;
 @Service
 public class ModelCatalogService {
 
+    private static final Set<String> PUBLIC_PARAMETER_CONSTRAINT_KEYS = Set.of(
+            "mode", "editable", "allowedValues", "min", "max", "step", "maxLength", "label", "unit"
+    );
+
     private final FeatureModelPolicyRepository policyRepository;
     private final FeatureModelOptionRepository optionRepository;
     private final ModelDeploymentRepository deploymentRepository;
@@ -130,7 +134,8 @@ public class ModelCatalogService {
                 provider.getProviderKind().name(),
                 provider.getDisplayName(),
                 publicMaxReferenceImages(deployment),
-                publicParameterOptions(deployment)
+                publicParameterOptions(deployment),
+                publicParameterConstraints(deployment)
         );
     }
 
@@ -152,6 +157,43 @@ public class ModelCatalogService {
         if (supported instanceof Boolean flag) return flag ? null : 0;
         if (supported != null && "false".equalsIgnoreCase(supported.toString())) return 0;
         return null;
+    }
+
+    private static Map<String, Map<String, Object>> publicParameterConstraints(
+            ModelDeploymentEntity deployment
+    ) {
+        Map<String, Object> config = deployment.getConfig();
+        if (config == null || !(config.get("parameterConstraints") instanceof Map<?, ?> configured)) {
+            return Map.of();
+        }
+        Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+        configured.forEach((rawField, rawConstraint) -> {
+            String field = rawField == null ? "" : rawField.toString().trim();
+            if (field.isEmpty() || field.length() > 120 || !(rawConstraint instanceof Map<?, ?> constraint)) {
+                return;
+            }
+            Map<String, Object> safe = new LinkedHashMap<>();
+            constraint.forEach((rawKey, rawValue) -> {
+                String key = rawKey == null ? "" : rawKey.toString().trim();
+                if (key.isEmpty()
+                        || key.length() > 80
+                        || !PUBLIC_PARAMETER_CONSTRAINT_KEYS.contains(key)
+                        || !isPublicConstraintValue(rawValue)) return;
+                safe.put(key, rawValue);
+            });
+            if (!safe.isEmpty()) result.put(field, Map.copyOf(safe));
+        });
+        return result.isEmpty() ? Map.of() : Map.copyOf(result);
+    }
+
+    private static boolean isPublicConstraintValue(Object value) {
+        if (value == null || value instanceof String || value instanceof Number || value instanceof Boolean) {
+            return true;
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().allMatch(ModelCatalogService::isPublicConstraintValue);
+        }
+        return false;
     }
 
     private static Map<String, List<String>> publicParameterOptions(
@@ -235,7 +277,8 @@ public class ModelCatalogService {
             String sourceType,
             String sourceName,
             Integer maxReferenceImages,
-            Map<String, List<String>> parameterOptions
+            Map<String, List<String>> parameterOptions,
+            Map<String, Map<String, Object>> parameterConstraints
     ) {
     }
 
