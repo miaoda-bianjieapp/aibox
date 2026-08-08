@@ -4,6 +4,7 @@ import com.aibox.platform.asset.AssetService;
 import com.aibox.platform.asset.AssetLibraryService;
 import com.aibox.platform.asset.AssetOrigin;
 import com.aibox.platform.asset.AssetPreviewService;
+import com.aibox.platform.asset.CreativeAssetService;
 import com.aibox.platform.common.PlatformException;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -16,6 +17,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -40,15 +42,18 @@ public class AssetController {
     private final AssetService assetService;
     private final AssetLibraryService libraryService;
     private final AssetPreviewService previewService;
+    private final CreativeAssetService creativeAssetService;
 
     public AssetController(
             AssetService assetService,
             AssetLibraryService libraryService,
-            AssetPreviewService previewService
+            AssetPreviewService previewService,
+            CreativeAssetService creativeAssetService
     ) {
         this.assetService = assetService;
         this.libraryService = libraryService;
         this.previewService = previewService;
+        this.creativeAssetService = creativeAssetService;
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -83,6 +88,36 @@ public class AssetController {
             @RequestParam(value = "pageSize", defaultValue = "20") int pageSize
     ) {
         return libraryService.list(libraryType, category, query, cursor, pageSize);
+    }
+
+    @GetMapping("/creative")
+    public List<CreativeAssetService.CreativeAssetView> creativeAssets(
+            @RequestParam(value = "scope", required = false) String scope,
+            @RequestParam(value = "projectId", required = false) UUID projectId,
+            @RequestParam(value = "assetType", required = false) String assetType
+    ) {
+        return creativeAssetService.list(scope, projectId, assetType);
+    }
+
+    @PostMapping("/creative")
+    public CreativeAssetService.CreativeAssetView createCreativeAsset(
+            @RequestBody CreativeAssetService.CreateCreativeAsset request
+    ) {
+        return creativeAssetService.create(request);
+    }
+
+    @PatchMapping("/creative/{creativeAssetId}")
+    public CreativeAssetService.CreativeAssetView updateCreativeAsset(
+            @PathVariable UUID creativeAssetId,
+            @RequestBody CreativeAssetService.UpdateCreativeAsset request
+    ) {
+        return creativeAssetService.update(creativeAssetId, request);
+    }
+
+    @DeleteMapping("/creative/{creativeAssetId}")
+    public ResponseEntity<Void> deleteCreativeAsset(@PathVariable UUID creativeAssetId) {
+        creativeAssetService.delete(creativeAssetId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{assetId}")

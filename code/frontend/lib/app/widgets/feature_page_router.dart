@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/feature_models.dart';
 import '../pages/document_qa_page.dart';
 import '../pages/task_history_page.dart';
+import '../pages/video_generate_page.dart';
 import '../state/app_data_controller.dart';
 import 'task_sheet.dart';
 
@@ -19,6 +20,18 @@ Future<void> openFeatureExperience(
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (context) => DocumentQaPage(
+            data: data,
+            workspace: workspace,
+            feature: detail,
+          ),
+        ),
+      );
+      return;
+    }
+    if (detail.pageKey == 'video_generate') {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => VideoGeneratePage(
             data: data,
             workspace: workspace,
             feature: detail,
@@ -62,6 +75,19 @@ Future<void> openTaskExperience(
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (context) => DocumentQaPage(
+            data: data,
+            workspace: workspace,
+            feature: detail,
+            taskId: task.id,
+          ),
+        ),
+      );
+      return;
+    }
+    if (detail.pageKey == 'video_generate') {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => VideoGeneratePage(
             data: data,
             workspace: workspace,
             feature: detail,

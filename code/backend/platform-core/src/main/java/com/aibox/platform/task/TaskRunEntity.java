@@ -71,6 +71,9 @@ public class TaskRunEntity {
     @Column(name = "error_message", length = 2_000)
     private String errorMessage;
 
+    @Column(name = "execution_phase", nullable = false, length = 40)
+    private String executionPhase;
+
     @Column(name = "queued_at")
     private Instant queuedAt;
 
@@ -136,6 +139,7 @@ public class TaskRunEntity {
         this.baseArtifactId = baseArtifactId;
         this.selectedModelCode = selectedModelCode;
         this.selectedModels = Map.copyOf(selectedModels == null ? Map.of() : selectedModels);
+        this.executionPhase = "QUEUED";
         this.queuedAt = now;
         this.createdAt = now;
     }
@@ -176,12 +180,14 @@ public class TaskRunEntity {
     public void markRunning(Instant now) {
         requireStatus(RunStatus.QUEUED);
         this.status = RunStatus.RUNNING;
+        this.executionPhase = "RUNNING";
         this.startedAt = now;
     }
 
     public void markSucceeded(Instant now) {
         requireStatus(RunStatus.RUNNING);
         this.status = RunStatus.SUCCEEDED;
+        this.executionPhase = "COMPLETED";
         this.finishedAt = now;
     }
 
@@ -190,6 +196,7 @@ public class TaskRunEntity {
             throw new IllegalStateException("Run cannot become partial from status " + status);
         }
         this.status = RunStatus.PARTIAL;
+        this.executionPhase = "COMPLETED";
         this.finishedAt = now;
     }
 
@@ -198,6 +205,7 @@ public class TaskRunEntity {
             return;
         }
         this.status = RunStatus.FAILED;
+        this.executionPhase = "FAILED";
         this.errorCode = code;
         this.errorMessage = message;
         this.finishedAt = now;
@@ -209,7 +217,13 @@ public class TaskRunEntity {
         }
         this.cancelRequested = true;
         this.status = RunStatus.CANCELLED;
+        this.executionPhase = "CANCELLED";
         this.finishedAt = now;
+    }
+
+    public void updateExecutionPhase(String phase) {
+        if (phase == null || phase.isBlank() || status.isTerminal()) return;
+        this.executionPhase = phase.trim().toUpperCase(java.util.Locale.ROOT);
     }
 
     private void requireStatus(RunStatus expected) {
@@ -280,6 +294,10 @@ public class TaskRunEntity {
 
     public String getErrorMessage() {
         return errorMessage;
+    }
+
+    public String getExecutionPhase() {
+        return executionPhase == null ? status.name() : executionPhase;
     }
 
     public Instant getQueuedAt() {

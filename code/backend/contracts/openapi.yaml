@@ -122,6 +122,74 @@ paths:
       responses:
         "200":
           description: Paginated user files or generated assets
+  /assets/creative:
+    get:
+      operationId: listCreativeAssets
+      parameters:
+        - name: scope
+          in: query
+          schema: {type: string, enum: [PROJECT, GLOBAL]}
+        - name: projectId
+          in: query
+          schema: {type: string, format: uuid}
+        - name: assetType
+          in: query
+          schema: {type: string, enum: [CHARACTER, SCENE, PROP, UNCLASSIFIED]}
+      responses:
+        "200":
+          description: 当前用户可复用的项目级和全局创意资产
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CreativeAsset"
+    post:
+      operationId: createCreativeAsset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativeAssetRequest"
+      responses:
+        "200":
+          description: 创意资产已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeAsset"
+  /assets/creative/{creativeAssetId}:
+    patch:
+      operationId: updateCreativeAsset
+      parameters:
+        - name: creativeAssetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCreativeAssetRequest"
+      responses:
+        "200":
+          description: 创意资产已更新
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeAsset"
+    delete:
+      operationId: deleteCreativeAsset
+      parameters:
+        - name: creativeAssetId
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: 创意资产已删除
   /assets/delete-impact:
     post:
       operationId: getAssetDeleteImpact
@@ -517,6 +585,48 @@ components:
           additionalProperties: true
         addedAt: {type: string, format: date-time}
         removedAt: {type: [string, "null"], format: date-time}
+    CreativeAsset:
+      type: object
+      required:
+        [id, scope, assetType, name, description, personality, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        projectId: {type: [string, "null"], format: uuid}
+        scope:
+          type: string
+          enum: [PROJECT, GLOBAL]
+        assetType:
+          type: string
+          enum: [CHARACTER, SCENE, PROP, UNCLASSIFIED]
+        name: {type: string, maxLength: 120}
+        description: {type: string, maxLength: 2000}
+        personality: {type: string, maxLength: 1000}
+        currentPrimaryAssetId: {type: [string, "null"], format: uuid}
+        currentThreeViewAssetId: {type: [string, "null"], format: uuid}
+        approvedPrimaryAssetId: {type: [string, "null"], format: uuid}
+        approvedThreeViewAssetId: {type: [string, "null"], format: uuid}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    CreateCreativeAssetRequest:
+      type: object
+      required: [scope, assetType, name, description]
+      properties:
+        projectId: {type: [string, "null"], format: uuid}
+        scope: {type: string, enum: [PROJECT, GLOBAL]}
+        assetType: {type: string, enum: [CHARACTER, SCENE, PROP, UNCLASSIFIED]}
+        name: {type: string, minLength: 1, maxLength: 120}
+        description: {type: string, minLength: 1, maxLength: 2000}
+        personality: {type: string, maxLength: 1000}
+    UpdateCreativeAssetRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateCreativeAssetRequest"
+        - type: object
+          properties:
+            currentPrimaryAssetId: {type: [string, "null"], format: uuid}
+            currentThreeViewAssetId: {type: [string, "null"], format: uuid}
+            approvedPrimaryAssetId: {type: [string, "null"], format: uuid}
+            approvedThreeViewAssetId: {type: [string, "null"], format: uuid}
+            clearCurrentThreeViewAsset: {type: boolean}
     ModelPolicy:
       type: object
       required: [capability, defaultModelCode, allowUserSelection, options]
@@ -614,6 +724,9 @@ components:
         status:
           type: string
           enum: [CREATED, VALIDATING, QUEUED, RUNNING, WAITING_CALLBACK, SUCCEEDED, PARTIAL, FAILED, CANCELLED, EXPIRED]
+        executionPhase:
+          type: string
+          enum: [QUEUED, SUBMITTING, GENERATING, DOWNLOADING, PERSISTING, COMPLETED, FAILED, CANCELLED]
         parameters: {type: object, additionalProperties: true}
         inputAssetIds:
           type: array

@@ -498,6 +498,7 @@ class RunView {
     required this.id,
     required this.runNumber,
     required this.status,
+    this.executionPhase,
     required this.parameters,
     required this.inputAssetIds,
     this.inputAssets = const [],
@@ -513,6 +514,7 @@ class RunView {
         id: _string(json, 'id'),
         runNumber: _integer(json, 'runNumber'),
         status: _string(json, 'status'),
+        executionPhase: json['executionPhase']?.toString(),
         parameters: _map(json['parameters']),
         inputAssetIds: _stringList(json['inputAssetIds']),
         inputAssets:
@@ -528,6 +530,7 @@ class RunView {
   final String id;
   final int runNumber;
   final String status;
+  final String? executionPhase;
   final Map<String, dynamic> parameters;
   final List<String> inputAssetIds;
   final List<AssetView> inputAssets;
@@ -679,6 +682,59 @@ class AssetView {
   bool get isImage => category == 'IMAGE' || mediaType.startsWith('image/');
   bool get isDocument => category == 'DOCUMENT';
   bool get isModelOutput => origin == 'MODEL_OUTPUT';
+}
+
+class CreativeAssetView {
+  const CreativeAssetView({
+    required this.id,
+    required this.projectId,
+    required this.scope,
+    required this.assetType,
+    required this.name,
+    required this.description,
+    required this.personality,
+    required this.currentPrimaryAssetId,
+    required this.currentThreeViewAssetId,
+    required this.approvedPrimaryAssetId,
+    required this.approvedThreeViewAssetId,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory CreativeAssetView.fromJson(Map<String, dynamic> json) =>
+      CreativeAssetView(
+        id: _string(json, 'id'),
+        projectId: json['projectId']?.toString(),
+        scope: _string(json, 'scope'),
+        assetType: _string(json, 'assetType'),
+        name: _string(json, 'name'),
+        description: _string(json, 'description'),
+        personality: _string(json, 'personality'),
+        currentPrimaryAssetId: json['currentPrimaryAssetId']?.toString(),
+        currentThreeViewAssetId: json['currentThreeViewAssetId']?.toString(),
+        approvedPrimaryAssetId: json['approvedPrimaryAssetId']?.toString(),
+        approvedThreeViewAssetId: json['approvedThreeViewAssetId']?.toString(),
+        createdAt: _date(json['createdAt']),
+        updatedAt: _date(json['updatedAt']),
+      );
+
+  final String id;
+  final String? projectId;
+  final String scope;
+  final String assetType;
+  final String name;
+  final String description;
+  final String personality;
+  final String? currentPrimaryAssetId;
+  final String? currentThreeViewAssetId;
+  final String? approvedPrimaryAssetId;
+  final String? approvedThreeViewAssetId;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  bool get isCharacter => assetType == 'CHARACTER';
+  String? get preferredVideoAssetId =>
+      currentPrimaryAssetId ?? approvedPrimaryAssetId;
 }
 
 class AssetPage {

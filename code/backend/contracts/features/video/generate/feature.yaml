@@ -1,0 +1,21 @@
+featureCode: video.generate
+workspaceCode: video
+version: 1
+displayName: AI视频生成
+description: 使用文字、剧本和资产生成短视频。
+status: INTERNAL
+executionMode: ASYNC
+resultType: video
+rendererKey: video_generate
+requiredCapabilities:
+  - TEXT_GENERATION
+  - IMAGE_GENERATION
+  - VIDEO_GENERATION
+schemas:
+  input: input-schema.json
+  ui: ui-schema.json
+  output: output-schema.json
+limits:
+  maxScriptCharacters: 20000
+  maxStoryboardShots: 20
+  maxInputImages: 20

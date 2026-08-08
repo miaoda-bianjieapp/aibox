@@ -13,6 +13,9 @@ import com.aibox.feature.spi.TextGenerationRequest;
 import com.aibox.feature.spi.TextGenerationResponse;
 import com.aibox.feature.spi.TextToSpeechRequest;
 import com.aibox.feature.spi.TextToSpeechResponse;
+import com.aibox.feature.spi.VideoGenerationRequest;
+import com.aibox.feature.spi.VideoGenerationResponse;
+import com.aibox.feature.spi.VideoGenerationLifecycleListener;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
@@ -31,6 +34,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -194,6 +198,83 @@ class OpenAiCompatibleTextProviderTest {
     }
 
     @Test
+    void agnesImageUsesJsonReferencesAndAspectRatio() throws IOException {
+        AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedContentType = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/images/generations", exchange -> {
+            capturedBody.set(TEST_MAPPER.readTree(exchange.getRequestBody()));
+            capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+            byte[] response = (
+                    "{\"data\":[{\"b64_json\":\""
+                            + Base64.getEncoder().encodeToString(new byte[]{7, 8, 9})
+                            + "\",\"media_type\":\"image/png\"}]}"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration = new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setImagePath("/v1/images/generations");
+            configuration.setImageEditPath("/v1/images/generations");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("agnes-ai-official", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            UUID assetId = UUID.randomUUID();
+            ModelCallTarget target = new ModelCallTarget(
+                    "agnes-image-2-1",
+                    "agnes-ai-official",
+                    "agnes-image-2.1-flash",
+                    ModelCapability.IMAGE_GENERATION,
+                    Map.of(
+                            "imageProtocol", "agnes-json",
+                            "imageResolution", "2K",
+                            "maxReferenceImages", 9
+                    )
+            );
+
+            var response = provider.generateImage(
+                    target,
+                    new ImageGenerationRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "image.agnes.default",
+                            "agnes-image-2-1",
+                            "Keep the subject and change the setting",
+                            List.of(assetId),
+                            "16:9",
+                            1,
+                            Map.of()
+                    ),
+                    List.of(new ModelAsset(
+                            assetId,
+                            "reference.png",
+                            "image/png",
+                            new byte[]{1, 2, 3}
+                    ))
+            );
+
+            assertTrue(capturedContentType.get().startsWith("application/json"));
+            assertEquals("agnes-image-2.1-flash", capturedBody.get().path("model").asText());
+            assertEquals("2K", capturedBody.get().path("size").asText());
+            assertEquals("16:9", capturedBody.get().path("extra_body").path("aspect_ratio").asText());
+            assertEquals(
+                    Base64.getEncoder().encodeToString(new byte[]{1, 2, 3}),
+                    capturedBody.get().path("extra_body").path("image").path(0).asText()
+            );
+            assertTrue(Arrays.equals(new byte[]{7, 8, 9}, response.images().get(0).content()));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void unifiedTtsUsesApiKeyHeaderAndVoiceIdPayload() throws IOException {
         AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
         AtomicReference<String> capturedAuthorization = new AtomicReference<>();
@@ -333,6 +414,667 @@ class OpenAiCompatibleTextProviderTest {
 
         assertEquals("PROVIDER_VOICE_UNSUPPORTED", exception.code());
         assertFalse(exception.retryable());
+    }
+
+    @Test
+    void openAiVideoUsesDeploymentPathOverrideForAsyncTaskLifecycle() throws IOException {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedContentType = new AtomicReference<>();
+        AtomicInteger statusRequests = new AtomicInteger();
+        byte[] videoBytes = new byte[]{5, 4, 3, 2, 1};
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/videos", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/videos".equals(path)) {
+                capturedBody.set(new String(
+                        exchange.getRequestBody().readAllBytes(),
+                        StandardCharsets.ISO_8859_1
+                ));
+                capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+                byte[] response = """
+                        {"id":"video-456","object":"video","status":"queued","model":"sora-2"}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/videos/video-456".equals(path)) {
+                int poll = statusRequests.incrementAndGet();
+                String status = poll == 1 ? "in_progress" : "completed";
+                byte[] response = (
+                        "{\"id\":\"video-456\",\"status\":\"" + status
+                                + "\",\"model\":\"sora-2\"}"
+                ).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/videos/video-456/content".equals(path)) {
+                exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+                exchange.sendResponseHeaders(200, videoBytes.length);
+                exchange.getResponseBody().write(videoBytes);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration =
+                    new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setVideoPath("/v1/videos/generations");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("codex2api-relay", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "codex2api-sora-2-video",
+                    "codex2api-relay",
+                    "sora-2",
+                    ModelCapability.VIDEO_GENERATION,
+                    Map.of(
+                            "videoProtocol", "openai-videos",
+                            "videoPath", "/v1/videos",
+                            "videoSizeMap", Map.of("16:9", "1280x720"),
+                            "videoPollIntervalMs", 1,
+                            "videoPollTimeoutMs", 2_000
+                    )
+            );
+
+            VideoGenerationResponse response = provider.generateVideo(
+                    target,
+                    new VideoGenerationRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "video.default",
+                            "codex2api-sora-2-video",
+                            "A quiet orbit above Earth",
+                            List.of(UUID.randomUUID()),
+                            12,
+                            "16:9",
+                            null,
+                            1,
+                            Map.of()
+                    ),
+                    List.of(new ModelAsset(
+                            UUID.randomUUID(),
+                            "reference.png",
+                            "image/png",
+                            new byte[]{1, 2, 3}
+                    ))
+            );
+
+            assertTrue(capturedContentType.get().startsWith("multipart/form-data"));
+            assertTrue(capturedBody.get().contains("name=\"model\""));
+            assertTrue(capturedBody.get().contains("sora-2"));
+            assertTrue(capturedBody.get().contains("name=\"seconds\""));
+            assertTrue(capturedBody.get().contains("12"));
+            assertTrue(capturedBody.get().contains("1280x720"));
+            assertTrue(capturedBody.get().contains("name=\"input_reference\""));
+            assertEquals(2, statusRequests.get());
+            assertEquals("video-456", response.providerRequestId());
+            assertEquals("video/mp4", response.videos().get(0).mediaType());
+            assertTrue(Arrays.equals(videoBytes, response.videos().get(0).content()));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void openAiVideoCanSubmitTextOnlyRequestsAsJsonForRelayCompatibility() throws IOException {
+        AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedContentType = new AtomicReference<>();
+        byte[] videoBytes = new byte[]{4, 2, 4, 2};
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/videos", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/videos".equals(path)) {
+                capturedBody.set(TEST_MAPPER.readTree(exchange.getRequestBody()));
+                capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+                byte[] response = """
+                        {"id":"video-json-1","status":"queued","model":"sora-2"}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod())
+                    && "/v1/videos/video-json-1".equals(path)) {
+                byte[] response = """
+                        {"id":"video-json-1","status":"completed","model":"sora-2"}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod())
+                    && "/v1/videos/video-json-1/content".equals(path)) {
+                exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+                exchange.sendResponseHeaders(200, videoBytes.length);
+                exchange.getResponseBody().write(videoBytes);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration =
+                    new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setVideoPath("/v1/videos");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("codex2api-sora-relay", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "codex2api-sora-2-video",
+                    "codex2api-sora-relay",
+                    "sora-2",
+                    ModelCapability.VIDEO_GENERATION,
+                    Map.of(
+                            "videoProtocol", "openai-videos",
+                            "videoRequestFormat", "json",
+                            "videoPath", "/v1/videos",
+                            "videoSizeMap", Map.of("720p|16:9", "1280x720"),
+                            "videoPollIntervalMs", 1,
+                            "videoPollTimeoutMs", 2_000
+                    )
+            );
+
+            VideoGenerationResponse response = provider.generateVideo(
+                    target,
+                    new VideoGenerationRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "video.default",
+                            "codex2api-sora-2-video",
+                            "A quiet street after summer rain",
+                            List.of(),
+                            4,
+                            "16:9",
+                            "720p",
+                            1,
+                            Map.of()
+                    ),
+                    List.of()
+            );
+
+            assertTrue(capturedContentType.get().startsWith("application/json"));
+            assertEquals("sora-2", capturedBody.get().path("model").asText());
+            assertEquals("4", capturedBody.get().path("seconds").asText());
+            assertEquals("1280x720", capturedBody.get().path("size").asText());
+            assertEquals("video-json-1", response.providerRequestId());
+            assertTrue(Arrays.equals(videoBytes, response.videos().get(0).content()));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void openAiVideoRejectsLastFrameBeforeSubmitting() {
+        ModelProviderProperties.Provider configuration =
+                new ModelProviderProperties.Provider();
+        configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+        configuration.setBaseUrl("http://127.0.0.1:1");
+        configuration.setApiKey("test-key");
+        configuration.setVideoPath("/v1/videos");
+        ModelProviderProperties properties = new ModelProviderProperties();
+        properties.setProviders(Map.of("codex2api-sora-relay", configuration));
+        OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+        ModelCallTarget target = new ModelCallTarget(
+                "codex2api-sora-2-video",
+                "codex2api-sora-relay",
+                "sora-2",
+                ModelCapability.VIDEO_GENERATION,
+                Map.of("videoProtocol", "openai-videos")
+        );
+        UUID lastFrameId = UUID.randomUUID();
+
+        ModelProviderException exception = assertThrows(
+                ModelProviderException.class,
+                () -> provider.generateVideo(
+                        target,
+                        new VideoGenerationRequest(
+                                UUID.randomUUID(),
+                                UUID.randomUUID(),
+                                "video.default",
+                                "codex2api-sora-2-video",
+                                "End on the supplied image",
+                                List.of(lastFrameId),
+                                8,
+                                "16:9",
+                                "720p",
+                                1,
+                                Map.of("lastFrameAssetId", lastFrameId.toString())
+                        ),
+                        List.of(new ModelAsset(
+                                lastFrameId,
+                                "last.png",
+                                "image/png",
+                                new byte[]{1, 2, 3}
+                        ))
+                )
+        );
+
+        assertEquals("MODEL_LAST_FRAME_NOT_SUPPORTED", exception.code());
+    }
+
+    @Test
+    void xaiVideoUsesAsyncJsonPollingAndReturnedUrlDownload() throws IOException {
+        AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedContentType = new AtomicReference<>();
+        AtomicInteger statusRequests = new AtomicInteger();
+        byte[] videoBytes = new byte[]{0, 1, 2, 3, 4};
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/videos", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/videos/generations".equals(path)) {
+                capturedBody.set(TEST_MAPPER.readTree(exchange.getRequestBody()));
+                capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+                byte[] response = """
+                        {"request_id":"video-123"}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod()) && "/v1/videos/video-123".equals(path)) {
+                int poll = statusRequests.incrementAndGet();
+                String responseJson = poll == 1
+                        ? "{\"request_id\":\"video-123\",\"status\":\"processing\"}"
+                        : "{\"request_id\":\"video-123\",\"status\":\"completed\","
+                        + "\"model\":\"grok-imagine-video\","
+                        + "\"video\":{\"url\":\"http://127.0.0.1:"
+                        + server.getAddress().getPort()
+                        + "/media/video-123.mp4\"}}";
+                byte[] response = responseJson.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+        });
+        server.createContext("/media/video-123.mp4", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+            exchange.sendResponseHeaders(200, videoBytes.length);
+            exchange.getResponseBody().write(videoBytes);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration =
+                    new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setVideoPath("/v1/videos/generations");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("codex2api-relay", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "codex2api-grok-imagine-video",
+                    "codex2api-relay",
+                    "grok-imagine-video",
+                    ModelCapability.VIDEO_GENERATION,
+                    Map.of(
+                            "videoProtocol", "xai-videos",
+                            "videoReferenceField", "reference_images",
+                            "maxReferenceImages", 7,
+                            "videoPollIntervalMs", 1,
+                            "videoPollTimeoutMs", 2_000
+                    )
+            );
+
+            VideoGenerationResponse response = provider.generateVideo(
+                    target,
+                    new VideoGenerationRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "video.default",
+                            "codex2api-grok-imagine-video",
+                            "A paper airplane crosses a sunlit room",
+                            List.of(UUID.randomUUID()),
+                            8,
+                            "16:9",
+                            "720p",
+                            1,
+                            Map.of()
+                    ),
+                    List.of(new ModelAsset(
+                            UUID.randomUUID(),
+                            "reference.png",
+                            "image/png",
+                            new byte[]{9, 8, 7}
+                    ))
+            );
+
+            assertTrue(capturedContentType.get().startsWith("application/json"));
+            assertEquals("grok-imagine-video", capturedBody.get().path("model").asText());
+            assertEquals(8, capturedBody.get().path("duration").asInt());
+            assertEquals("16:9", capturedBody.get().path("aspect_ratio").asText());
+            assertEquals("720p", capturedBody.get().path("resolution").asText());
+            JsonNode reference = capturedBody.get().path("reference_images").path(0);
+            assertTrue(reference.path("url").asText().startsWith("data:image/png;base64,"));
+            assertEquals(2, statusRequests.get());
+            assertEquals(1, response.videos().size());
+            assertEquals("video-123", response.providerRequestId());
+            assertEquals("video/mp4", response.videos().get(0).mediaType());
+            assertTrue(Arrays.equals(videoBytes, response.videos().get(0).content()));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void xaiVideoSupportsSeparateNewApiSubmitAndStatusPaths() throws IOException {
+        AtomicReference<String> submitPath = new AtomicReference<>();
+        AtomicReference<String> statusPath = new AtomicReference<>();
+        byte[] videoBytes = new byte[]{7, 6, 5, 4};
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/video/generations", exchange -> {
+            submitPath.set(exchange.getRequestURI().getPath());
+            byte[] response = """
+                    {"request_id":"newapi-grok-1"}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/v1/videos/newapi-grok-1", exchange -> {
+            statusPath.set(exchange.getRequestURI().getPath());
+            byte[] response = (
+                    "{\"request_id\":\"newapi-grok-1\",\"status\":\"completed\","
+                            + "\"model\":\"grok-imagine-video-1.5\","
+                            + "\"video\":{\"url\":\"http://127.0.0.1:"
+                            + server.getAddress().getPort()
+                            + "/media/newapi-grok-1.mp4\"}}"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/media/newapi-grok-1.mp4", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+            exchange.sendResponseHeaders(200, videoBytes.length);
+            exchange.getResponseBody().write(videoBytes);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration =
+                    new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setVideoPath("/v1/videos/generations");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("newapi-grok-relay", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "newapi-grok-imagine-video",
+                    "newapi-grok-relay",
+                    "grok-imagine-video-1.5",
+                    ModelCapability.VIDEO_GENERATION,
+                    Map.of(
+                            "videoProtocol", "xai-videos",
+                            "videoPath", "/v1/video/generations",
+                            "videoStatusPath", "/v1/videos/{requestId}",
+                            "videoPollIntervalMs", 1,
+                            "videoPollTimeoutMs", 2_000
+                    )
+            );
+
+            VideoGenerationResponse response = provider.generateVideo(
+                    target,
+                    new VideoGenerationRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "video.default",
+                            "newapi-grok-imagine-video",
+                            "Rain falls across an empty bridge",
+                            List.of(),
+                            4,
+                            "16:9",
+                            "720p",
+                            1,
+                            Map.of()
+                    ),
+                    List.of()
+            );
+
+            assertEquals("/v1/video/generations", submitPath.get());
+            assertEquals("/v1/videos/newapi-grok-1", statusPath.get());
+            assertEquals("newapi-grok-1", response.providerRequestId());
+            assertTrue(Arrays.equals(videoBytes, response.videos().get(0).content()));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void agnesVideoUsesNestedAsyncPollingAndReturnedUrlDownload() throws IOException {
+        AtomicReference<JsonNode> capturedBody = new AtomicReference<>();
+        AtomicInteger statusRequests = new AtomicInteger();
+        byte[] videoBytes = new byte[]{4, 3, 2, 1};
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/videos", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod()) && "/v1/videos".equals(path)) {
+                capturedBody.set(TEST_MAPPER.readTree(exchange.getRequestBody()));
+                byte[] response = """
+                        {"task_id":"task-agnes-1","video_id":"agnes-video-1","status":"pending"}
+                        """.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod())
+                    && "/v1/videos/task-agnes-1".equals(path)) {
+                int poll = statusRequests.incrementAndGet();
+                String responseJson = poll == 1
+                        ? "{\"task_id\":\"task-agnes-1\",\"status\":\"processing\"}"
+                        : "{\"task_id\":\"task-agnes-1\",\"status\":\"completed\","
+                        + "\"model\":\"agnes-video-v2.0\",\"metadata\":{\"url\":\"http://127.0.0.1:"
+                        + server.getAddress().getPort()
+                        + "/media/agnes-video-1.mp4\"}}";
+                byte[] response = responseJson.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+        });
+        server.createContext("/media/agnes-video-1.mp4", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+            exchange.sendResponseHeaders(200, videoBytes.length);
+            exchange.getResponseBody().write(videoBytes);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration =
+                    new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setVideoPath("/v1/videos");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("agnes-ai-official", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "agnes-video-v2-0",
+                    "agnes-ai-official",
+                    "agnes-video-v2.0",
+                    ModelCapability.VIDEO_GENERATION,
+                    Map.of(
+                            "videoProtocol", "agnes-videos",
+                            "videoPollIntervalMs", 1,
+                            "videoPollTimeoutMs", 2_000
+                    )
+            );
+
+            VideoGenerationResponse response = provider.generateVideo(
+                    target,
+                    new VideoGenerationRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "video.agnes.default",
+                            "agnes-video-v2-0",
+                            "A cinematic city at sunrise",
+                            List.of(),
+                            8,
+                            "16:9",
+                            "720p",
+                            1,
+                            Map.of()
+                    ),
+                    List.of()
+            );
+
+            assertTrue(provider.supportsResumableVideo(target));
+            assertEquals("agnes-video-v2.0", capturedBody.get().path("model").asText());
+            assertEquals(8, capturedBody.get().path("duration").asInt());
+            assertEquals("16:9", capturedBody.get().path("aspect_ratio").asText());
+            assertEquals("720p", capturedBody.get().path("resolution").asText());
+            assertEquals(2, statusRequests.get());
+            assertEquals("task-agnes-1", response.providerRequestId());
+            assertTrue(Arrays.equals(videoBytes, response.videos().get(0).content()));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void resumableXaiVideoSkipsSubmissionWhenRequestIdAlreadyExists() throws IOException {
+        AtomicInteger submitRequests = new AtomicInteger();
+        AtomicInteger statusRequests = new AtomicInteger();
+        List<String> phases = new ArrayList<>();
+        byte[] videoBytes = new byte[]{5, 4, 3, 2, 1};
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/videos", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("POST".equals(exchange.getRequestMethod())) {
+                submitRequests.incrementAndGet();
+                exchange.sendResponseHeaders(500, -1);
+                exchange.close();
+                return;
+            }
+            if ("GET".equals(exchange.getRequestMethod())
+                    && "/v1/videos/video-existing".equals(path)) {
+                statusRequests.incrementAndGet();
+                byte[] response = (
+                        "{\"request_id\":\"video-existing\",\"status\":\"done\","
+                                + "\"model\":\"grok-imagine-video\","
+                                + "\"video\":{\"url\":\"http://127.0.0.1:"
+                                + server.getAddress().getPort()
+                                + "/media/video-existing.mp4\"}}"
+                ).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+        });
+        server.createContext("/media/video-existing.mp4", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "video/mp4");
+            exchange.sendResponseHeaders(200, videoBytes.length);
+            exchange.getResponseBody().write(videoBytes);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ModelProviderProperties.Provider configuration =
+                    new ModelProviderProperties.Provider();
+            configuration.setProtocol(OpenAiCompatibleTextProvider.PROTOCOL);
+            configuration.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            configuration.setApiKey("test-key");
+            configuration.setVideoPath("/v1/videos/generations");
+            ModelProviderProperties properties = new ModelProviderProperties();
+            properties.setProviders(Map.of("codex2api-relay", configuration));
+            OpenAiCompatibleTextProvider provider = new OpenAiCompatibleTextProvider(properties);
+            ModelCallTarget target = new ModelCallTarget(
+                    "codex2api-grok-imagine-video",
+                    "codex2api-relay",
+                    "grok-imagine-video",
+                    ModelCapability.VIDEO_GENERATION,
+                    Map.of(
+                            "videoProtocol", "xai-videos",
+                            "videoPollIntervalMs", 1,
+                            "videoPollTimeoutMs", 2_000
+                    )
+            );
+
+            VideoGenerationResponse response = provider.generateVideoResumable(
+                    target,
+                    new VideoGenerationRequest(
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            "video.default",
+                            "codex2api-grok-imagine-video",
+                            "Resume the existing generation",
+                            List.of(),
+                            8,
+                            "16:9",
+                            "720p",
+                            1,
+                            Map.of()
+                    ),
+                    List.of(),
+                    "video-existing",
+                    new VideoGenerationLifecycleListener() {
+                        @Override
+                        public void onSubmitted(
+                                String providerRequestId,
+                                String providerModel,
+                                Map<String, Object> providerState
+                        ) {
+                            throw new AssertionError("Existing requests must not be submitted again");
+                        }
+
+                        @Override
+                        public void onPhase(String phase, Map<String, Object> providerState) {
+                            phases.add(phase);
+                        }
+                    }
+            );
+
+            assertEquals(0, submitRequests.get());
+            assertEquals(1, statusRequests.get());
+            assertEquals(List.of("GENERATING", "DOWNLOADING"), phases);
+            assertEquals("video-existing", response.providerRequestId());
+            assertTrue(Arrays.equals(videoBytes, response.videos().get(0).content()));
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test

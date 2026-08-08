@@ -4,6 +4,7 @@ import '../models/feature_models.dart';
 import '../network/backend_api.dart';
 import '../state/app_data_controller.dart';
 import '../theme/app_theme.dart';
+import 'video_generate_page.dart';
 import '../widgets/task_sheet.dart';
 
 class TaskHistoryPage extends StatefulWidget {
@@ -123,6 +124,21 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
           const SnackBar(content: Text('无法读取该版本的功能和参数')),
         );
       }
+      return;
+    }
+    if (feature.id == 'video.generate') {
+      final videoFeature = await widget.data.api.getFeature(feature.id);
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) => VideoGeneratePage(
+            data: widget.data,
+            workspace: workspace,
+            feature: videoFeature,
+            taskId: detail.task.id,
+          ),
+        ),
+      );
+      if (mounted) await _reload();
       return;
     }
     await showTaskSheet(
@@ -251,7 +267,7 @@ class _RunRow extends StatelessWidget {
           ]),
         ),
         const SizedBox(width: 12),
-        Text(run.status,
+        Text(run.executionPhase ?? run.status,
             style: TextStyle(
                 color: run.status == 'SUCCEEDED'
                     ? AppColors.accent
@@ -294,8 +310,8 @@ String runConfigurationSummary(RunView run, ArtifactView? artifact) {
   final values = <String>[];
   final metadata = artifact?.metadata ?? const <String, dynamic>{};
   final model = metadata['model']?.toString().trim();
-  final selectedModel = run.selectedModels.values.firstOrNull ??
-      run.selectedModelCode?.trim();
+  final selectedModel =
+      run.selectedModels.values.firstOrNull ?? run.selectedModelCode?.trim();
   final modelValue = model?.isNotEmpty == true ? model : selectedModel;
   if (modelValue?.isNotEmpty == true) {
     values.add(_historyDisplayIdentifier(modelValue!));
@@ -334,11 +350,11 @@ String _historyDisplayIdentifier(String value) => value
     .split(RegExp(r'[-_\s]+'))
     .where((part) => part.isNotEmpty)
     .map((part) => RegExp(
-              r'^(?:ai|api|gpt|tts\d*|v\d+)$',
-              caseSensitive: false,
-            ).hasMatch(part)
-        ? part.toUpperCase()
-        : '${part[0].toUpperCase()}${part.substring(1)}')
+          r'^(?:ai|api|gpt|tts\d*|v\d+)$',
+          caseSensitive: false,
+        ).hasMatch(part)
+            ? part.toUpperCase()
+            : '${part[0].toUpperCase()}${part.substring(1)}')
     .join(' ');
 String _shortDate(DateTime value) =>
     '${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} '

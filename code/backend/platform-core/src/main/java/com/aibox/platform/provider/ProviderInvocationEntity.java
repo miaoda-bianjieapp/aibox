@@ -8,7 +8,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "provider_invocation")
@@ -59,6 +63,19 @@ public class ProviderInvocationEntity {
 
     @Column(name = "error_code", length = 100)
     private String errorCode;
+
+    @Column(name = "provider_state_json", nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private Map<String, Object> providerState = Map.of();
+
+    @Column(name = "submitted_at")
+    private Instant submittedAt;
+
+    @Column(name = "last_polled_at")
+    private Instant lastPolledAt;
+
+    @Column(name = "downloaded_at")
+    private Instant downloadedAt;
 
     @Column(name = "started_at", nullable = false)
     private Instant startedAt;
@@ -134,6 +151,51 @@ public class ProviderInvocationEntity {
         this.finishedAt = finishedAt;
     }
 
+    public void markSubmitting() {
+        this.status = "SUBMITTING";
+        this.errorCode = null;
+        this.finishedAt = null;
+    }
+
+    public void submitted(
+            String providerModel,
+            String providerRequestId,
+            Map<String, Object> providerState,
+            Instant submittedAt
+    ) {
+        this.status = "GENERATING";
+        this.providerModel = providerModel;
+        this.providerRequestId = providerRequestId;
+        this.providerState = providerState == null ? Map.of() : Map.copyOf(providerState);
+        this.submittedAt = submittedAt;
+        this.lastPolledAt = submittedAt;
+        this.errorCode = null;
+        this.finishedAt = null;
+    }
+
+    public void phase(String phase, Map<String, Object> providerState, Instant now) {
+        this.status = phase;
+        if (providerState != null && !providerState.isEmpty()) {
+            this.providerState = Map.copyOf(providerState);
+        }
+        if ("GENERATING".equals(phase)) this.lastPolledAt = now;
+        if ("DOWNLOADING".equals(phase)) this.downloadedAt = now;
+        this.errorCode = null;
+        this.finishedAt = null;
+    }
+
+    public void interrupted(String errorCode, Instant now) {
+        this.errorCode = errorCode;
+        this.lastPolledAt = now;
+        this.finishedAt = null;
+    }
+
+    public void submissionUnknown(String errorCode, Instant finishedAt) {
+        this.status = "SUBMISSION_UNKNOWN";
+        this.errorCode = errorCode;
+        this.finishedAt = finishedAt;
+    }
+
     public void fail(String errorCode, Instant finishedAt) {
         this.status = "FAILED";
         this.errorCode = errorCode;
@@ -150,5 +212,29 @@ public class ProviderInvocationEntity {
 
     public ProviderInvocationScope getInvocationScope() {
         return invocationScope;
+    }
+
+    public String getCapability() {
+        return capability;
+    }
+
+    public String getProviderRequestId() {
+        return providerRequestId;
+    }
+
+    public String getProviderModel() {
+        return providerModel;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public String getRequestFingerprint() {
+        return requestFingerprint;
+    }
+
+    public Map<String, Object> getProviderState() {
+        return providerState == null ? Map.of() : Map.copyOf(providerState);
     }
 }

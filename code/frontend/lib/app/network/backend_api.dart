@@ -30,6 +30,9 @@ class BackendApi {
     ..connectionTimeout = const Duration(seconds: 8);
 
   static String runFailureMessage(String? code, String? serverMessage) {
+    if (code == 'PROVIDER_VIDEO_SUBMISSION_UNKNOWN') {
+      return '视频提交结果未知，系统已停止自动重提以避免重复计费。请确认供应商状态后再手动重新生成。';
+    }
     if (code == 'PROVIDER_HTTP_524') {
       return '模型服务处理超时，请重试；如持续失败，请切换其他模型';
     }
@@ -38,6 +41,12 @@ class BackendApi {
     }
     if (code == 'MODEL_REFERENCE_IMAGE_LIMIT_EXCEEDED') {
       return '参考图数量超过当前模型支持的上限';
+    }
+    if (code == 'MODEL_FRAME_INPUT_NOT_SUPPORTED') {
+      return '当前视频模型不支持所选首帧/尾帧组合，请移除尾帧或切换模型';
+    }
+    if (code == 'MODEL_LAST_FRAME_NOT_SUPPORTED') {
+      return '当前视频模型仅支持首帧，不支持尾帧';
     }
     return taskFailureMessage(code: code, message: serverMessage);
   }
@@ -167,6 +176,90 @@ class BackendApi {
     return _asMapList(await _request('GET', '/assets'))
         .map(AssetView.fromJson)
         .toList();
+  }
+
+  Future<List<CreativeAssetView>> listCreativeAssets({
+    String? scope,
+    String? projectId,
+    String? assetType,
+  }) async {
+    final query = <String, String>{
+      if (scope != null && scope.trim().isNotEmpty) 'scope': scope,
+      if (projectId != null && projectId.trim().isNotEmpty)
+        'projectId': projectId,
+      if (assetType != null && assetType.trim().isNotEmpty)
+        'assetType': assetType,
+    };
+    final path = Uri(
+      path: '/assets/creative',
+      queryParameters: query.isEmpty ? null : query,
+    ).toString();
+    return _asMapList(await _request('GET', path))
+        .map(CreativeAssetView.fromJson)
+        .toList();
+  }
+
+  Future<CreativeAssetView> createCreativeAsset({
+    required String scope,
+    required String assetType,
+    required String name,
+    required String description,
+    String? personality,
+    String? projectId,
+  }) async {
+    return CreativeAssetView.fromJson(_asMap(await _request(
+      'POST',
+      '/assets/creative',
+      body: {
+        'scope': scope,
+        'assetType': assetType,
+        'name': name,
+        'description': description,
+        'personality': personality ?? '',
+        'projectId': projectId,
+      },
+    )));
+  }
+
+  Future<CreativeAssetView> updateCreativeAsset(
+    String creativeAssetId, {
+    String? scope,
+    String? assetType,
+    String? name,
+    String? description,
+    String? personality,
+    String? projectId,
+    String? currentPrimaryAssetId,
+    String? currentThreeViewAssetId,
+    String? approvedPrimaryAssetId,
+    String? approvedThreeViewAssetId,
+    bool clearCurrentThreeViewAsset = false,
+  }) async {
+    return CreativeAssetView.fromJson(_asMap(await _request(
+      'PATCH',
+      '/assets/creative/$creativeAssetId',
+      body: {
+        if (scope != null) 'scope': scope,
+        if (assetType != null) 'assetType': assetType,
+        if (name != null) 'name': name,
+        if (description != null) 'description': description,
+        if (personality != null) 'personality': personality,
+        if (projectId != null) 'projectId': projectId,
+        if (currentPrimaryAssetId != null)
+          'currentPrimaryAssetId': currentPrimaryAssetId,
+        if (currentThreeViewAssetId != null)
+          'currentThreeViewAssetId': currentThreeViewAssetId,
+        if (approvedPrimaryAssetId != null)
+          'approvedPrimaryAssetId': approvedPrimaryAssetId,
+        if (approvedThreeViewAssetId != null)
+          'approvedThreeViewAssetId': approvedThreeViewAssetId,
+        if (clearCurrentThreeViewAsset) 'clearCurrentThreeViewAsset': true,
+      },
+    )));
+  }
+
+  Future<void> deleteCreativeAsset(String creativeAssetId) async {
+    await _request('DELETE', '/assets/creative/$creativeAssetId');
   }
 
   Future<AssetPage> listAssetLibrary({
@@ -478,7 +571,7 @@ class BackendApi {
         final detail = _asMap(await _request('GET', '/runs/$runId'));
         final runData = _asMap(detail['run']);
         final status = _requiredString(runData, 'status');
-        onStatus(_statusLabel(status));
+        onStatus(_statusLabel(status, runData['executionPhase']?.toString()));
         if (onOutput != null && !DateTime.now().isBefore(nextOutputRefresh)) {
           try {
             for (final snapshot in await getRunOutput(runId)) {
@@ -631,13 +724,31 @@ class BackendApi {
     return uri.replace(path: '', query: null, fragment: null).toString();
   }
 
-  static String _statusLabel(String status) => switch (status) {
-        'QUEUED' => '任务排队中',
-        'VALIDATING' => '正在检查参数',
-        'RUNNING' => '正在执行',
-        'WAITING_CALLBACK' => '等待模型返回',
-        _ => '正在处理',
-      };
+  static String _statusLabel(String status, String? executionPhase) {
+    switch (executionPhase) {
+      case 'SUBMITTING':
+        return '正在提交视频生成请求';
+      case 'GENERATING':
+        return '模型正在生成视频';
+      case 'DOWNLOADING':
+        return '正在下载视频结果';
+      case 'PERSISTING':
+        return '正在保存视频成果';
+      case 'COMPLETED':
+        return '视频生成完成';
+      case 'CANCELLED':
+        return '任务已取消';
+      case 'FAILED':
+        return '视频生成失败';
+    }
+    return switch (status) {
+      'QUEUED' => '任务排队中',
+      'VALIDATING' => '正在检查参数',
+      'RUNNING' => '正在执行',
+      'WAITING_CALLBACK' => '等待模型返回',
+      _ => '正在处理',
+    };
+  }
 }
 
 class _RunOutputWatcher {
